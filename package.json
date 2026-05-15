@@ -1,0 +1,59 @@
+{
+  "name": "opencode-worktree-guardian",
+  "version": "0.1.0",
+  "description": "OpenCode plugin that guards Git worktree workflows from unsafe cleanup, reset, stash, and force-push operations.",
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "src",
+    "scripts",
+    "skills",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --import tsx --test test/*.test.ts",
+    "lint": "npm run typecheck",
+    "typecheck": "tsc --noEmit",
+    "coverage": "node --import tsx --test --experimental-test-coverage --test-coverage-lines=80 test/*.test.ts",
+    "verify": "npm run lint && npm run coverage",
+    "audit:deps": "npm audit --registry=https://registry.npmjs.org --omit=dev",
+    "test:contract": "node --import tsx --test test/plugin-contract.test.ts test/index.test.ts",
+    "test:smoke:package": "node --import tsx --test test/package-smoke.test.ts",
+    "test:smoke:host": "node --import tsx --test test/opencode-host-smoke.test.ts",
+    "test:readiness": "node --import tsx scripts/readiness.ts",
+    "prepublishOnly": "npm run test:readiness"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@opencode-ai/plugin": "^1.14.48"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nashgao/opencode-worktree-guardian.git"
+  },
+  "homepage": "https://github.com/nashgao/opencode-worktree-guardian#readme",
+  "bugs": {
+    "url": "https://github.com/nashgao/opencode-worktree-guardian/issues"
+  },
+  "keywords": [
+    "opencode",
+    "plugin",
+    "git",
+    "worktree",
+    "guardian",
+    "safety"
+  ],
+  "devDependencies": {
+    "@types/node": "^25.7.0",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.3"
+  },
+  "types": "./src/index.ts"
+}
