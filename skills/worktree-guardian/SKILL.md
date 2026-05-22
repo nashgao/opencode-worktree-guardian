@@ -6,6 +6,7 @@ Use the native guardian tools for worktree inspection and completion. The skill 
 
 - Do not run raw cleanup, reset, stash mutation, force-push, worktree removal, or `rm -rf` against worktrees.
 - Use `guardian_status` for read-only inventory.
+- Use `guardian_report_html` or `/guardian report` when the user wants a browser-readable branch/worktree/session report. It writes a static offline file at `.git/opencode-guardian/report.html` and returns the exact path.
 - Use `guardian_finish` for gated completion.
 - Use `guardian_preserve` when work should intentionally remain available.
 - Use `guardian_recover` for safety refs, orphaned sessions, stash inventory, reflog, and recovery suggestions.

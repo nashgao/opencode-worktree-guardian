@@ -49,20 +49,92 @@ Defaults are conservative. `autoFinish` and `autoCleanup` are disabled unless re
 ## Native Tools
 
 - `guardian_start`: create or attach the session to a guardian worktree.
-- `guardian_status`: read-only inventory of sessions, worktrees, refs, stashes, dirty files.
+- `guardian_status`: read-only inventory of sessions, worktrees, refs, stashes, dirty files. Its native tool output renders a terminal-readable summary, while `metadata` keeps the full structured result for automation.
 - `guardian_finish`: gated finish behavior based on `finishMode`.
 - `guardian_preserve`: mark work intentionally preserved and create a preserved ref.
-- `guardian_recover`: read-only recovery refs, reflog/unreachable candidates, and suggested commands.
+- `guardian_recover`: read-only recovery refs, reflog/unreachable candidates, and suggested commands. Its native tool output renders a terminal-readable summary, while `metadata` keeps the full structured result for automation.
+- `guardian_report_html`: write a self-contained offline control-room report to `.git/opencode-guardian/report.html` with sessions, worktrees, branch coverage, risks, recovery commands, and raw status/recover metadata.
 
 ## Safety Model
 
-The plugin blocks raw destructive shell/git commands in `tool.execute.before`, including hard resets, forced cleans, worktree removal/prune, forced branch deletion, stash mutation, force push, destructive checkout/restore/switch forms, shell-wrapped variants, and `rm -rf` against known guardian worktrees.
+The plugin blocks raw destructive shell/git commands in `tool.execute.before`, including hard resets, forced cleans, worktree removal/prune, forced branch deletion, stash mutation, force push, destructive checkout/restore/switch forms, shell-wrapped variants, and `rm -rf` against known guardian worktrees. When config context is available, it also blocks manual Guardian-branch bypasses such as pushing `HEAD` or `guardian/*` directly to a protected branch, or merging `guardian/*` while already on a protected branch.
 
 When `autoStart` is enabled, Guardian can create or attach a session worktree, record repo-local ownership, and keep blocking unsafe commands until the command runs from the owned worktree. This is fail-closed by design: mutating shell/git commands are blocked when the OpenCode host is still in the base repository or any unowned path.
 
 Guardian hooks cannot move the OpenCode host process cwd. If auto-start creates or records a worktree, the host must still execute subsequent mutating commands from that worktree path. Use `guardian_status` to see the owned worktree path and switch the host/session there before retrying writes.
 
-Finish always creates a safety ref before risky operations. `merge-to-base` requires explicit approval, and cleanup only runs when `autoCleanup` or `allowCleanup` is set and ancestry is proven.
+Finish Guardian work through `guardian_finish`, not manual protected-branch push or merge commands. Finish always creates a safety ref before risky operations and reports preflight facts/blockers for automation. `create-pr` pushes the branch and suggests a PR command; it does not create a PR natively. `merge-to-base` requires explicit approval, and cleanup only runs when `autoCleanup` or `allowCleanup` is set and ancestry is proven.
+
+### Sample Tool Output
+
+Clean `guardian_status` keeps the readable summary short and the structured fields available in `metadata`:
+
+```text
+[GOOD] guardian_status snapshot
+[INFO] repoRoot: /repo
+[INFO] sessions: 1 | worktrees: 1 | orphaned: 0 | dirty: 0 | stashes: 0 | safetyRefs: 0 | preservedRefs: 0 | recoveryCandidates: 0
+[INFO] sessions: 1
+  - session_id=ses_123 status=active branch=guardian/example worktree_path=/repo/.worktrees/example head=abc123def456
+[INFO] worktrees: 1
+  - branch=guardian/example head=abc123def456 path=/repo/.worktrees/example
+[INFO] suggested commands:
+  - guardian_status
+  - guardian_recover
+```
+
+Warning-heavy `guardian_recover` lists recovery facts without mutating state:
+
+```text
+[GOOD] guardian_recover snapshot
+[INFO] repoRoot: /repo
+[INFO] sessions: 2 | worktrees: 2 | orphaned: 1 | dirty: 0 | stashes: 1 | safetyRefs: 1 | preservedRefs: 0 | recoveryCandidates: 2
+[WARN] orphaned sessions: 1
+  - ses_orphan
+[WARN] worktrees without state: 1
+  - /repo/.worktrees/guardian-old
+[WARN] stashes: 1
+  - stash@{0}
+[INFO] recovery candidates: 2
+  - HEAD@{1}
+[INFO] suggested commands:
+  - guardian_status
+  - guardian_recover
+  - git stash show -p stash@{0}
+```
+
+`guardian_report_html` writes the same inventory into a static offline HTML file and returns the path plus raw `status` and `recover` metadata:
+
+```text
+[GOOD] guardian_report_html wrote offline report
+[INFO] reportPath: /repo/.git/opencode-guardian/report.html
+[INFO] repoRoot: /repo
+[INFO] sessions: 1 | worktrees: 1 | risks: 0 | recoveryCandidates: 0
+```
+
+Blocked `guardian_finish` exposes `preflight` and `report` for automation:
+
+```text
+{
+  "ok": false,
+  "status": "blocked",
+  "reason": "worktree has uncommitted changes",
+  "preflight": {
+    "sessionRecorded": true,
+    "sessionOwnedWorktree": true,
+    "currentBranch": "guardian/foo",
+    "branchProtected": false,
+    "dirtyFileCount": 1,
+    "blockers": ["worktree has uncommitted changes"]
+  },
+  "report": {
+    "action": "blocked",
+    "mode": "create-pr",
+    "remote": "origin",
+    "baseBranch": "main",
+    "blockers": ["worktree has uncommitted changes"]
+  }
+}
+```
 
 ## Troubleshooting
 
