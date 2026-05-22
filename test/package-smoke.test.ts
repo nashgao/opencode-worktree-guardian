@@ -8,6 +8,7 @@ import test from "node:test";
 
 const execFileAsync = promisify(execFile);
 const projectRoot = path.resolve(new URL("..", import.meta.url).pathname);
+const defaultRunTimeoutMs = 2 * 60 * 1000;
 
 async function run(command: string, args: string[], options: Record<string, any> = {}) {
   const env = {
@@ -20,11 +21,20 @@ async function run(command: string, args: string[], options: Record<string, any>
   };
   const { stdout, stderr } = await execFileAsync(command, args, {
     maxBuffer: 20 * 1024 * 1024,
+    timeout: defaultRunTimeoutMs,
+    killSignal: "SIGTERM",
     ...options,
     env,
   });
   return { stdout: stdout.trim(), stderr: stderr.trim() };
 }
+
+test("package smoke run helper times out hung commands", async () => {
+  await assert.rejects(
+    () => run(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { timeout: 50 }),
+    (error: Error & { killed?: boolean; signal?: NodeJS.Signals | null }) => error.killed === true || error.signal === "SIGTERM",
+  );
+});
 
 test("packed artifact installs in a clean consumer and exposes plugin contract", async (t) => {
   const base = await fs.mkdtemp(path.join(os.tmpdir(), "guardian-package-smoke-"));
@@ -75,6 +85,6 @@ test("packed artifact installs in a clean consumer and exposes plugin contract",
 
   const result = JSON.parse(smoke.stdout);
   assert.equal(result.id, "opencode-worktree-guardian");
-  assert.deepEqual(result.tools, ["guardian_finish", "guardian_preserve", "guardian_recover", "guardian_start", "guardian_status"]);
+  assert.deepEqual(result.tools, ["guardian_finish", "guardian_preserve", "guardian_recover", "guardian_report_html", "guardian_start", "guardian_status"]);
   assert.equal(result.hooks.includes("tool.execute.before"), true);
 });

@@ -27,6 +27,7 @@ test("exposes guardian native tools", async () => {
     "guardian_finish",
     "guardian_preserve",
     "guardian_recover",
+    "guardian_report_html",
     "guardian_start",
     "guardian_status",
   ]);
@@ -110,6 +111,21 @@ test("tool.execute.before throws to block destructive commands", async () => {
       { args: { command: "git worktree remove /repo/.worktrees/example" } },
     ),
     /Worktree Guardian blocked command/,
+  );
+});
+
+
+test("tool.execute.before blocks manual protected-branch finish bypasses", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const hooks = await plugin.server({ directory: repo, worktree: repo, client: createClient([]) });
+
+  await assert.rejects(
+    () => hooks["tool.execute.before"](
+      { tool: "bash", sessionID: "ses_bypass", callID: "call_bypass" },
+      { args: { command: "git push origin HEAD:main" } },
+    ),
+    /protected branch.*guardian_finish|guardian_finish.*protected branch/,
   );
 });
 
@@ -263,6 +279,53 @@ test("session idle auto-finish preserves when repo opts in", async () => {
   const status = await guardianStatus({ repoRoot: repo, config: DEFAULT_CONFIG });
   assert.equal(status.sessions.find((session: Record<string, any>) => session.session_id === "ses_idle_finish").status, "preserved");
   assert.equal(records.filter((record: Record<string, any>) => record.message === "event").length, 1);
+});
+
+test("session idle auto-finish retries after failed finish", async (t) => {
+  const path = await import("node:path");
+  const { makeBranchCommit, git } = await import("./helpers.ts");
+  const { recordSession } = await import("../src/state.ts");
+  const { guardianStatus } = await import("../src/recover.ts");
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+
+  await fs.mkdir(path.join(repo, ".opencode"), { recursive: true });
+  await fs.writeFile(path.join(repo, ".opencode", "worktree-guardian.json"), JSON.stringify({ autoFinish: true }));
+  await git(repo, ["add", ".opencode/worktree-guardian.json"]);
+  await git(repo, ["commit", "-m", "enable guardian auto finish"]);
+
+  const { branch, commit } = await makeBranchCommit(repo, "guardian/idle-retry");
+  await recordSession(repo, DEFAULT_CONFIG, {
+    session_id: "ses_idle_retry_finish",
+    status: "active",
+    branch,
+    worktree_path: repo,
+    base_ref: "origin/main",
+    head_commit: commit,
+    safety_refs: [],
+  });
+  const dirtyPath = path.join(repo, "dirty.txt");
+  await fs.writeFile(dirtyPath, "dirty\n");
+
+  const records: Array<Record<string, any>> = [];
+  const hooks = await plugin.server({ client: createClient(records), directory: repo, worktree: repo });
+  await hooks.event({ event: { type: "session.idle", properties: { sessionID: "ses_idle_retry_finish" } } });
+
+  const firstEvents = records.filter((record) => record.message === "event");
+  assert.equal(firstEvents.length, 1);
+  assert.equal(firstEvents[0].autoFinish.ok, false);
+  assert.match(firstEvents[0].autoFinish.reason, /uncommitted changes|dirty/i);
+  let status = await guardianStatus({ repoRoot: repo, config: DEFAULT_CONFIG });
+  assert.equal(status.sessions.find((session: Record<string, any>) => session.session_id === "ses_idle_retry_finish").status, "active");
+
+  await fs.rm(dirtyPath);
+  await hooks.event({ event: { type: "session.idle", properties: { sessionID: "ses_idle_retry_finish" } } });
+
+  const events = records.filter((record) => record.message === "event");
+  assert.equal(events.length, 2);
+  assert.equal(events[1].autoFinish.ok, true);
+  status = await guardianStatus({ repoRoot: repo, config: DEFAULT_CONFIG });
+  assert.equal(status.sessions.find((session: Record<string, any>) => session.session_id === "ses_idle_retry_finish").status, "preserved");
 });
 
 

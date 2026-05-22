@@ -54,10 +54,11 @@ test("host-like guardian_status smoke runs in a disposable repo", async (t) => {
   const hooks = await plugin.server({ directory: repo, worktree: repo, client: createClient([]) });
   const execute: any = hooks.tool.guardian_status.execute;
   const result: any = await execute({ repoRoot: repo }, createToolContext(repo));
-  const status = JSON.parse(result.output);
-  assert.equal(status.repoRoot, repo);
-  assert.equal(Array.isArray(status.worktrees), true);
-  assert.equal(Array.isArray(status.safetyRefs), true);
+  assert.equal(result.metadata.repoRoot, repo);
+  assert.equal(Array.isArray(result.metadata.worktrees), true);
+  assert.equal(Array.isArray(result.metadata.safetyRefs), true);
+  assert.match(result.output, /\[GOOD\] guardian_status snapshot/);
+  assert.match(result.output, /worktrees: \d+/);
 });
 
 test("host-like chat transform preserves OpenCode client method binding", async (t) => {
