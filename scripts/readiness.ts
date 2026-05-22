@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 const authoredRoots = ["src", "test", "scripts"];
 const forbiddenExtensions = new Set([".js", ".mjs", ".cjs"]);
+const commandTimeoutMs = 10 * 60 * 1000;
 const commands: Array<[string, string[]]> = [
   ["npm", ["run", "verify"]],
   ["npm", ["run", "audit:deps"]],
@@ -46,15 +47,22 @@ for (const [command, args] of commands) {
   try {
     const { stdout, stderr } = await execFileAsync(command, args, {
       maxBuffer: 30 * 1024 * 1024,
+      timeout: commandTimeoutMs,
+      killSignal: "SIGTERM",
       env: { ...process.env, CI: "true", GIT_TERMINAL_PROMPT: "0" },
     });
     if (stdout) process.stdout.write(stdout);
     if (stderr) process.stderr.write(stderr);
-  } catch (error: any) {
-    if (error.stdout) process.stdout.write(error.stdout);
-    if (error.stderr) process.stderr.write(error.stderr);
+  } catch (error: unknown) {
+    const commandError = error as { stdout?: string; stderr?: string; code?: number | string | null; signal?: NodeJS.Signals | null; killed?: boolean };
+    if (commandError.stdout) process.stdout.write(commandError.stdout);
+    if (commandError.stderr) process.stderr.write(commandError.stderr);
+    if (commandError.killed || commandError.signal === "SIGTERM") {
+      console.error(`\nReadiness command timed out after ${commandTimeoutMs}ms: ${label}`);
+      process.exit(124);
+    }
     console.error(`\nReadiness command failed: ${label}`);
-    process.exit(error.code || 1);
+    process.exit(typeof commandError.code === "number" ? commandError.code : 1);
   }
 }
 
