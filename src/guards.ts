@@ -2,7 +2,8 @@ import path from "node:path";
 
 const STASH_READ_ONLY = new Set(["list", "show"]);
 const SEGMENT_BREAKS = new Set([";", "&&", "||", "|", "(", ")"]);
-const GIT_GLOBAL_OPTIONS_WITH_VALUE = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env", "--exec-path", "--html-path", "--man-path", "--info-path", "--paginate", "--no-pager"]);
+const GIT_GLOBAL_OPTIONS_WITH_VALUE = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env", "--exec-path"]);
+const GIT_PUSH_OPTIONS_WITH_VALUE = new Set(["--repo", "--receive-pack", "--exec", "--push-option", "--recurse-submodules", "-o"]);
 const COMMAND_WRAPPERS = new Set(["command", "sudo", "if", "then", "do"]);
 const SHELL_COMMANDS = new Set(["bash", "sh", "zsh", "dash", "fish"]);
 const READ_ONLY_SHELL_COMMANDS = new Set(["pwd"]);
@@ -32,6 +33,12 @@ export function tokenizeCommand(command: string) {
     }
     if (char === quote) {
       quote = null;
+      continue;
+    }
+    if (quote === null && (char === "\n" || char === "\r")) {
+      if (token) tokens.push(token);
+      tokens.push(";");
+      token = "";
       continue;
     }
     if (quote === null && /\s/.test(char)) {
@@ -136,6 +143,105 @@ function block(reason: string, segment: string[]) {
   return { blocked: true, reason, command: segment.join(" "), segment };
 }
 
+function stringArrayOption(options: Record<string, any>, key: string) {
+  const value = options[key];
+  return Array.isArray(value) ? value.filter((entry) => typeof entry === "string") : [];
+}
+
+function stringOption(options: Record<string, any>, key: string) {
+  const value = options[key];
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function branchNameFromRef(ref: string) {
+  return ref.startsWith("refs/heads/") ? ref.slice("refs/heads/".length) : ref;
+}
+
+function isProtectedRef(ref: string, protectedBranches: string[]) {
+  return protectedBranches.includes(branchNameFromRef(ref));
+}
+
+function isGuardianRef(ref: string, branchPrefix: string) {
+  return branchNameFromRef(ref).startsWith(branchPrefix);
+}
+
+function pushRefspecs(rest: string[]) {
+  let index = 0;
+  let repoOption = false;
+  while (index < rest.length) {
+    const token = rest[index];
+    if (token === "--") {
+      index += 1;
+      break;
+    }
+    if (!token.startsWith("-")) break;
+    if (token === "--repo") {
+      repoOption = true;
+      index += 2;
+      continue;
+    }
+    if (token.startsWith("--repo=")) {
+      repoOption = true;
+      index += 1;
+      continue;
+    }
+    if (GIT_PUSH_OPTIONS_WITH_VALUE.has(token)) {
+      index += 2;
+      continue;
+    }
+    if ([...GIT_PUSH_OPTIONS_WITH_VALUE].some((option) => token.startsWith(`${option}=`))) {
+      index += 1;
+      continue;
+    }
+    index += 1;
+  }
+  if (!repoOption && index < rest.length) index += 1;
+  return rest.slice(index).filter((token) => token && !token.startsWith("-"));
+}
+
+function isForcePushToken(token: string) {
+  return token === "--force" || token.startsWith("--force=") || token === "--force-with-lease" || token.startsWith("--force-with-lease=") || token === "-f";
+}
+
+function protectedBranchBypass(segment: string[], subcommand: string, rest: string[], options: Record<string, any>) {
+  const protectedBranches = stringArrayOption(options, "protectedBranches");
+  const branchPrefix = stringOption(options, "branchPrefix");
+  if (protectedBranches.length === 0 || !branchPrefix) return null;
+
+  if (subcommand === "push") {
+    const deletesBranch = rest.includes("--delete") || rest.includes("-d");
+    for (const rawSpec of pushRefspecs(rest)) {
+      const spec = rawSpec.startsWith("+") ? rawSpec.slice(1) : rawSpec;
+      const colon = spec.indexOf(":");
+      if (colon === -1) {
+        if (deletesBranch && isProtectedRef(spec, protectedBranches)) {
+          return block("protected branch deletion push is blocked", segment);
+        }
+        continue;
+      }
+      const source = spec.slice(0, colon);
+      const target = spec.slice(colon + 1);
+      if (!source && target && isProtectedRef(target, protectedBranches)) {
+        return block("protected branch deletion push is blocked", segment);
+      }
+      if (target && isProtectedRef(target, protectedBranches) && (source === "HEAD" || isGuardianRef(source, branchPrefix))) {
+        return block("manual push from Guardian work to a protected branch is blocked; use guardian_finish", segment);
+      }
+    }
+  }
+
+  if (subcommand === "merge") {
+    const currentBranch = stringOption(options, "currentBranch");
+    if (!currentBranch || !isProtectedRef(currentBranch, protectedBranches)) return null;
+    const mergeTargets = rest.filter((token) => token && !token.startsWith("-"));
+    if (mergeTargets.some((target) => isGuardianRef(target, branchPrefix))) {
+      return block("manual merge of Guardian work into a protected branch is blocked; use guardian_finish", segment);
+    }
+  }
+
+  return null;
+}
+
 function stripCommandWrappers(segment: string[]) {
   let index = 0;
   while (COMMAND_WRAPPERS.has(segment[index])) index += 1;
@@ -166,10 +272,12 @@ function parseGitInvocation(segment: string[]) {
   return { subcommand: stripped[index], rest: stripped.slice(index + 1), normalized: stripped };
 }
 
-function classifyGit(segment: string[]) {
+function classifyGit(segment: string[], options: Record<string, any> = {}) {
   const parsed = parseGitInvocation(segment);
   if (!parsed?.subcommand) return null;
   const { subcommand, rest, normalized } = parsed;
+  const bypass = protectedBranchBypass(normalized, subcommand, rest, options);
+  if (bypass) return bypass;
   if (subcommand === "reset" && rest.includes("--hard")) {
     return block("git reset --hard is blocked because it can discard session work", normalized);
   }
@@ -197,7 +305,7 @@ function classifyGit(segment: string[]) {
       return block("mutating git stash commands are blocked", normalized);
     }
   }
-  if (subcommand === "push" && rest.some((token) => token === "--force" || token === "--force-with-lease" || token === "-f")) {
+  if (subcommand === "push" && (rest.some(isForcePushToken) || pushRefspecs(rest).some((refspec) => refspec.startsWith("+")))) {
     return block("force push is blocked", normalized);
   }
   return null;
@@ -252,11 +360,11 @@ function classifySegment(segment: string[], options: Record<string, any>) {
     const nested = classifyGuardCommand(payload, options);
     if (nested.blocked) return block(`shell -c payload is blocked: ${nested.reason}`, segment);
   }
-  const gitResult = classifyGit(segment);
+  const gitResult = classifyGit(segment, options);
   if (gitResult) return gitResult;
   const gitIndex = segment.findIndex((token) => token === "git");
   if (gitIndex > 0) {
-    const nestedGitResult = classifyGit(segment.slice(gitIndex));
+    const nestedGitResult = classifyGit(segment.slice(gitIndex), options);
     if (nestedGitResult) return nestedGitResult;
   }
   const stripped = stripCommandWrappers(segment);

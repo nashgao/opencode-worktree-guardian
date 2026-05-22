@@ -15,6 +15,9 @@ const blocked = [
   "git stash pop",
   "git push --force origin feature",
   "git push --force-with-lease",
+  "git push --force-with-lease=main origin feature",
+  "git push --force=main origin feature",
+  "git push origin +feature:feature",
   "git -C /tmp/repo reset --hard",
   "git -C /tmp/repo clean -fd",
   "git -C /tmp/repo worktree remove /tmp/wt",
@@ -37,6 +40,7 @@ const blocked = [
   "git switch -f main",
   "git switch --force main",
   "git switch --discard-changes main",
+  "git status\ngit reset --hard",
 ];
 
 for (const command of blocked) {
@@ -44,6 +48,57 @@ for (const command of blocked) {
     assert.equal(classifyGuardCommand(command).blocked, true);
   });
 }
+
+
+const protectedBranchOptions = {
+  protectedBranches: ["main", "master"],
+  branchPrefix: "guardian/",
+  currentBranch: "main",
+};
+
+test("blocks Guardian protected branch bypasses when branch context is available", () => {
+  for (const command of [
+    "git push origin HEAD:main",
+    "git push origin guardian/foo:main",
+    "git push origin guardian/foo:refs/heads/main",
+    "git push origin refs/heads/guardian/foo:refs/heads/main",
+    "git push origin 'guardian/foo:main'",
+    "git push origin \"HEAD:main\"",
+    "git push --repo origin HEAD:main",
+    "git push -o ci.skip origin HEAD:main",
+    "git push --push-option ci.skip origin HEAD:main",
+    "git push --atomic --porcelain -u origin HEAD:main",
+    "git push --set-upstream origin guardian/foo:main",
+    "git push origin +guardian/foo:main",
+    "git push origin +HEAD:main",
+    "git merge guardian/foo",
+    "git merge refs/heads/guardian/foo",
+  ]) {
+    const result = classifyGuardCommand(command, protectedBranchOptions);
+    assert.equal(result.blocked, true, command);
+    assert.match(result.reason, /guardian_finish/);
+  }
+});
+
+test("blocks protected branch deletion push refspecs when branch context is available", () => {
+  for (const command of [
+    "git push origin --delete main",
+    "git push origin :main",
+  ]) {
+    const result = classifyGuardCommand(command, protectedBranchOptions);
+    assert.equal(result.blocked, true, command);
+    assert.match(result.reason, /protected branch/);
+  }
+});
+
+test("does not block protected branch bypass patterns without required context", () => {
+  assert.equal(classifyGuardCommand("git push origin HEAD:main").blocked, false);
+  assert.equal(classifyGuardCommand("git merge guardian/foo", {
+    protectedBranches: ["main"],
+    branchPrefix: "guardian/",
+    currentBranch: "feature",
+  }).blocked, false);
+});
 
 test("blocks rm -rf only for known worktree paths", () => {
   assert.equal(classifyGuardCommand("rm -rf ../repo/.worktrees/a", {
