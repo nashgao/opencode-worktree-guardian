@@ -4,6 +4,7 @@ import { expandWorktreeRoot, loadConfig } from "./config.ts";
 import { buildPreservedRef, createRef, getCurrentBranch, getHeadCommit, getRepoRoot, listWorktrees, runGit } from "./git.ts";
 import { guardianFinish } from "./finish.ts";
 import { guardianRecover, guardianStatus } from "./recover.ts";
+import { guardianReportHtml } from "./report.ts";
 import { getGuardianPaths, readState, recordSession } from "./state.ts";
 
 async function safeRealpath(candidate: string) {
@@ -156,6 +157,7 @@ export function buildInvisiblePolicy(config: Record<string, any>) {
     "Worktree Guardian policy:",
     "- Treat the current guardian-owned worktree and branch as preserved user work.",
     "- Do not run raw destructive git cleanup, reset, stash mutation, force-push, worktree removal, or rm -rf against worktrees.",
+    "- Finish Guardian work through guardian_finish; do not manually push or merge Guardian branches into protected branches.",
     "- Use guardian_status for read-only inspection and guardian_finish for gated completion.",
     `- Default finish mode is ${config.finishMode}; auto-finish is ${config.autoFinish ? "enabled by repo config" : "disabled"} unless repo config opts in.`,
   ].join("\n");
@@ -204,10 +206,10 @@ export async function guardianPreserve(input: Record<string, any> = {}) {
 export function rewriteGuardianCommand(input: Record<string, any> = {}, output: Record<string, any> = {}) {
   const command = input?.command;
   if (typeof command !== "string") return false;
-  const match = command.trim().match(/^\/?guardian\s+(status|finish|preserve|recover|start)\b(.*)$/);
+  const match = command.trim().match(/^\/?guardian\s+(status|finish|preserve|recover|report|start)\b(.*)$/);
   if (!match) return false;
   const [, action, rest] = match;
-  const toolName = `guardian_${action}`;
+  const toolName = action === "report" ? "guardian_report_html" : `guardian_${action}`;
   const text = `Use the ${toolName} native tool.${rest.trim() ? ` User arguments: ${rest.trim()}` : ""}`;
   if (!output || typeof output !== "object") return false;
   output.parts = [{ type: "text", text }];
@@ -241,5 +243,6 @@ export async function runGuardianTool(name: string, input: Record<string, any> =
   if (name === "guardian_finish") return guardianFinish(input);
   if (name === "guardian_preserve") return guardianPreserve(input);
   if (name === "guardian_recover") return guardianRecover(input);
+  if (name === "guardian_report_html") return guardianReportHtml(input);
   throw new Error(`Unknown guardian tool: ${name}`);
 }

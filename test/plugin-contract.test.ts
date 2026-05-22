@@ -8,6 +8,7 @@ const expectedToolNames = [
   "guardian_finish",
   "guardian_preserve",
   "guardian_recover",
+  "guardian_report_html",
   "guardian_start",
   "guardian_status",
 ];
@@ -66,7 +67,7 @@ test("guardian native tools expose OpenCode tool definitions", async () => {
   }
 });
 
-test("guardian_status tool execute returns OpenCode tool result shape", async () => {
+test("guardian_status tool execute returns readable output with raw metadata", async () => {
   const repo = await createRepo();
   const hooks = await plugin.server({ directory: repo, worktree: repo });
   const { context, metadataCalls } = createToolContext();
@@ -77,8 +78,45 @@ test("guardian_status tool execute returns OpenCode tool result shape", async ()
   assert.equal(typeof result.output, "string");
   assert.equal(typeof result.metadata, "object");
   assert.deepEqual(metadataCalls, [{ title: "guardian_status" }]);
-  const status = JSON.parse(result.output);
-  assert.equal(status.repoRoot, repo);
+  assert.equal(result.metadata.repoRoot, repo);
+  assert.match(result.output, /\[GOOD\] guardian_status snapshot/);
+  assert.match(result.output, /\[INFO\] repoRoot:/);
+  assert.match(result.output, /sessions: \d+/);
+  assert.match(result.output, /worktrees: \d+/);
+});
+
+test("guardian_recover tool execute returns readable output with raw metadata", async () => {
+  const repo = await createRepo();
+  const hooks = await plugin.server({ directory: repo, worktree: repo });
+  const { context } = createToolContext();
+  context.directory = repo;
+  context.worktree = repo;
+  const execute: any = hooks.tool.guardian_recover.execute;
+  const result: any = await execute({ repoRoot: repo }, context);
+  assert.equal(typeof result.output, "string");
+  assert.equal(typeof result.metadata, "object");
+  assert.equal(result.metadata.repoRoot, repo);
+  assert.match(result.output, /\[GOOD\] guardian_recover snapshot/);
+  assert.match(result.output, /recoveryCandidates: \d+/);
+  assert.match(result.output, /suggested commands|sessions:/);
+});
+
+test("guardian_report_html tool execute writes report and returns readable output with raw metadata", async () => {
+  const repo = await createRepo();
+  const hooks = await plugin.server({ directory: repo, worktree: repo });
+  const { context } = createToolContext();
+  context.directory = repo;
+  context.worktree = repo;
+  const execute: any = hooks.tool.guardian_report_html.execute;
+  const result: any = await execute({ repoRoot: repo }, context);
+  assert.equal(typeof result.output, "string");
+  assert.equal(typeof result.metadata, "object");
+  assert.equal(result.metadata.ok, true);
+  assert.match(result.metadata.reportPath, /\.git\/opencode-guardian\/report\.html$/);
+  assert.equal(typeof result.metadata.status, "object");
+  assert.equal(typeof result.metadata.recover, "object");
+  assert.match(result.output, /\[GOOD\] guardian_report_html wrote offline report/);
+  assert.match(result.output, /reportPath:/);
 });
 
 test("README documents local shim and readiness command names", async () => {
@@ -88,4 +126,6 @@ test("README documents local shim and readiness command names", async () => {
   assert.match(readme, /test:smoke:package/);
   assert.match(readme, /test:smoke:host/);
   assert.match(readme, /test:readiness/);
+  assert.match(readme, /guardian_report_html/);
+  assert.match(readme, /\.git\/opencode-guardian\/report\.html/);
 });

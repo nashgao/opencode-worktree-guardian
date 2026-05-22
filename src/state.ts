@@ -12,6 +12,7 @@ export async function getGuardianPaths(repoRoot: string) {
     dir,
     statePath: path.join(dir, "state.json"),
     eventsPath: path.join(dir, "events.jsonl"),
+    reportPath: path.join(dir, "report.html"),
     lockPath: path.join(dir, "state.lock"),
   };
 }
@@ -103,6 +104,14 @@ export async function writeStateAtomic(paths: Record<string, string>, state: Rec
   await fs.rename(tmpPath, paths.statePath);
 }
 
+export async function writeReportAtomic(paths: Record<string, string>, html: string) {
+  await fs.mkdir(paths.dir, { recursive: true });
+  await assertNotSymlink(paths.reportPath, "report");
+  const tmpPath = `${paths.reportPath}.${process.pid}.${Date.now()}.tmp`;
+  await fs.writeFile(tmpPath, html);
+  await fs.rename(tmpPath, paths.reportPath);
+}
+
 export async function appendEvent(paths: Record<string, string>, event: Record<string, any>) {
   await fs.mkdir(paths.dir, { recursive: true });
   await assertNotSymlink(paths.eventsPath, "events");
@@ -117,8 +126,15 @@ export async function updateState(repoRoot: string, config: Record<string, any>,
     const next = await updater(structuredClone(previous));
     next.state_version = (previous.state_version ?? 0) + 1;
     next.updated_at = new Date().toISOString();
+    const event = options.event ? { ...options.event, state_version: next.state_version } : null;
+    if (event) await assertNotSymlink(paths.eventsPath, "events");
     await writeStateAtomic(paths, next);
-    if (options.event) await appendEvent(paths, { ...options.event, state_version: next.state_version });
+    try {
+      if (event) await appendEvent(paths, event);
+    } catch (error) {
+      await writeStateAtomic(paths, previous);
+      throw error;
+    }
     return next;
   } finally {
     await release();

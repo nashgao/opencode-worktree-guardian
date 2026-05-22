@@ -1,15 +1,17 @@
 import fs from "node:fs/promises";
 import { tool } from "@opencode-ai/plugin";
 import { loadConfig } from "./config.ts";
+import { getCurrentBranch } from "./git.ts";
 import { classifyGuardCommand, classifyReadOnlyInspectionCommand, extractCommandText } from "./guards.ts";
 import { collectKnownWorktreePaths, guardianStart, injectInvisiblePolicy, recordLastSafeState, resolveSessionWorktree, rewriteGuardianCommand, runGuardianTool } from "./tools.ts";
 
 export { DEFAULT_CONFIG, FINISH_MODES, loadConfig, normalizeConfig } from "./config.ts";
 export { classifyGuardCommand, classifyReadOnlyInspectionCommand, extractCommandText, tokenizeCommand } from "./guards.ts";
 export { buildPreservedRef, buildSafetyRef, createSafetyRef, getRepoRoot, listWorktrees, runGit } from "./git.ts";
-export { acquireStateLock, appendEvent, getGuardianPaths, readState, recordSession, updateState, writeStateAtomic } from "./state.ts";
+export { acquireStateLock, appendEvent, getGuardianPaths, readState, recordSession, updateState, writeReportAtomic, writeStateAtomic } from "./state.ts";
 export { guardianFinish } from "./finish.ts";
 export { guardianRecover, guardianStatus } from "./recover.ts";
+export { guardianReportHtml, renderGuardianReportHtml } from "./report.ts";
 export { buildInvisiblePolicy, collectKnownWorktreePaths, guardianPreserve, guardianStart, injectInvisiblePolicy, recordLastSafeState, resolveSessionWorktree, rewriteGuardianCommand, runGuardianTool } from "./tools.ts";
 
 const SERVICE = "worktree-guardian";
@@ -106,6 +108,119 @@ async function tryInvisibleStart(input: any, context: Record<string, any>, confi
   }
 }
 
+
+const READABLE_GUARDIAN_TOOLS = new Set(["guardian_status", "guardian_recover", "guardian_report_html"]);
+
+function recordValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function arrayValue(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function textValue(value: unknown, fallback = "-") {
+  return typeof value === "string" && value.length > 0 ? value : fallback;
+}
+
+function shortCommit(value: unknown) {
+  const text = textValue(value);
+  return text === "-" ? text : text.slice(0, 12);
+}
+
+function countLine(result: Record<string, unknown>) {
+  const counts = [
+    ["sessions", arrayValue(result.sessions).length],
+    ["worktrees", arrayValue(result.worktrees).length],
+    ["orphaned", arrayValue(result.orphanedSessions).length],
+    ["dirty", arrayValue(result.dirtyFiles).length],
+    ["stashes", arrayValue(result.stashes).length],
+    ["safetyRefs", arrayValue(result.safetyRefs).length],
+    ["preservedRefs", arrayValue(result.preservedRefs).length],
+    ["recoveryCandidates", arrayValue(result.recoveryCandidates).length],
+  ];
+  return counts.map(([label, count]) => `${label}: ${count}`).join(" | ");
+}
+
+function describeEntry(entry: unknown) {
+  const item = recordValue(entry);
+  return textValue(item.session_id ?? item.sessionId ?? item.branch ?? item.path ?? item.worktree_path ?? item.name ?? item.ref ?? item.command ?? entry, JSON.stringify(entry));
+}
+
+function formatGuardianStatusOutput(name: string, rawResult: unknown) {
+  const result = recordValue(rawResult);
+  const lines = [
+    `${result.ok === false ? "[FAIL]" : "[GOOD]"} ${name} snapshot`,
+    `[INFO] repoRoot: ${textValue(result.repoRoot)}`,
+    `[INFO] ${countLine(result)}`,
+  ];
+
+  const reason = textValue(result.reason, "");
+  if (result.ok === false || reason) lines.push(`[FAIL] ${reason || "guardian tool reported failure"}`);
+
+  const warningSections = [
+    ["orphaned sessions", result.orphanedSessions],
+    ["worktrees without state", result.worktreesWithoutState],
+    ["state branches without worktrees", result.stateBranchesWithoutWorktrees],
+    ["dirty files", result.dirtyFiles],
+    ["stashes", result.stashes],
+  ];
+  for (const [label, value] of warningSections) {
+    const entries = arrayValue(value);
+    if (entries.length > 0) {
+      lines.push(`[WARN] ${label}: ${entries.length}`);
+      for (const entry of entries.slice(0, 8)) lines.push(`  - ${describeEntry(entry)}`);
+    }
+  }
+
+  const sessions = arrayValue(result.sessions);
+  lines.push(`[INFO] sessions: ${sessions.length}`);
+  for (const entry of sessions.slice(0, 12)) {
+    const session = recordValue(entry);
+    lines.push(`  - session_id=${textValue(session.session_id ?? session.sessionId)} status=${textValue(session.status)} branch=${textValue(session.branch)} worktree_path=${textValue(session.worktree_path ?? session.worktreePath)} head=${shortCommit(session.head_commit ?? session.headCommit)}`);
+  }
+
+  const worktrees = arrayValue(result.worktrees);
+  lines.push(`[INFO] worktrees: ${worktrees.length}`);
+  for (const entry of worktrees.slice(0, 12)) {
+    const worktree = recordValue(entry);
+    const markers = [worktree.detached === true ? "detached" : "", worktree.bare === true ? "bare" : ""].filter(Boolean).join(",");
+    lines.push(`  - branch=${textValue(worktree.branch)} head=${shortCommit(worktree.head ?? worktree.head_commit ?? worktree.headCommit)} path=${textValue(worktree.path ?? worktree.worktree_path ?? worktree.worktreePath)}${markers ? ` markers=${markers}` : ""}`);
+  }
+
+  const recoveryCandidates = arrayValue(result.recoveryCandidates);
+  if (recoveryCandidates.length > 0) {
+    lines.push(`[INFO] recovery candidates: ${recoveryCandidates.length}`);
+    for (const entry of recoveryCandidates.slice(0, 12)) lines.push(`  - ${describeEntry(entry)}`);
+  }
+
+  const suggestions = arrayValue(result.suggestedCommands);
+  if (suggestions.length > 0) {
+    lines.push("[INFO] suggested commands:");
+    for (const command of suggestions) lines.push(`  - ${textValue(command, String(command))}`);
+  }
+
+  return lines.join("\n");
+}
+
+function formatGuardianReportOutput(rawResult: unknown) {
+  const result = recordValue(rawResult);
+  const status = recordValue(result.status);
+  const recover = recordValue(result.recover);
+  const lines = [
+    `${result.ok === false ? "[FAIL]" : "[GOOD]"} guardian_report_html wrote offline report`,
+    `[INFO] reportPath: ${textValue(result.reportPath)}`,
+    `[INFO] repoRoot: ${textValue(status.repoRoot)}`,
+    `[INFO] sessions: ${arrayValue(status.sessions).length} | worktrees: ${arrayValue(status.worktrees).length} | risks: ${arrayValue(status.orphanedSessions).length + arrayValue(status.worktreesWithoutState).length + arrayValue(status.dirtyFiles).length + arrayValue(status.stashes).length} | recoveryCandidates: ${arrayValue(recover.recoveryCandidates).length}`,
+  ];
+  return lines.join("\n");
+}
+
+function formatGuardianOutput(name: string, result: unknown) {
+  if (name === "guardian_report_html") return formatGuardianReportOutput(result);
+  return formatGuardianStatusOutput(name, result);
+}
+
 function guardianTool(name: string, description: string) {
   return tool({
     description,
@@ -126,7 +241,7 @@ function guardianTool(name: string, description: string) {
       return {
         title: name,
         metadata: result,
-        output: JSON.stringify(result, null, 2),
+        output: READABLE_GUARDIAN_TOOLS.has(name) ? formatGuardianOutput(name, result) : JSON.stringify(result, null, 2),
       };
     },
   });
@@ -147,6 +262,7 @@ const WorktreeGuardianPlugin = {
         guardian_finish: guardianTool("guardian_finish", "Apply the configured gated finish mode for the current guardian-owned worktree."),
         guardian_preserve: guardianTool("guardian_preserve", "Mark the current guardian-owned worktree as intentionally preserved."),
         guardian_recover: guardianTool("guardian_recover", "List recovery refs, orphaned sessions, stash inventory, and suggested recovery commands without mutation."),
+        guardian_report_html: guardianTool("guardian_report_html", "Write a static offline HTML report for guardian sessions, worktrees, branches, risks, and recovery commands."),
       },
 
       async "experimental.chat.system.transform"(input: any, output: any) {
@@ -190,9 +306,20 @@ const WorktreeGuardianPlugin = {
             currentWorktree: worktree,
           });
         } catch {}
+        let guardConfig: Record<string, any> | null = null;
+        try {
+          if (await pathExists(directory)) guardConfig = (await loadConfig(directory)).config;
+        } catch {}
+        let currentBranch: string | null = null;
+        try {
+          currentBranch = await getCurrentBranch(executionCwd);
+        } catch {}
         const guard = classifyGuardCommand(command, {
           cwd: executionCwd,
           knownWorktreePaths,
+          protectedBranches: guardConfig?.protectedBranches,
+          branchPrefix: guardConfig?.branchPrefix,
+          currentBranch,
         });
         const readOnly = sessionWorktree?.ok === false ? classifyReadOnlyInspectionCommand(command) : { allowed: true, reason: null };
         await writeLog(client, createEvent("tool.execute.before", input, output, context, { guard, sessionWorktree, readOnly }));
@@ -259,13 +386,13 @@ const WorktreeGuardianPlugin = {
                   cache: sessionWorktreeCache,
                   config,
                 });
-                autoFinishedSessions.add(sessionId);
                 autoFinish = await runGuardianTool("guardian_finish", {
                   repoRoot: directory,
                   cwd: sessionWorktree.expectedWorktree ?? executionCwd,
                   sessionId,
                   finishMode: config.finishMode,
                 });
+                if (autoFinish?.ok === true) autoFinishedSessions.add(sessionId);
               }
             } catch (error) {
               autoFinish = { ok: false, reason: error.message };
