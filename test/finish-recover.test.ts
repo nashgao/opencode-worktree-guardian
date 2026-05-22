@@ -56,11 +56,39 @@ test("preserve-only finish gates ownership and creates a safety ref without clea
   assert.equal(result.ok, true);
   assert.equal(result.status, "preserved");
   assert.match(result.safetyRef, /^refs\/opencode-guardian\/ses_preserve\/guardian\/preserve\//);
+  assert.equal(result.preflight.sessionRecorded, true);
+  assert.equal(result.preflight.sessionOwnedWorktree, true);
+  assert.equal(result.preflight.branchProtected, false);
+  assert.equal(result.preflight.dirtyFileCount, 0);
+  assert.equal(result.preflight.stashCount, 0);
+  assert.equal(result.preflight.safetyRef, result.safetyRef);
+  assert.equal(result.report.action, "preserved");
+  assert.equal(result.report.remote, DEFAULT_CONFIG.remote);
+  assert.equal(result.report.baseBranch, DEFAULT_CONFIG.baseBranch);
 
   const status = await guardianStatus({ repoRoot: repo, config: DEFAULT_CONFIG });
   assert.equal(status.sessions.find((session: Record<string, any>) => session.session_id === "ses_preserve").status, "preserved");
   assert.equal(status.safetyRefs.length, 1);
   assert.equal(status.worktrees.some((worktree: Record<string, any>) => worktree.path === repo), true);
+});
+
+test("preserve-only finish is idempotent for already preserved sessions", async () => {
+  const repo = await createRepo();
+  const { branch } = await makeBranchCommit(repo, "guardian/preserve-repeat");
+  await recordCurrentSession(repo, "ses_preserve_repeat", branch);
+
+  const first = await guardianFinish({ repoRoot: repo, cwd: repo, sessionId: "ses_preserve_repeat", config: DEFAULT_CONFIG, timestamp: "20260513T140000" });
+  const second = await guardianFinish({ repoRoot: repo, cwd: repo, sessionId: "ses_preserve_repeat", config: DEFAULT_CONFIG, timestamp: "20260513T140100" });
+  assert.equal(second.ok, true);
+  assert.equal(second.status, "preserved");
+  assert.equal(second.idempotent, true);
+  assert.equal(second.safetyRef, first.safetyRef);
+  assert.equal(second.report.action, "already-preserved");
+
+  const status = await guardianStatus({ repoRoot: repo, config: DEFAULT_CONFIG });
+  const session = status.sessions.find((candidate: Record<string, any>) => candidate.session_id === "ses_preserve_repeat");
+  assert.deepEqual(session.safety_refs, [first.safetyRef]);
+  assert.equal(status.safetyRefs.length, 1);
 });
 
 test("finish refuses dirty worktrees before creating risk", async () => {
@@ -72,8 +100,34 @@ test("finish refuses dirty worktrees before creating risk", async () => {
   const result = await guardianFinish({ repoRoot: repo, cwd: repo, sessionId: "ses_dirty", config: DEFAULT_CONFIG });
   assert.equal(result.ok, false);
   assert.match(result.reason, /uncommitted/);
+  assert.equal(result.preflight.dirtyFileCount, 1);
+  assert.deepEqual(result.report.blockers, ["worktree has uncommitted changes"]);
+  assert.equal(result.report.action, "blocked");
   const status = await guardianStatus({ repoRoot: repo, config: DEFAULT_CONFIG });
   assert.equal(status.safetyRefs.length, 0);
+});
+
+test("push-branch finish reports push failures without cleanup", async () => {
+  const repo = await createRepo();
+  const config = { ...DEFAULT_CONFIG, finishMode: "push-branch" };
+  const { branch } = await makeBranchCommit(repo, "guardian/push-failure");
+  await recordCurrentSession(repo, "ses_push_failure", branch, config);
+
+  const result = await guardianFinish({ repoRoot: repo, cwd: repo, sessionId: "ses_push_failure", config, timestamp: "20260513T130000" });
+  assert.equal(result.ok, false);
+  assert.equal(result.status, "blocked");
+  assert.match(result.reason, /push failed/i);
+  assert.match(result.safetyRef, /^refs\/opencode-guardian\/ses_push_failure\/guardian\/push-failure\//);
+  assert.equal(result.preflight.safetyRef, result.safetyRef);
+  assert.equal(result.report.safetyRef, result.safetyRef);
+  assert.equal(result.report.action, "blocked");
+
+  const status = await guardianStatus({ repoRoot: repo, config });
+  const session = status.sessions.find((candidate: Record<string, any>) => candidate.session_id === "ses_push_failure");
+  assert.equal(session.status, "active");
+  assert.deepEqual(session.safety_refs, [result.safetyRef]);
+  assert.equal(status.safetyRefs.length, 1);
+  assert.equal(status.worktrees.some((worktree: Record<string, any>) => worktree.path === repo), true);
 });
 
 test("create-pr mode pushes branch and returns a PR suggestion", async () => {
@@ -86,6 +140,8 @@ test("create-pr mode pushes branch and returns a PR suggestion", async () => {
   assert.equal(result.ok, true);
   assert.equal(result.status, "pr-suggested");
   assert.match(result.suggestedCommand, /gh pr create/);
+  assert.equal(result.report.action, "pushed-and-suggested-pr");
+  assert.equal(result.report.suggestedCommand, result.suggestedCommand);
   const refs = await git(remote, ["show-ref", "refs/heads/guardian/pr"]);
   assert.match(refs.stdout, /refs\/heads\/guardian\/pr/);
 });
@@ -99,6 +155,8 @@ test("merge-to-base requires explicit mode and ancestry proof", async () => {
   const refused = await guardianFinish({ repoRoot: repo, cwd: repo, sessionId: "ses_merge", config });
   assert.equal(refused.ok, false);
   assert.match(refused.reason, /allowMergeToBase/);
+  assert.equal(refused.preflight.safetyRef, refused.safetyRef);
+  assert.equal(refused.report.action, "requires-explicit-merge-approval");
 
   const result = await guardianFinish({ repoRoot: repo, cwd: repo, sessionId: "ses_merge", config, allowMergeToBase: true });
   assert.equal(result.ok, true);
@@ -142,6 +200,8 @@ test("invisible policy helper injects policy but does not enable auto-finish by 
   assert.equal(injectInvisiblePolicy(output, DEFAULT_CONFIG), true);
   assert.equal(output.system.length, 2);
   assert.match(output.system[1], /auto-finish is disabled/);
+  assert.match(output.system[1], /guardian_finish/);
+  assert.match(output.system[1], /protected branches/);
 });
 
 test("guardian tool dispatcher exposes internal functions", async () => {
