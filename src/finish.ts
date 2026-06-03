@@ -1,5 +1,5 @@
 import path from "node:path";
-import { loadConfig } from "./config.ts";
+import { expandWorktreeRoot, loadConfig } from "./config.ts";
 import { createSafetyRef, fetchRemote, getCurrentBranch, getDirtyFiles, getHeadCommit, getRepoRoot, isAncestor, listStashes, pushBranch, runGit } from "./git.ts";
 import { getGuardianPaths, readState, recordSession } from "./state.ts";
 
@@ -23,7 +23,13 @@ function withFinishReport(result: Record<string, any>, preflight: Record<string,
       sessionBranch: preflightSnapshot.sessionBranch,
       branchProtected: preflightSnapshot.branchProtected,
       dirtyFileCount: preflightSnapshot.dirtyFileCount,
+      allowedDirtyFileCount: preflightSnapshot.allowedDirtyFileCount,
+      blockingDirtyFileCount: preflightSnapshot.blockingDirtyFileCount,
       stashCount: preflightSnapshot.stashCount,
+      baseWorktree: preflightSnapshot.baseWorktree,
+      baseWorktreeBranch: preflightSnapshot.baseWorktreeBranch,
+      baseWorktreeDirtyFileCount: preflightSnapshot.baseWorktreeDirtyFileCount,
+      baseWorktreeIgnoredDirtyFileCount: preflightSnapshot.baseWorktreeIgnoredDirtyFileCount,
       safetyRef: preflightSnapshot.safetyRef ?? result.safetyRef ?? null,
       remote: preflightSnapshot.remote,
       baseBranch: preflightSnapshot.baseBranch,
@@ -55,6 +61,59 @@ function errorMessage(error: unknown) {
   return String(error);
 }
 
+function normalizeDirtyPath(value: string) {
+  return value.replace(/\\/g, "/").replace(/^\.\//, "");
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[|\\{}()[\]^$+?.]/g, "\\$&");
+}
+
+function globToRegExp(pattern: string) {
+  let source = "^";
+  for (let index = 0; index < pattern.length; index += 1) {
+    const char = pattern[index];
+    if (char === "*") {
+      if (pattern[index + 1] === "*") {
+        source += ".*";
+        index += 1;
+      } else {
+        source += "[^/]*";
+      }
+    } else {
+      source += escapeRegExp(char);
+    }
+  }
+  return new RegExp(`${source}$`);
+}
+
+function matchesAllowedDirtyPath(filePath: string, pattern: string) {
+  const file = normalizeDirtyPath(filePath);
+  const allowed = normalizeDirtyPath(pattern);
+  if (!allowed) return false;
+  if (allowed.endsWith("/**")) {
+    const prefix = allowed.slice(0, -3).replace(/\/$/, "");
+    return file === prefix || file.startsWith(`${prefix}/`);
+  }
+  if (!allowed.includes("*")) return file === allowed;
+  return globToRegExp(allowed).test(file);
+}
+
+function classifyDirtyFiles(dirtyFiles: string[], allowDirtyPaths: unknown) {
+  const patterns = Array.isArray(allowDirtyPaths) ? allowDirtyPaths.filter((value): value is string => typeof value === "string" && value.length > 0) : [];
+  const allowedDirtyFiles = dirtyFiles.filter((file) => patterns.some((pattern) => matchesAllowedDirtyPath(file, pattern)));
+  const blockingDirtyFiles = dirtyFiles.filter((file) => !allowedDirtyFiles.includes(file));
+  return { allowedDirtyFiles, blockingDirtyFiles };
+}
+
+function splitPrimaryDirtyFiles(dirtyFiles: string[], repoRoot: string, config: Record<string, any>) {
+  const guardianRoot = normalizeDirtyPath(expandWorktreeRoot(config.worktreeRoot, repoRoot)).replace(/\/$/, "");
+  const guardianRootPrefix = `${guardianRoot}/`;
+  const ignoredDirtyFiles = dirtyFiles.filter((file) => normalizeDirtyPath(file).startsWith(guardianRootPrefix));
+  const blockingDirtyFiles = dirtyFiles.filter((file) => !ignoredDirtyFiles.includes(file));
+  return { ignoredDirtyFiles, blockingDirtyFiles };
+}
+
 export async function guardianFinish(input: Record<string, any> = {}): Promise<Record<string, any>> {
   const cwd = input.cwd ?? input.repoRoot ?? process.cwd();
   const repoRoot = input.repoRoot ?? await getRepoRoot(cwd);
@@ -71,9 +130,20 @@ export async function guardianFinish(input: Record<string, any> = {}): Promise<R
     sessionBranch: null,
     branchProtected: null,
     protectedBranches: config.protectedBranches,
+    allowDirtyPaths: config.allowDirtyPaths,
     dirtyFiles: [],
     dirtyFileCount: 0,
+    allowedDirtyFiles: [],
+    allowedDirtyFileCount: 0,
+    blockingDirtyFiles: [],
+    blockingDirtyFileCount: 0,
     stashCount: 0,
+    baseWorktree: null,
+    baseWorktreeBranch: null,
+    baseWorktreeDirtyFiles: [],
+    baseWorktreeDirtyFileCount: 0,
+    baseWorktreeIgnoredDirtyFiles: [],
+    baseWorktreeIgnoredDirtyFileCount: 0,
     safetyRef: null,
     remote: config.remote,
     baseBranch: config.baseBranch,
@@ -105,9 +175,14 @@ export async function guardianFinish(input: Record<string, any> = {}): Promise<R
   if (preflight.branchProtected) return blocked("protected branches cannot be finished by guardian", { branch }, preflight);
 
   const dirtyFiles = await getDirtyFiles(currentWorktree);
+  const { allowedDirtyFiles, blockingDirtyFiles } = classifyDirtyFiles(dirtyFiles, config.allowDirtyPaths);
   preflight.dirtyFiles = dirtyFiles;
   preflight.dirtyFileCount = dirtyFiles.length;
-  if (dirtyFiles.length) return blocked("worktree has uncommitted changes", { dirtyFiles, worktree: currentWorktree }, preflight);
+  preflight.allowedDirtyFiles = allowedDirtyFiles;
+  preflight.allowedDirtyFileCount = allowedDirtyFiles.length;
+  preflight.blockingDirtyFiles = blockingDirtyFiles;
+  preflight.blockingDirtyFileCount = blockingDirtyFiles.length;
+  if (blockingDirtyFiles.length) return blocked("worktree has uncommitted changes", { dirtyFiles: blockingDirtyFiles, allowedDirtyFiles, worktree: currentWorktree }, preflight);
 
   const stashes = await listStashes(currentWorktree);
   preflight.stashCount = stashes.length;
@@ -146,6 +221,13 @@ export async function guardianFinish(input: Record<string, any> = {}): Promise<R
     } catch (error) {
       return blocked("push failed", { safetyRef, branch, error: errorMessage(error) }, preflight);
     }
+    await recordSession(repoRoot, config, {
+      ...session,
+      session_id: sessionId,
+      status: "preserved",
+      head_commit: commit,
+      safety_refs: [...(session.safety_refs ?? []), safetyRef],
+    }, { event: { type: "guardian_finish", session_id: sessionId, ref: safetyRef } });
     const result: Record<string, any> = { ok: true, status: mode === "push-branch" ? "pushed" : "pr-suggested", mode, branch, safetyRef };
     if (mode === "create-pr") {
       result.suggestedCommand = `gh pr create --base ${config.baseBranch} --head ${branch}`;
@@ -158,6 +240,22 @@ export async function guardianFinish(input: Record<string, any> = {}): Promise<R
     if (input.allowMergeToBase !== true) {
       return blocked("merge-to-base requires explicit allowMergeToBase=true", { safetyRef, branch }, preflight, { action: "requires-explicit-merge-approval" });
     }
+    const baseWorktree = await getRepoRoot(repoRoot);
+    const baseWorktreeBranch = await getCurrentBranch(baseWorktree);
+    const baseWorktreeAllDirtyFiles = await getDirtyFiles(baseWorktree);
+    const { ignoredDirtyFiles: baseWorktreeIgnoredDirtyFiles, blockingDirtyFiles: baseWorktreeDirtyFiles } = splitPrimaryDirtyFiles(baseWorktreeAllDirtyFiles, repoRoot, config);
+    preflight.baseWorktree = baseWorktree;
+    preflight.baseWorktreeBranch = baseWorktreeBranch;
+    preflight.baseWorktreeDirtyFiles = baseWorktreeDirtyFiles;
+    preflight.baseWorktreeDirtyFileCount = baseWorktreeDirtyFiles.length;
+    preflight.baseWorktreeIgnoredDirtyFiles = baseWorktreeIgnoredDirtyFiles;
+    preflight.baseWorktreeIgnoredDirtyFileCount = baseWorktreeIgnoredDirtyFiles.length;
+    if (baseWorktreeBranch !== config.baseBranch) {
+      return blocked("merge-to-base requires primary repo worktree to already be on the base branch", { safetyRef, branch, baseWorktree, baseWorktreeBranch, baseBranch: config.baseBranch }, preflight);
+    }
+    if (baseWorktreeDirtyFiles.length > 0) {
+      return blocked("merge-to-base requires primary repo worktree to be clean", { safetyRef, branch, baseWorktree, dirtyFiles: baseWorktreeDirtyFiles }, preflight);
+    }
     await runGit(repoRoot, ["checkout", config.baseBranch]);
     await runGit(repoRoot, ["merge", "--ff-only", branch]);
     await runGit(repoRoot, ["push", config.remote, config.baseBranch]);
@@ -168,6 +266,9 @@ export async function guardianFinish(input: Record<string, any> = {}): Promise<R
     const shouldCleanup = config.autoCleanup === true || input.allowCleanup === true;
     if (!shouldCleanup) {
       return withFinishReport({ ok: true, status: "merged", mode, branch, commit, safetyRef, cleaned: false }, preflight, { action: "merged-without-cleanup" });
+    }
+    if (preflight.allowedDirtyFileCount > 0) {
+      return withFinishReport({ ok: true, status: "merged", mode, branch, commit, safetyRef, cleaned: false, cleanupSkippedReason: "allowed dirty files are present" }, preflight, { action: "merged-without-cleanup", cleanupSkippedReason: "allowed dirty files are present" });
     }
     if (samePath(currentWorktree, repoRoot)) {
       return blocked("refusing to remove the primary/current repo worktree", { safetyRef, commit, branch }, preflight);

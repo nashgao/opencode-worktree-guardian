@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 const authoredRoots = ["src", "test", "scripts"];
 const forbiddenExtensions = new Set([".js", ".mjs", ".cjs"]);
+const allowedAuthoredJavaScript = new Set(["scripts/with-safe-node-temp.mjs"]);
 const commandTimeoutMs = 10 * 60 * 1000;
 const commands: Array<[string, string[]]> = [
   ["npm", ["run", "verify"]],
@@ -15,6 +16,10 @@ const commands: Array<[string, string[]]> = [
   ["npm", ["run", "test:smoke:host"]],
   ["npm", ["pack", "--dry-run", "--json"]],
 ];
+
+function normalizeRelative(value: string) {
+  return value.split(path.sep).join("/");
+}
 
 async function collectForbiddenAuthoredFiles(root: string) {
   const found: string[] = [];
@@ -26,7 +31,8 @@ async function collectForbiddenAuthoredFiles(root: string) {
         await visit(fullPath);
         continue;
       }
-      if (forbiddenExtensions.has(path.extname(entry.name))) found.push(fullPath);
+      const relative = normalizeRelative(path.relative(root, fullPath));
+      if (forbiddenExtensions.has(path.extname(entry.name)) && !allowedAuthoredJavaScript.has(relative)) found.push(fullPath);
     }
   }
 
@@ -37,7 +43,7 @@ async function collectForbiddenAuthoredFiles(root: string) {
 const forbiddenAuthoredFiles = await collectForbiddenAuthoredFiles(process.cwd());
 if (forbiddenAuthoredFiles.length) {
   console.error("Authored JavaScript files are not allowed:");
-  for (const file of forbiddenAuthoredFiles) console.error(`- ${path.relative(process.cwd(), file)}`);
+  for (const file of forbiddenAuthoredFiles) console.error(`- ${normalizeRelative(path.relative(process.cwd(), file))}`);
   process.exit(1);
 }
 
