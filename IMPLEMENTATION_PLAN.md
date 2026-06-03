@@ -38,13 +38,13 @@ The plugin exists because a previous cleanup workflow removed a feature worktree
 
 The default mode must protect work before it optimizes for convenience.
 
-Early versions should automatically create/attach worktrees, block destructive commands, and create safety refs. They should not silently push, merge, or delete until the repository explicitly opts into that finish behavior.
+Early versions should create or attach a session-owned worktree by default, block destructive commands, and create safety refs so Guardian owns the full lifecycle it starts. Repo config may opt out with `autoStart: false`. The default finish behavior should push the session branch and suggest a PR without silently merging or deleting; direct base-branch merge and cleanup remain explicit opt-ins.
 
 Default config:
 
 ```json
 {
-  "finishMode": "preserve-only",
+  "finishMode": "create-pr",
   "autoStart": true,
   "autoFinish": false,
   "autoCleanup": false
@@ -88,18 +88,18 @@ Implement feature X.
 Plugin behavior:
 
 1. Detect the repo and base branch.
-2. Create or attach a session-owned worktree.
+2. Create or attach a session-owned worktree by default unless repo config sets `autoStart: false`.
 3. Inject session policy into the agent context.
-4. Keep shell/tool operations rooted in the owned worktree.
+4. Keep shell/tool operations rooted in the owned worktree when ownership is recorded; otherwise allow normal non-destructive commands in the current worktree.
 5. Block raw destructive commands.
 6. On completion, run the configured finish behavior if safe.
-7. In default `preserve-only` mode, create safety refs and preserve the branch/worktree instead of merging or deleting.
+7. In default `create-pr` mode, create a safety ref, push the branch, suggest a PR, and preserve the branch/worktree instead of merging or deleting.
 8. If unsafe, preserve work and report the exact blocker.
 
 Expected final success report:
 
 ```text
-Implemented, committed, preserved, and protected with a safety ref.
+Implemented, committed, pushed, PR suggested, and protected with a safety ref.
 Safety ref: refs/opencode-guardian/<session>/<branch>/<timestamp>
 ```
 
@@ -235,7 +235,7 @@ Example config:
   "baseBranch": "main",
   "worktreeRoot": ".worktrees/$REPO",
   "branchPrefix": "guardian/",
-  "finishMode": "preserve-only",
+  "finishMode": "create-pr",
   "autoStart": true,
   "autoFinish": false,
   "autoCleanup": false,
@@ -245,9 +245,10 @@ Example config:
 }
 ```
 
-Config defaults must be conservative:
+Config defaults must be delivery-first and cleanup-conservative:
 
-- `finishMode`: `preserve-only`
+- `finishMode`: `create-pr`
+- `autoStart`: `true`
 - `autoCleanup`: `false`
 - `allowStashIfUnrelated`: `false`
 - protected branches include `main` and `master`
@@ -262,7 +263,7 @@ Example state:
   "repo_root": "/path/to/repo",
   "base_branch": "main",
   "remote": "origin",
-  "finish_mode": "preserve-only",
+  "finish_mode": "create-pr",
   "worktree_root": ".worktrees/$REPO",
   "sessions": {
     "ses_abc": {
@@ -477,7 +478,7 @@ Deliverables:
 - plugin entry point
 - `tool.execute.before` guard matrix
 - `guardian_status` read-only tool
-- conservative config loading from `.opencode/worktree-guardian.tson`
+- delivery-first, cleanup-conservative config loading from `.opencode/worktree-guardian.tson`
 - tests for blocked commands
 
 Exit criteria:
@@ -485,7 +486,7 @@ Exit criteria:
 - raw dangerous cleanup/reset/stash commands are blocked
 - read-only status works in a disposable repo
 - no automatic merge/cleanup yet
-- default behavior is `preserve-only`
+- default behavior is `create-pr` without automatic merge or cleanup
 
 ### Phase 2 - Ownership Mode
 
@@ -522,7 +523,7 @@ Deliverables:
 Exit criteria:
 
 - clean merged worktree is finished and cleaned
-- default `preserve-only` finish creates a safety ref and preserves the worktree
+- default `create-pr` finish creates a safety ref, pushes the branch, suggests a PR, and preserves the worktree
 - clean unmerged worktree is not cleaned unless finish gate merges and pushes it
 - dirty worktree is preserved
 - unrelated worktrees survive
@@ -546,20 +547,20 @@ Exit criteria:
 
 ### Phase 5 - Invisible Mode
 
-Goal: remove manual burden from developer workflow.
+Goal: remove manual burden from developer workflow by creating session worktrees automatically while keeping finish and cleanup lifecycle-managed.
 
 Deliverables:
 
 - `chat.system.transform` policy injection
-- automatic `guardian_start` for implementation sessions
+- automatic `guardian_start` for implementation sessions unless repo config sets `autoStart: false`
 - automatic configured finish attempt at completion when safe
 - blocked-state report format
 
 Exit criteria:
 
-- user can say `implement X`
-- plugin routes work into a session worktree
-- plugin applies the configured finish behavior silently when safe
+- user can say `implement X` and Guardian creates or attaches a session worktree, then owns the finish/delete lifecycle for that worktree
+- plugin routes work into a session worktree only after recorded ownership exists
+- plugin applies the configured finish behavior silently only when `autoFinish` is enabled and ownership is recorded
 - plugin interrupts only on unsafe states
 
 ## Testing Strategy
@@ -576,7 +577,7 @@ Use disposable repos only.
 | safety refs | builds valid ref names and creates refs before cleanup |
 | finish preflight | dirty/stash/detached/cross-session blockers |
 | cleanup parser | treats partial cleanup failure as failure |
-| config loading | repo-local config overrides conservative defaults |
+| config loading | repo-local config overrides delivery-first, cleanup-conservative defaults |
 
 ### Integration Tests
 
@@ -587,7 +588,7 @@ Use disposable repos only.
 | Session A tries to delete Session B branch | blocked |
 | dirty worktree finish | blocked, files preserved |
 | stash exists | blocked, stash inspection recommended |
-| default preserve-only finish | creates safety ref and preserves branch/worktree |
+| default create-pr finish | creates safety ref, pushes branch, suggests PR, and preserves branch/worktree |
 | create-pr finish mode | pushes branch and creates/suggests PR without cleanup |
 | clean feature finish | merged, pushed, ancestry verified, cleaned |
 | unmerged raw cleanup | blocked |
@@ -801,7 +802,7 @@ The first slice should be deliberately small:
 2. Hook API spike that logs available context without mutating repos.
 3. `guardian_status` read-only tool.
 4. `tool.execute.before` guard that blocks raw destructive commands.
-5. Conservative config loader with `finishMode: "preserve-only"` default.
+5. Delivery-first, cleanup-conservative config loader with `finishMode: "create-pr"` default.
 6. Disposable repo tests proving the guard blocks the known failure mode.
 
 This gives immediate protection before we add invisible automation.

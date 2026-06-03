@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 import { classifyGuardCommand, classifyReadOnlyInspectionCommand, extractCommandText, tokenizeCommand } from "../src/guards.ts";
 
@@ -6,9 +9,21 @@ const blocked = [
   "git reset --hard",
   "git clean -fd",
   "git clean --force -d",
+  "git branch -d feature",
   "git branch -D feature",
+  "git branch -df feature",
+  "git branch --delete feature",
+  "git branch --delete --force feature",
+  "git update-ref -d refs/heads/guardian/foo",
+  "git update-ref -d --no-deref refs/heads/guardian/foo",
+  "git update-ref --delete refs/heads/feature",
+  "git update-ref --delete=refs/heads/main",
+  "printf 'delete refs/heads/guardian/foo' | git update-ref --stdin",
   "git worktree remove ../wt",
   "git worktree prune",
+  "git worktree add /tmp/unmanaged main",
+  "git -C /repo worktree add /private/tmp/unmanaged main",
+  `bash -lc "git worktree add /var/folders/tw/example/T/opencode/wt main"`,
   "opencode-worktree-workflow wt-clean apply feature",
   "git stash",
   "git stash push -u",
@@ -80,6 +95,228 @@ test("blocks Guardian protected branch bypasses when branch context is available
   }
 });
 
+test("blocks recorded descriptive Guardian branches from protected branch bypasses", () => {
+  const options = {
+    protectedBranches: ["main"],
+    branchPrefix: "guardian/",
+    guardianBranches: ["feature/source-facts-hardening"],
+    currentBranch: "main",
+  };
+  for (const command of [
+    "git push origin feature/source-facts-hardening:main",
+    "git push origin refs/heads/feature/source-facts-hardening:refs/heads/main",
+    "git merge feature/source-facts-hardening",
+  ]) {
+    const result = classifyGuardCommand(command, options);
+    assert.equal(result.blocked, true, command);
+    assert.match(result.reason, /guardian_finish/);
+  }
+});
+
+test("blocks git -C merges into protected worktree paths", () => {
+  const options = {
+    cwd: "/tmp",
+    protectedBranches: ["main"],
+    branchPrefix: "guardian/",
+    guardianBranches: ["feature/source-facts-hardening"],
+    currentBranch: "feature/local-context",
+    protectedBranchWorktreePaths: ["/repo"],
+  };
+
+  const result = classifyGuardCommand("git -C /repo merge feature/source-facts-hardening", options);
+
+  assert.equal(result.blocked, true);
+  assert.match(result.reason, /guardian_finish/);
+});
+
+test("blocks git -C merges inside protected worktree paths", () => {
+  const options = {
+    cwd: "/tmp",
+    protectedBranches: ["main"],
+    branchPrefix: "guardian/",
+    guardianBranches: ["feature/source-facts-hardening"],
+    currentBranch: "feature/local-context",
+    protectedBranchWorktreePaths: ["/repo"],
+  };
+
+  for (const command of [
+    "git -C /repo/subdir merge feature/source-facts-hardening",
+    "git -C /repo -C . merge feature/source-facts-hardening",
+    "git -C /repo -C subdir merge feature/source-facts-hardening",
+  ]) {
+    const result = classifyGuardCommand(command, options);
+    assert.equal(result.blocked, true, command);
+    assert.match(result.reason, /guardian_finish/);
+  }
+});
+
+test("blocks git -C symlinks to protected worktree paths", async (t) => {
+  const base = await fs.mkdtemp(path.join(os.tmpdir(), "guardian-guard-"));
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const protectedWorktree = path.join(base, "repo");
+  const link = path.join(base, "repo-link");
+  await fs.mkdir(path.join(protectedWorktree, "subdir"), { recursive: true });
+  await fs.symlink(protectedWorktree, link, "dir");
+  const options = {
+    cwd: base,
+    protectedBranches: ["main"],
+    branchPrefix: "guardian/",
+    guardianBranches: ["feature/source-facts-hardening"],
+    currentBranch: "feature/local-context",
+    protectedBranchWorktreePaths: [protectedWorktree],
+  };
+
+  for (const command of [
+    `git -C ${link} merge feature/source-facts-hardening`,
+    `git -C ${link}/subdir merge feature/source-facts-hardening`,
+  ]) {
+    const result = classifyGuardCommand(command, options);
+    assert.equal(result.blocked, true, command);
+    assert.match(result.reason, /guardian_finish/);
+  }
+});
+
+test("blocks shell cd merges into protected worktree paths", async (t) => {
+  const base = await fs.mkdtemp(path.join(os.tmpdir(), "guardian-guard-"));
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const protectedWorktree = path.join(base, "repo");
+  await fs.mkdir(path.join(protectedWorktree, "subdir"), { recursive: true });
+  const options = {
+    cwd: base,
+    protectedBranches: ["main"],
+    branchPrefix: "guardian/",
+    guardianBranches: ["feature/source-facts-hardening"],
+    currentBranch: "feature/local-context",
+    protectedBranchWorktreePaths: [protectedWorktree],
+  };
+
+  for (const command of [
+    `bash -lc "cd ${protectedWorktree} && git merge feature/source-facts-hardening"`,
+    `bash -lc "cd ${path.join(protectedWorktree, "subdir")} && git merge feature/source-facts-hardening"`,
+  ]) {
+    const result = classifyGuardCommand(command, options);
+    assert.equal(result.blocked, true, command);
+    assert.match(result.reason, /guardian_finish/);
+  }
+});
+
+test("does not let failed shell cd leave a protected worktree context", () => {
+  const options = {
+    cwd: "/repo",
+    protectedBranches: ["main"],
+    branchPrefix: "guardian/",
+    guardianBranches: ["feature/source-facts-hardening"],
+    currentBranch: "feature/local-context",
+    protectedBranchWorktreePaths: ["/repo"],
+  };
+
+  for (const command of [
+    `cd /does-not-exist || git merge feature/source-facts-hardening`,
+    `cd /does-not-exist; git merge feature/source-facts-hardening`,
+    `bash -lc "cd /does-not-exist || git merge feature/source-facts-hardening"`,
+    `bash -lc "cd /does-not-exist; git merge feature/source-facts-hardening"`,
+  ]) {
+    const result = classifyGuardCommand(command, options);
+    assert.equal(result.blocked, true, command);
+    assert.match(result.reason, /guardian_finish/);
+  }
+});
+
+test("blocks shell pushd merges into protected worktree paths", async (t) => {
+  const base = await fs.mkdtemp(path.join(os.tmpdir(), "guardian-guard-"));
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const protectedWorktree = path.join(base, "repo");
+  await fs.mkdir(path.join(protectedWorktree, "subdir"), { recursive: true });
+  const options = {
+    cwd: base,
+    protectedBranches: ["main"],
+    branchPrefix: "guardian/",
+    guardianBranches: ["feature/source-facts-hardening"],
+    currentBranch: "feature/local-context",
+    protectedBranchWorktreePaths: [protectedWorktree],
+  };
+
+  for (const command of [
+    `bash -lc "pushd ${protectedWorktree} && git merge feature/source-facts-hardening"`,
+    `bash -lc "pushd ${path.join(protectedWorktree, "subdir")} && git merge feature/source-facts-hardening"`,
+  ]) {
+    const result = classifyGuardCommand(command, options);
+    assert.equal(result.blocked, true, command);
+    assert.match(result.reason, /guardian_finish/);
+  }
+});
+
+test("blocks git work-tree merges into protected worktree paths", async (t) => {
+  const base = await fs.mkdtemp(path.join(os.tmpdir(), "guardian-guard-"));
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const protectedWorktree = path.join(base, "repo");
+  const link = path.join(base, "repo-link");
+  await fs.mkdir(path.join(protectedWorktree, ".git"), { recursive: true });
+  await fs.mkdir(path.join(protectedWorktree, "subdir"), { recursive: true });
+  await fs.symlink(protectedWorktree, link, "dir");
+  const options = {
+    cwd: base,
+    protectedBranches: ["main"],
+    branchPrefix: "guardian/",
+    guardianBranches: ["feature/source-facts-hardening"],
+    currentBranch: "feature/local-context",
+    protectedBranchWorktreePaths: [protectedWorktree],
+  };
+
+  for (const command of [
+    `git --work-tree ${protectedWorktree} --git-dir ${path.join(protectedWorktree, ".git")} merge feature/source-facts-hardening`,
+    `git --work-tree=${protectedWorktree} --git-dir=${path.join(protectedWorktree, ".git")} merge feature/source-facts-hardening`,
+    `git --work-tree=${path.join(protectedWorktree, "subdir")} --git-dir=${path.join(protectedWorktree, ".git")} merge feature/source-facts-hardening`,
+    `git --work-tree=${link} --git-dir=${path.join(protectedWorktree, ".git")} merge feature/source-facts-hardening`,
+  ]) {
+    const result = classifyGuardCommand(command, options);
+    assert.equal(result.blocked, true, command);
+    assert.match(result.reason, /guardian_finish/);
+  }
+});
+
+test("blocks runtime git aliases in protected worktree paths", async (t) => {
+  const base = await fs.mkdtemp(path.join(os.tmpdir(), "guardian-guard-"));
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const protectedWorktree = path.join(base, "repo");
+  await fs.mkdir(protectedWorktree, { recursive: true });
+  const options = {
+    cwd: base,
+    protectedBranches: ["main"],
+    branchPrefix: "guardian/",
+    guardianBranches: ["feature/source-facts-hardening"],
+    currentBranch: "feature/local-context",
+    protectedBranchWorktreePaths: [protectedWorktree],
+  };
+
+  for (const command of [
+    `git -C ${protectedWorktree} -c alias.m='merge feature/source-facts-hardening' m`,
+    `git -C ${protectedWorktree} -c include.path=${path.join(base, "alias.gitconfig")} m`,
+    `git -C ${protectedWorktree} -c includeIf.onbranch:main.path=${path.join(base, "alias.gitconfig")} m`,
+    `git -C ${protectedWorktree} -c includeIf.gitdir:${protectedWorktree}/.git.path=${path.join(base, "alias.gitconfig")} m`,
+    `bash -lc "cd ${protectedWorktree} && git -c alias.m='merge feature/source-facts-hardening' m"`,
+    `git -C ${protectedWorktree} --config-env=alias.m=GIT_ALIAS_M m`,
+    `git -C ${protectedWorktree} --config-env=include.path=GIT_ALIAS_CONFIG m`,
+    `git -C ${protectedWorktree} --config-env=includeIf.gitdir:${protectedWorktree}/.git.path=GIT_ALIAS_CONFIG m`,
+    `git -C ${protectedWorktree} --config-env alias.m=GIT_ALIAS_M m`,
+    `git --work-tree ${protectedWorktree} --git-dir ${path.join(protectedWorktree, ".git")} --config-env=alias.m=GIT_ALIAS_M m`,
+    `env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.m GIT_CONFIG_VALUE_0='merge feature/source-facts-hardening' git -C ${protectedWorktree} m`,
+    `env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=include.path GIT_CONFIG_VALUE_0=${path.join(base, "alias.gitconfig")} git -C ${protectedWorktree} m`,
+    `env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=includeIf.gitdir:${protectedWorktree}/.git.path GIT_CONFIG_VALUE_0=${path.join(base, "alias.gitconfig")} git -C ${protectedWorktree} m`,
+    `env -u FOO GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.m GIT_CONFIG_VALUE_0='merge feature/source-facts-hardening' git -C ${protectedWorktree} m`,
+    `env -S "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.m GIT_CONFIG_VALUE_0='merge feature/source-facts-hardening' git -C ${protectedWorktree} m"`,
+    `GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.m GIT_CONFIG_VALUE_0='merge feature/source-facts-hardening' git -C ${protectedWorktree} m`,
+    `bash -lc "cd ${protectedWorktree} && env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.m GIT_CONFIG_VALUE_0='merge feature/source-facts-hardening' git m"`,
+    `GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.m GIT_CONFIG_VALUE_0='merge feature/source-facts-hardening' bash -lc "cd ${protectedWorktree} && git m"`,
+    `env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.m GIT_CONFIG_VALUE_0='merge feature/source-facts-hardening' bash -lc "cd ${protectedWorktree} && git m"`,
+    `env -S "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.m GIT_CONFIG_VALUE_0='merge feature/source-facts-hardening' bash -lc 'cd ${protectedWorktree} && git m'"`,
+  ]) {
+    const result = classifyGuardCommand(command, options);
+    assert.equal(result.blocked, true, command);
+    assert.match(result.reason, /runtime git alias-capable config/);
+  }
+});
+
 test("blocks protected branch deletion push refspecs when branch context is available", () => {
   for (const command of [
     "git push origin --delete main",
@@ -89,6 +326,43 @@ test("blocks protected branch deletion push refspecs when branch context is avai
     assert.equal(result.blocked, true, command);
     assert.match(result.reason, /protected branch/);
   }
+});
+
+test("blocks raw local branch and branch-ref deletion", () => {
+  for (const command of [
+    "git branch -d guardian/foo",
+    "git branch -D guardian/foo",
+    "git branch -df guardian/foo",
+    "git branch --delete guardian/foo",
+    "git branch --delete --force guardian/foo",
+  ]) {
+    const result = classifyGuardCommand(command);
+    assert.equal(result.blocked, true, command);
+    assert.match(result.reason, /guardian_delete_worktree/);
+  }
+
+  for (const command of [
+    "git update-ref -d refs/heads/guardian/foo",
+    "git update-ref -d --no-deref refs/heads/guardian/foo",
+    "git update-ref -d HEAD",
+    "git update-ref -d --no-deref HEAD",
+    "git update-ref --delete HEAD",
+    "git update-ref --delete=HEAD",
+    "git update-ref -d @",
+    "git update-ref --delete refs/heads/feature/source-facts-hardening",
+    "git update-ref --delete=refs/heads/main",
+    "printf 'delete refs/heads/guardian/foo' | git update-ref --stdin",
+  ]) {
+    const result = classifyGuardCommand(command);
+    assert.equal(result.blocked, true, command);
+    assert.match(result.reason, /guardian_delete_worktree/);
+  }
+});
+
+test("allows non-branch update-ref operations through the generic guard", () => {
+  assert.equal(classifyGuardCommand("git update-ref refs/tags/check HEAD").blocked, false);
+  assert.equal(classifyGuardCommand("git update-ref -d refs/tags/check").blocked, false);
+  assert.equal(classifyGuardCommand("git update-ref -d --no-deref refs/tags/check").blocked, false);
 });
 
 test("does not block protected branch bypass patterns without required context", () => {
@@ -141,6 +415,7 @@ test("finds dangerous commands inside shell command chains", () => {
 test("tokenizes quoted worktree paths and extracts hook command text", () => {
   assert.deepEqual(tokenizeCommand("rm -rf '/tmp/a b'"), ["rm", "-rf", "/tmp/a b"]);
   assert.equal(extractCommandText({ args: { command: "a" } }, { args: { command: "b" } }), "b");
+  assert.equal(extractCommandText({ args: { code: "git worktree add /tmp/wt main" } }, {}), "git worktree add /tmp/wt main");
 });
 
 

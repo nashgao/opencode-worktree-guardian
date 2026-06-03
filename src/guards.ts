@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import path from "node:path";
 
 const STASH_READ_ONLY = new Set(["list", "show"]);
@@ -87,6 +88,21 @@ function commandSegments(tokens: string[]) {
   return segments;
 }
 
+function commandSegmentsWithSeparators(tokens: string[]) {
+  const segments = [];
+  let current = [];
+  for (const token of tokens) {
+    if (SEGMENT_BREAKS.has(token)) {
+      if (current.length) segments.push({ segment: current, nextSeparator: token });
+      current = [];
+    } else {
+      current.push(token);
+    }
+  }
+  if (current.length) segments.push({ segment: current, nextSeparator: null });
+  return segments;
+}
+
 function hasForceCleanFlag(tokens: string[]) {
   return tokens.some((token) => token === "--force" || token === "-f" || /^-[a-zA-Z]*f[a-zA-Z]*$/.test(token));
 }
@@ -107,12 +123,12 @@ function isRestoreDestructive(rest: string[]) {
 }
 
 function shellPayload(segment: string[]) {
-  const stripped = stripCommandWrappers(segment);
+  const { stripped, assignments } = peelCommandPrefix(segment);
   if (!SHELL_COMMANDS.has(stripped[0])) return null;
   for (let index = 1; index < stripped.length; index += 1) {
     const token = stripped[index];
     if (token === "-c" || token === "-lc" || token === "-cl" || /^-[a-zA-Z]*c[a-zA-Z]*$/.test(token)) {
-      return stripped[index + 1] ?? "";
+      return { payload: stripped[index + 1] ?? "", assignments };
     }
   }
   return null;
@@ -128,6 +144,15 @@ function normalizeForCompare(value: string, cwd: string) {
   return path.normalize(resolved);
 }
 
+function realpathForCompare(value: string, cwd: string) {
+  const normalized = normalizeForCompare(value, cwd);
+  try {
+    return path.normalize(fs.realpathSync.native(normalized));
+  } catch {
+    return normalized;
+  }
+}
+
 function isSameOrInside(candidate: string, knownPath: string) {
   const relative = path.relative(knownPath, candidate);
   return relative === "" || Boolean(relative) && !relative.startsWith("..") && !path.isAbsolute(relative);
@@ -137,6 +162,25 @@ function matchesKnownWorktreePath(candidate: string, knownWorktreePaths: string[
   if (!candidate || candidate.startsWith("-")) return false;
   const resolvedCandidate = normalizeForCompare(candidate, cwd);
   return knownWorktreePaths.some((knownPath) => isSameOrInside(resolvedCandidate, normalizeForCompare(knownPath, cwd)));
+}
+
+function findWorktreeAddPath(rest: string[]) {
+  let index = 1;
+  while (index < rest.length) {
+    const token = rest[index];
+    if (token === "--") return rest[index + 1] ?? null;
+    if (!token.startsWith("-")) return token;
+    if (["-b", "-B", "--orphan"].includes(token)) {
+      index += 2;
+      continue;
+    }
+    if (token === "--detach" || token.startsWith("--orphan=")) {
+      index += 1;
+      continue;
+    }
+    index += 1;
+  }
+  return null;
 }
 
 function block(reason: string, segment: string[]) {
@@ -161,8 +205,9 @@ function isProtectedRef(ref: string, protectedBranches: string[]) {
   return protectedBranches.includes(branchNameFromRef(ref));
 }
 
-function isGuardianRef(ref: string, branchPrefix: string) {
-  return branchNameFromRef(ref).startsWith(branchPrefix);
+function isGuardianRef(ref: string, branchPrefix: string | null, guardianBranches: string[]) {
+  const branch = branchNameFromRef(ref);
+  return guardianBranches.includes(branch) || Boolean(branchPrefix && branch.startsWith(branchPrefix));
 }
 
 function pushRefspecs(rest: string[]) {
@@ -203,10 +248,77 @@ function isForcePushToken(token: string) {
   return token === "--force" || token.startsWith("--force=") || token === "--force-with-lease" || token.startsWith("--force-with-lease=") || token === "-f";
 }
 
-function protectedBranchBypass(segment: string[], subcommand: string, rest: string[], options: Record<string, any>) {
+function hasBranchDeleteFlag(tokens: string[]) {
+  return tokens.some((token) => {
+    if (token === "--delete" || token.startsWith("--delete=")) return true;
+    if (token.startsWith("--")) return false;
+    return /^-[A-Za-z]*[dD][A-Za-z]*$/.test(token);
+  });
+}
+
+function updateRefDeleteTarget(tokens: string[]) {
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (token === "-d" || token === "--delete") {
+      for (let targetIndex = index + 1; targetIndex < tokens.length; targetIndex += 1) {
+        const candidate = tokens[targetIndex];
+        if (candidate === "--") return tokens[targetIndex + 1] ?? null;
+        if (!candidate.startsWith("-")) return candidate;
+      }
+      return null;
+    }
+    if (token.startsWith("--delete=")) return token.slice("--delete=".length);
+  }
+  return null;
+}
+
+function hasUpdateRefStdin(tokens: string[]) {
+  return tokens.includes("--stdin");
+}
+
+function isBranchRefDeleteTarget(target: string | null) {
+  return target === "HEAD" || target === "@" || Boolean(target?.startsWith("refs/heads/"));
+}
+
+function pathSameOrInside(candidate: string, target: string, cwd: string) {
+  return isSameOrInside(realpathForCompare(candidate, cwd), realpathForCompare(target, cwd));
+}
+
+function hasAliasCapableRuntimeConfig(configs: string[]) {
+  return configs.some((config) => {
+    const key = config.slice(0, config.indexOf("=")).toLowerCase();
+    return key.startsWith("alias.") || key === "include.path" || key.startsWith("includeif.") && key.endsWith(".path");
+  });
+}
+
+function assignmentMap(assignments: string[]) {
+  const map = new Map();
+  for (const assignment of assignments) {
+    const equals = assignment.indexOf("=");
+    if (equals > 0) map.set(assignment.slice(0, equals), assignment.slice(equals + 1));
+  }
+  return map;
+}
+
+function envConfigAliases(assignments: string[]) {
+  const env = assignmentMap(assignments);
+  const count = Number(env.get("GIT_CONFIG_COUNT") ?? 0);
+  const configs = [];
+  if (!Number.isInteger(count) || count <= 0) return configs;
+  for (let index = 0; index < count; index += 1) {
+    const key = env.get(`GIT_CONFIG_KEY_${index}`);
+    const value = env.get(`GIT_CONFIG_VALUE_${index}`) ?? "";
+    if (typeof key === "string") configs.push(`${key}=${value}`);
+  }
+  return configs;
+}
+
+function protectedBranchBypass(segment: string[], subcommand: string, rest: string[], options: Record<string, any>, gitCwd: string | null, workTree: string | null, configs: string[]) {
   const protectedBranches = stringArrayOption(options, "protectedBranches");
   const branchPrefix = stringOption(options, "branchPrefix");
-  if (protectedBranches.length === 0 || !branchPrefix) return null;
+  const guardianBranches = stringArrayOption(options, "guardianBranches");
+  const protectedBranchWorktreePaths = stringArrayOption(options, "protectedBranchWorktreePaths");
+  if (protectedBranches.length === 0) return null;
 
   if (subcommand === "push") {
     const deletesBranch = rest.includes("--delete") || rest.includes("-d");
@@ -224,7 +336,7 @@ function protectedBranchBypass(segment: string[], subcommand: string, rest: stri
       if (!source && target && isProtectedRef(target, protectedBranches)) {
         return block("protected branch deletion push is blocked", segment);
       }
-      if (target && isProtectedRef(target, protectedBranches) && (source === "HEAD" || isGuardianRef(source, branchPrefix))) {
+      if (target && isProtectedRef(target, protectedBranches) && (source === "HEAD" || isGuardianRef(source, branchPrefix, guardianBranches))) {
         return block("manual push from Guardian work to a protected branch is blocked; use guardian_finish", segment);
       }
     }
@@ -232,11 +344,28 @@ function protectedBranchBypass(segment: string[], subcommand: string, rest: stri
 
   if (subcommand === "merge") {
     const currentBranch = stringOption(options, "currentBranch");
-    if (!currentBranch || !isProtectedRef(currentBranch, protectedBranches)) return null;
+    const cwd = stringOption(options, "cwd") ?? process.cwd();
+    const gitTargetCwd = gitCwd ? path.resolve(cwd, gitCwd) : null;
+    const gitWorkTree = workTree ? path.resolve(gitTargetCwd ?? cwd, workTree) : null;
+    const cwdProtected = protectedBranchWorktreePaths.some((worktreePath) => pathSameOrInside(cwd, worktreePath, cwd));
+    const protectedTarget = gitWorkTree ?? gitTargetCwd;
+    const protectedCwd = protectedTarget
+      ? protectedBranchWorktreePaths.some((worktreePath) => pathSameOrInside(protectedTarget, worktreePath, cwd))
+      : cwdProtected;
+    if (!protectedCwd && (!currentBranch || !isProtectedRef(currentBranch, protectedBranches))) return null;
     const mergeTargets = rest.filter((token) => token && !token.startsWith("-"));
-    if (mergeTargets.some((target) => isGuardianRef(target, branchPrefix))) {
+    if (mergeTargets.some((target) => isGuardianRef(target, branchPrefix, guardianBranches))) {
       return block("manual merge of Guardian work into a protected branch is blocked; use guardian_finish", segment);
     }
+  }
+
+  if (hasAliasCapableRuntimeConfig(configs)) {
+    const cwd = stringOption(options, "cwd") ?? process.cwd();
+    const gitTargetCwd = gitCwd ? path.resolve(cwd, gitCwd) : cwd;
+    const gitWorkTree = workTree ? path.resolve(gitTargetCwd, workTree) : null;
+    const protectedTarget = gitWorkTree ?? gitTargetCwd;
+    const protectedCwd = protectedBranchWorktreePaths.some((worktreePath) => pathSameOrInside(protectedTarget, worktreePath, cwd));
+    if (protectedCwd) return block("runtime git alias-capable config in protected worktrees is blocked; use guardian_finish", segment);
   }
 
   return null;
@@ -252,15 +381,108 @@ function stripCommandWrappers(segment: string[]) {
   return segment.slice(index);
 }
 
-function parseGitInvocation(segment: string[]) {
-  const stripped = stripCommandWrappers(segment);
+function stripSimpleCommandWrappers(segment: string[]) {
+  let index = 0;
+  while (COMMAND_WRAPPERS.has(segment[index])) index += 1;
+  return segment.slice(index);
+}
+
+function peelCommandPrefix(segment: string[]) {
+  let prefixed = stripSimpleCommandWrappers(segment);
+  let index = 0;
+  const assignments = [];
+  if (prefixed[index] === "env") {
+    index += 1;
+    while (prefixed[index] && prefixed[index].startsWith("-")) {
+      const token = prefixed[index];
+      if (token === "-S" || token === "--split-string") {
+        const split = tokenizeCommand(prefixed[index + 1] ?? "");
+        prefixed = [...prefixed.slice(0, index), ...split, ...prefixed.slice(index + 2)];
+        continue;
+      }
+      if (token.startsWith("--split-string=")) {
+        const split = tokenizeCommand(token.slice("--split-string=".length));
+        prefixed = [...prefixed.slice(0, index), ...split, ...prefixed.slice(index + 1)];
+        continue;
+      }
+      if (token === "-u" || token === "--unset") {
+        index += 2;
+        continue;
+      }
+      if (token.startsWith("-u") || token.startsWith("--unset=")) {
+        index += 1;
+        continue;
+      }
+      index += 1;
+    }
+  }
+  while (prefixed[index] && /^[A-Za-z_][A-Za-z0-9_]*=.*/.test(prefixed[index])) {
+    assignments.push(prefixed[index]);
+    index += 1;
+  }
+  return { stripped: prefixed.slice(index), assignments };
+}
+
+function peelGitCommandPrefix(segment: string[]) {
+  return peelCommandPrefix(segment);
+}
+
+function parseGitInvocation(segment: string[], options: Record<string, any> = {}) {
+  const { stripped, assignments } = peelGitCommandPrefix(segment);
   if (stripped[0] !== "git") return null;
   let index = 1;
+  let gitCwd: string | null = null;
+  let workTree: string | null = null;
+  const inheritedAssignments = Array.isArray(options.inheritedEnvAssignments) ? options.inheritedEnvAssignments.filter((entry: unknown) => typeof entry === "string") : [];
+  const configs: string[] = envConfigAliases([...inheritedAssignments, ...assignments]);
   while (index < stripped.length) {
     const token = stripped[index];
     if (!token.startsWith("-")) break;
+    if (token === "-C") {
+      const nextCwd = stripped[index + 1] ?? null;
+      if (nextCwd) {
+        gitCwd = gitCwd && !path.isAbsolute(nextCwd) ? path.join(gitCwd, nextCwd) : nextCwd;
+      }
+      index += 2;
+      continue;
+    }
+    if (token === "-c") {
+      if (stripped[index + 1]) configs.push(stripped[index + 1]);
+      index += 2;
+      continue;
+    }
+    if (token.startsWith("-c") && token.length > 2) {
+      configs.push(token.slice(2));
+      index += 1;
+      continue;
+    }
+    if (token === "--config-env") {
+      if (stripped[index + 1]) configs.push(stripped[index + 1]);
+      index += 2;
+      continue;
+    }
+    if (token.startsWith("--config-env=")) {
+      configs.push(token.slice("--config-env=".length));
+      index += 1;
+      continue;
+    }
+    if (token === "--work-tree") {
+      workTree = stripped[index + 1] ?? null;
+      index += 2;
+      continue;
+    }
+    if (token.startsWith("--work-tree=")) {
+      workTree = token.slice("--work-tree=".length);
+      index += 1;
+      continue;
+    }
     if (GIT_GLOBAL_OPTIONS_WITH_VALUE.has(token)) {
       index += 2;
+      continue;
+    }
+    if (token.startsWith("--config=")) {
+      configs.push(token.slice("--config=".length));
+      index += 1;
       continue;
     }
     if ([...GIT_GLOBAL_OPTIONS_WITH_VALUE].some((option) => token.startsWith(`${option}=`))) {
@@ -269,14 +491,14 @@ function parseGitInvocation(segment: string[]) {
     }
     index += 1;
   }
-  return { subcommand: stripped[index], rest: stripped.slice(index + 1), normalized: stripped };
+  return { subcommand: stripped[index], rest: stripped.slice(index + 1), normalized: stripped, gitCwd, workTree, configs };
 }
 
 function classifyGit(segment: string[], options: Record<string, any> = {}) {
-  const parsed = parseGitInvocation(segment);
+  const parsed = parseGitInvocation(segment, options);
   if (!parsed?.subcommand) return null;
-  const { subcommand, rest, normalized } = parsed;
-  const bypass = protectedBranchBypass(normalized, subcommand, rest, options);
+  const { subcommand, rest, normalized, gitCwd, workTree, configs } = parsed;
+  const bypass = protectedBranchBypass(normalized, subcommand, rest, options, gitCwd, workTree, configs);
   if (bypass) return bypass;
   if (subcommand === "reset" && rest.includes("--hard")) {
     return block("git reset --hard is blocked because it can discard session work", normalized);
@@ -284,11 +506,27 @@ function classifyGit(segment: string[], options: Record<string, any> = {}) {
   if (subcommand === "clean" && hasForceCleanFlag(rest) && !hasDryRunFlag(rest)) {
     return block("destructive git clean variants are blocked", normalized);
   }
-  if (subcommand === "branch" && (rest.includes("-D") || rest.includes("--delete") && rest.includes("--force"))) {
-    return block("forced branch deletion is blocked", normalized);
+  if (subcommand === "branch" && hasBranchDeleteFlag(rest)) {
+    return block("raw git branch deletion is blocked; use guardian_delete_worktree", normalized);
+  }
+  if (subcommand === "update-ref") {
+    if (hasUpdateRefStdin(rest)) {
+      return block("raw git update-ref --stdin is blocked; use guardian_delete_worktree", normalized);
+    }
+    const deleteTarget = updateRefDeleteTarget(rest);
+    if (isBranchRefDeleteTarget(deleteTarget)) {
+      return block("raw git branch ref deletion is blocked; use guardian_delete_worktree", normalized);
+    }
   }
   if (subcommand === "worktree" && ["remove", "prune"].includes(rest[0])) {
     return block("raw git worktree removal/prune is blocked", normalized);
+  }
+  if (subcommand === "worktree" && rest[0] === "add") {
+    const addPath = findWorktreeAddPath(rest);
+    const knownWorktreePaths = stringArrayOption(options, "knownWorktreePaths");
+    if (!addPath || !matchesKnownWorktreePath(addPath, knownWorktreePaths, options.cwd ?? process.cwd())) {
+      return block("raw git worktree add outside Guardian-owned roots is blocked; use guardian_start", normalized);
+    }
   }
   if (subcommand === "restore" && isRestoreDestructive(rest)) {
     return block("destructive git restore variants are blocked", normalized);
@@ -357,7 +595,8 @@ export function classifyReadOnlyInspectionCommand(command: unknown) {
 function classifySegment(segment: string[], options: Record<string, any>) {
   const payload = shellPayload(segment);
   if (payload) {
-    const nested = classifyGuardCommand(payload, options);
+    const inheritedEnvAssignments = [...(Array.isArray(options.inheritedEnvAssignments) ? options.inheritedEnvAssignments : []), ...payload.assignments];
+    const nested = classifyGuardCommand(payload.payload, { ...options, inheritedEnvAssignments });
     if (nested.blocked) return block(`shell -c payload is blocked: ${nested.reason}`, segment);
   }
   const gitResult = classifyGit(segment, options);
@@ -378,6 +617,19 @@ function classifySegment(segment: string[], options: Record<string, any>) {
     }
   }
   return null;
+}
+
+function cdTarget(segment: string[], cwd: string) {
+  const stripped = stripCommandWrappers(segment);
+  if (stripped[0] !== "cd" && stripped[0] !== "pushd") return null;
+  const target = stripped.find((token, index) => index > 0 && !token.startsWith("-"));
+  if (!target || target === "-") return null;
+  const resolved = normalizeForCompare(target, cwd);
+  try {
+    return fs.statSync(resolved).isDirectory() ? resolved : null;
+  } catch {
+    return null;
+  }
 }
 
 function findBacktickPayloads(command: string) {
@@ -414,13 +666,18 @@ export function classifyGuardCommand(command: unknown, options: Record<string, a
     if (nested.blocked) return { ...nested, reason: `backtick command substitution is blocked: ${nested.reason}` };
   }
   const tokens = tokenizeCommand(command);
-  for (const segment of commandSegments(tokens)) {
-    const result = classifySegment(segment, options);
+  let effectiveCwd = stringOption(options, "cwd") ?? process.cwd();
+  for (const { segment, nextSeparator } of commandSegmentsWithSeparators(tokens)) {
+    const scopedOptions = { ...options, cwd: effectiveCwd };
+    const result = classifySegment(segment, scopedOptions);
     if (result) return { ...result, tokens };
+    if (nextSeparator === ";" || nextSeparator === "&&") {
+      effectiveCwd = cdTarget(segment, effectiveCwd) ?? effectiveCwd;
+    }
   }
   return { blocked: false, reason: null, command, tokens };
 }
 
 export function extractCommandText(input: Record<string, any> = {}, output: Record<string, any> = {}) {
-  return output?.args?.command ?? input?.args?.command ?? input?.command ?? output?.command ?? "";
+  return output?.args?.command ?? input?.args?.command ?? input?.args?.code ?? input?.command ?? output?.command ?? "";
 }
