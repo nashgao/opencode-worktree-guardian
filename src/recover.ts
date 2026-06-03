@@ -45,6 +45,28 @@ async function annotateWorktreeWithoutState(worktree: Record<string, any>, repoR
   };
 }
 
+function poisonedSessionReason(session: Record<string, any>, repoRoot: string, config: Record<string, any>) {
+  const reasons = [];
+  if (typeof session.worktree_path === "string" && path.resolve(session.worktree_path) === path.resolve(repoRoot)) {
+    reasons.push("active session is recorded on the primary repository worktree");
+  }
+  if (typeof session.branch === "string" && Array.isArray(config.protectedBranches) && config.protectedBranches.includes(session.branch)) {
+    reasons.push("active session branch is protected");
+  }
+  return reasons.join("; ");
+}
+
+function annotatePoisonedSession(session: Record<string, any>, repoRoot: string, config: Record<string, any>) {
+  const reason = poisonedSessionReason(session, repoRoot, config);
+  if (!reason) return null;
+  return {
+    ...session,
+    severity: "fail",
+    reason,
+    suggestedCommand: "guardian_start createWorktree=true",
+  };
+}
+
 export async function guardianStatus(input: Record<string, any> = {}): Promise<Record<string, any>> {
   const repoRoot = input.repoRoot ?? await getRepoRoot(input.cwd ?? process.cwd());
   const { config } = input.config ? { config: input.config } : await loadConfig(repoRoot);
@@ -57,11 +79,14 @@ export async function guardianStatus(input: Record<string, any> = {}): Promise<R
   const sessionWorktreePaths = new Set(activeSessions.map((session) => session.worktree_path).filter(Boolean).map((entry) => path.resolve(entry)));
   const sessionBranches = new Set(activeSessions.map((session) => session.branch).filter(Boolean));
   const orphanedSessions = [];
+  const poisonedSessions = [];
 
   for (const session of activeSessions) {
     if (!session.worktree_path || !worktreePaths.has(path.resolve(session.worktree_path)) || !(await pathExists(session.worktree_path))) {
       orphanedSessions.push(session);
     }
+    const poisonedSession = annotatePoisonedSession(session, repoRoot, config);
+    if (poisonedSession) poisonedSessions.push(poisonedSession);
   }
 
   const branches = await listBranches(repoRoot);
@@ -77,6 +102,7 @@ export async function guardianStatus(input: Record<string, any> = {}): Promise<R
     stateVersion: state.state_version,
     sessions,
     orphanedSessions,
+    poisonedSessions,
     worktrees,
     branchesWithoutWorktrees,
     worktreesWithoutState,

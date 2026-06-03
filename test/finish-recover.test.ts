@@ -5,7 +5,7 @@ import test from "node:test";
 import { DEFAULT_CONFIG } from "../src/config.ts";
 import { guardianFinish } from "../src/finish.ts";
 import { guardianRecover, guardianStatus } from "../src/recover.ts";
-import { collectKnownWorktreePaths, guardianStart, injectInvisiblePolicy, recordLastSafeState, runGuardianTool } from "../src/tools.ts";
+import { collectKnownWorktreePaths, guardianPreserve, guardianStart, injectInvisiblePolicy, recordLastSafeState, runGuardianTool } from "../src/tools.ts";
 import { recordSession } from "../src/state.ts";
 import { createRepo, createRepoWithOrigin, git, makeBranchCommit } from "./helpers.ts";
 
@@ -34,6 +34,99 @@ test("guardian_start records current worktree ownership", async () => {
   assert.equal(result.ok, true);
   assert.equal(result.session.branch, "guardian/start");
   assert.equal(result.session.worktree_path, repo);
+});
+
+test("guardian_start repairs active primary protected ownership when creating a worktree", async () => {
+  const { base, repo } = await createRepoWithOrigin();
+  test.after(() => fs.rm(base, { recursive: true, force: true }));
+  const { stdout: commit } = await git(repo, ["rev-parse", "HEAD"]);
+  await recordSession(repo, DEFAULT_CONFIG, {
+    session_id: "ses_poisoned_start",
+    status: "active",
+    branch: "main",
+    worktree_path: repo,
+    base_ref: "origin/main",
+    head_commit: commit,
+    safety_refs: [],
+  });
+
+  const result = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_poisoned_start", taskName: "poisoned start", createWorktree: true, config: DEFAULT_CONFIG });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.repaired, true);
+  assert.equal(result.existing, false);
+  assert.equal(result.previous.branch, "main");
+  assert.equal(result.previous.worktree_path, repo);
+  assert.match(result.previous.reason, /protected|primary/);
+  assert.match(result.session.branch, /^guardian\//);
+  assert.notEqual(result.session.worktree_path, repo);
+  assert.equal((await git(repo, ["branch", "--show-current"])).stdout, "main");
+  const status = await guardianStatus({ repoRoot: repo, config: DEFAULT_CONFIG });
+  const session = status.sessions.find((candidate: Record<string, any>) => candidate.session_id === "ses_poisoned_start");
+  assert.equal(session.branch, result.session.branch);
+  assert.equal(session.worktree_path, result.session.worktree_path);
+});
+
+test("guardian_start refuses poisoned primary protected ownership without worktree creation", async () => {
+  const { base, repo } = await createRepoWithOrigin();
+  test.after(() => fs.rm(base, { recursive: true, force: true }));
+  const { stdout: commit } = await git(repo, ["rev-parse", "HEAD"]);
+  await recordSession(repo, DEFAULT_CONFIG, {
+    session_id: "ses_poisoned_attach",
+    status: "active",
+    branch: "main",
+    worktree_path: repo,
+    base_ref: "origin/main",
+    head_commit: commit,
+    safety_refs: [],
+  });
+
+  const result = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_poisoned_attach", config: DEFAULT_CONFIG });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, "blocked");
+  assert.match(result.reason, /createWorktree=true/);
+  const status = await guardianStatus({ repoRoot: repo, config: DEFAULT_CONFIG });
+  const session = status.sessions.find((candidate: Record<string, any>) => candidate.session_id === "ses_poisoned_attach");
+  assert.equal(session.branch, "main");
+  assert.equal(session.worktree_path, repo);
+  const poisonedSession = status.poisonedSessions.find((candidate: Record<string, any>) => candidate.session_id === "ses_poisoned_attach");
+  assert.match(poisonedSession.reason, /primary repository worktree|protected/);
+  assert.equal(poisonedSession.suggestedCommand, "guardian_start createWorktree=true");
+  const recover = await guardianRecover({ repoRoot: repo, config: DEFAULT_CONFIG });
+  assert.equal(recover.poisonedSessions.some((candidate: Record<string, any>) => candidate.session_id === "ses_poisoned_attach"), true);
+});
+
+test("recording and preserving refuse protected primary ownership", async () => {
+  const { base, repo } = await createRepoWithOrigin();
+  test.after(() => fs.rm(base, { recursive: true, force: true }));
+
+  const recorded = await recordLastSafeState({ repoRoot: repo, cwd: repo, sessionID: "ses_protected_after", tool: "bash", config: DEFAULT_CONFIG });
+  assert.equal(recorded.ok, false);
+  assert.match(recorded.reason, /protected branches/);
+
+  const preserved = await guardianPreserve({ repoRoot: repo, cwd: repo, sessionId: "ses_protected_preserve", config: DEFAULT_CONFIG });
+  assert.equal(preserved.ok, false);
+  assert.match(preserved.reason, /protected branches/);
+
+  const status = await guardianStatus({ repoRoot: repo, config: DEFAULT_CONFIG });
+  assert.equal(status.sessions.some((candidate: Record<string, any>) => candidate.session_id === "ses_protected_after"), false);
+  assert.equal(status.sessions.some((candidate: Record<string, any>) => candidate.session_id === "ses_protected_preserve"), false);
+});
+
+test("guardian_start refuses explicit protected branch worktree creation", async () => {
+  const { base, repo } = await createRepoWithOrigin();
+  test.after(() => fs.rm(base, { recursive: true, force: true }));
+
+  const result = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_protected_create", taskName: "protected create", createWorktree: true, branch: "main", config: DEFAULT_CONFIG });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, "blocked");
+  assert.equal(result.branch, "main");
+  assert.match(result.reason, /protected branches/);
+  const status = await guardianStatus({ repoRoot: repo, config: DEFAULT_CONFIG });
+  assert.equal(status.sessions.some((candidate: Record<string, any>) => candidate.session_id === "ses_protected_create"), false);
+  assert.deepEqual((await worktreePaths(repo)).filter((candidate) => candidate !== repo), []);
 });
 
 test("guardian_start rejects custom worktree paths outside configured root", async () => {
@@ -299,20 +392,59 @@ test("default finish mode pushes branch and returns a PR suggestion", async () =
 test("merge-to-base requires explicit mode and ancestry proof", async () => {
   const { repo } = await createRepoWithOrigin();
   const config = { ...DEFAULT_CONFIG, finishMode: "merge-to-base" };
-  const { branch, commit } = await makeBranchCommit(repo, "guardian/merge");
-  await recordCurrentSession(repo, "ses_merge", branch, config);
+  const start = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_merge", taskName: "merge", createWorktree: true, config });
+  await fs.writeFile(path.join(start.session.worktree_path, "merged.txt"), "merged\n");
+  await git(start.session.worktree_path, ["add", "merged.txt"]);
+  await git(start.session.worktree_path, ["commit", "-m", "add merged file"]);
+  const { stdout: commit } = await git(start.session.worktree_path, ["rev-parse", "HEAD"]);
 
-  const refused = await guardianFinish({ repoRoot: repo, cwd: repo, sessionId: "ses_merge", config });
+  const refused = await guardianFinish({ repoRoot: repo, cwd: start.session.worktree_path, sessionId: "ses_merge", config });
   assert.equal(refused.ok, false);
   assert.match(refused.reason, /allowMergeToBase/);
   assert.equal(refused.preflight.safetyRef, refused.safetyRef);
   assert.equal(refused.report.action, "requires-explicit-merge-approval");
 
-  const result = await guardianFinish({ repoRoot: repo, cwd: repo, sessionId: "ses_merge", config, allowMergeToBase: true });
+  const result = await guardianFinish({ repoRoot: repo, cwd: start.session.worktree_path, sessionId: "ses_merge", config, allowMergeToBase: true });
   assert.equal(result.ok, true);
   assert.equal(result.status, "merged");
   const ancestry = await git(repo, ["merge-base", "--is-ancestor", commit, "origin/main"]).then(() => true, () => false);
   assert.equal(ancestry, true);
+});
+
+test("merge-to-base refuses when primary repo worktree is not on base branch", async () => {
+  const { base, repo } = await createRepoWithOrigin();
+  test.after(() => fs.rm(base, { recursive: true, force: true }));
+  const config = { ...DEFAULT_CONFIG, finishMode: "merge-to-base" };
+  const start = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_merge_primary_branch", taskName: "merge primary branch", createWorktree: true, config });
+  await fs.writeFile(path.join(start.session.worktree_path, "merged.txt"), "merged\n");
+  await git(start.session.worktree_path, ["add", "merged.txt"]);
+  await git(start.session.worktree_path, ["commit", "-m", "add merged file"]);
+  await git(repo, ["checkout", "-b", "local-primary"]);
+
+  const result = await guardianFinish({ repoRoot: repo, cwd: start.session.worktree_path, sessionId: "ses_merge_primary_branch", config, allowMergeToBase: true });
+
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /primary repo worktree.*base branch/);
+  assert.equal(result.preflight.baseWorktreeBranch, "local-primary");
+  assert.equal((await git(repo, ["branch", "--show-current"])).stdout, "local-primary");
+});
+
+test("merge-to-base refuses when primary repo worktree is dirty", async () => {
+  const { base, repo } = await createRepoWithOrigin();
+  test.after(() => fs.rm(base, { recursive: true, force: true }));
+  const config = { ...DEFAULT_CONFIG, finishMode: "merge-to-base" };
+  const start = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_merge_primary_dirty", taskName: "merge primary dirty", createWorktree: true, config });
+  await fs.writeFile(path.join(start.session.worktree_path, "merged.txt"), "merged\n");
+  await git(start.session.worktree_path, ["add", "merged.txt"]);
+  await git(start.session.worktree_path, ["commit", "-m", "add merged file"]);
+  await fs.writeFile(path.join(repo, "primary-dirty.txt"), "dirty\n");
+
+  const result = await guardianFinish({ repoRoot: repo, cwd: start.session.worktree_path, sessionId: "ses_merge_primary_dirty", config, allowMergeToBase: true });
+
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /primary repo worktree.*clean/);
+  assert.deepEqual(result.preflight.baseWorktreeDirtyFiles, ["primary-dirty.txt"]);
+  assert.equal((await git(repo, ["branch", "--show-current"])).stdout, "main");
 });
 
 test("recover/status are read-only inventories with suggestions", async () => {

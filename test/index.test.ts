@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import test from "node:test";
 import { DEFAULT_CONFIG } from "../src/config.ts";
 import plugin from "../src/index.ts";
-import { getGuardianPaths, readState } from "../src/state.ts";
+import { getGuardianPaths, readState, recordSession } from "../src/state.ts";
 import { createRepoWithOrigin } from "./helpers.ts";
 
 function createClient(records: Array<Record<string, any>>) {
@@ -213,6 +213,43 @@ test("tool.execute.before routes mutating commands to the default auto-start own
   assert.equal(output.args.cwd, state.sessions[sessionID].worktree_path);
 });
 
+test("default auto-start repairs poisoned primary ownership before routing mutating commands", async (t) => {
+  const { git } = await import("./helpers.ts");
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const sessionID = "ses_auto_start_repair_poisoned";
+  const { stdout: commit } = await git(repo, ["rev-parse", "HEAD"]);
+  await recordSession(repo, DEFAULT_CONFIG, {
+    session_id: sessionID,
+    status: "active",
+    branch: "main",
+    worktree_path: repo,
+    base_ref: "origin/main",
+    head_commit: commit,
+    safety_refs: [],
+  });
+  const records: Array<Record<string, any>> = [];
+  const hooks = await plugin.server({ directory: repo, worktree: repo, client: createClient(records) });
+
+  await hooks["experimental.chat.system.transform"](
+    { sessionID, taskName: "repair poisoned" },
+    { system: [] },
+  );
+
+  const paths = await getGuardianPaths(repo);
+  const state = await readState(paths, { repoRoot: repo, config: DEFAULT_CONFIG });
+  const session = state.sessions[sessionID];
+  assert.notEqual(session.worktree_path, repo);
+  assert.match(session.branch, /^guardian\//);
+  assert.equal(records[0].invisibleStart.repaired, true);
+
+  const output: { args: { command: string; workdir?: string; cwd?: string } } = { args: { command: "touch repaired.txt" } };
+  await hooks["tool.execute.before"]({ tool: "bash", sessionID, callID: "call_repaired_poisoned" }, output);
+
+  assert.equal(output.args.workdir, session.worktree_path);
+  assert.equal(output.args.cwd, session.worktree_path);
+});
+
 test("tool.execute.before allows read-only commands after default auto-start leaves host at repo root", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
@@ -369,9 +406,9 @@ test("hook rewrites symlinked cwd to the recorded owned worktree", async () => {
 test("session idle auto-finish uses default create-pr mode when repo opts in", async () => {
   const fs = await import("node:fs/promises");
   const path = await import("node:path");
-  const { createRepoWithOrigin, makeBranchCommit } = await import("./helpers.ts");
-  const { recordSession } = await import("../src/state.ts");
+  const { createRepoWithOrigin } = await import("./helpers.ts");
   const { DEFAULT_CONFIG } = await import("../src/config.ts");
+  const { guardianStart } = await import("../src/tools.ts");
   const { guardianStatus } = await import("../src/recover.ts");
   const { repo } = await createRepoWithOrigin();
   await fs.mkdir(path.join(repo, ".opencode"), { recursive: true });
@@ -379,16 +416,10 @@ test("session idle auto-finish uses default create-pr mode when repo opts in", a
   const { git } = await import("./helpers.ts");
   await git(repo, ["add", ".opencode/worktree-guardian.json"]);
   await git(repo, ["commit", "-m", "add guardian config"]);
-  const { branch, commit } = await makeBranchCommit(repo, "guardian/idle");
-  await recordSession(repo, DEFAULT_CONFIG, {
-    session_id: "ses_idle_finish",
-    status: "active",
-    branch,
-    worktree_path: repo,
-    base_ref: "origin/main",
-    head_commit: commit,
-    safety_refs: [],
-  });
+  const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_idle_finish", taskName: "idle finish", createWorktree: true, config: { ...DEFAULT_CONFIG, autoFinish: true } });
+  await fs.writeFile(path.join(started.session.worktree_path, "feature.txt"), "idle finish\n");
+  await git(started.session.worktree_path, ["add", "feature.txt"]);
+  await git(started.session.worktree_path, ["commit", "-m", "add idle finish"]);
   const records: Array<Record<string, any>> = [];
   const hooks = await plugin.server({ client: { app: { async log(event: any) { records.push(event.body); } } }, directory: repo, worktree: repo });
   await hooks.event({ event: { type: "session.idle", properties: { sessionID: "ses_idle_finish" } } });
@@ -400,8 +431,8 @@ test("session idle auto-finish uses default create-pr mode when repo opts in", a
 
 test("session idle auto-finish retries after failed finish", async (t) => {
   const path = await import("node:path");
-  const { makeBranchCommit, git } = await import("./helpers.ts");
-  const { recordSession } = await import("../src/state.ts");
+  const { git } = await import("./helpers.ts");
+  const { guardianStart } = await import("../src/tools.ts");
   const { guardianStatus } = await import("../src/recover.ts");
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
@@ -411,17 +442,11 @@ test("session idle auto-finish retries after failed finish", async (t) => {
   await git(repo, ["add", ".opencode/worktree-guardian.json"]);
   await git(repo, ["commit", "-m", "enable guardian auto finish"]);
 
-  const { branch, commit } = await makeBranchCommit(repo, "guardian/idle-retry");
-  await recordSession(repo, DEFAULT_CONFIG, {
-    session_id: "ses_idle_retry_finish",
-    status: "active",
-    branch,
-    worktree_path: repo,
-    base_ref: "origin/main",
-    head_commit: commit,
-    safety_refs: [],
-  });
-  const dirtyPath = path.join(repo, "dirty.txt");
+  const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_idle_retry_finish", taskName: "idle retry", createWorktree: true, config: { ...DEFAULT_CONFIG, autoFinish: true } });
+  await fs.writeFile(path.join(started.session.worktree_path, "feature.txt"), "idle retry\n");
+  await git(started.session.worktree_path, ["add", "feature.txt"]);
+  await git(started.session.worktree_path, ["commit", "-m", "add idle retry"]);
+  const dirtyPath = path.join(started.session.worktree_path, "dirty.txt");
   await fs.writeFile(dirtyPath, "dirty\n");
 
   const records: Array<Record<string, any>> = [];
@@ -444,6 +469,43 @@ test("session idle auto-finish retries after failed finish", async (t) => {
   assert.equal(events[1].autoFinish.status, "pr-suggested");
   status = await guardianStatus({ repoRoot: repo, config: DEFAULT_CONFIG });
   assert.equal(status.sessions.find((session: Record<string, any>) => session.session_id === "ses_idle_retry_finish").status, "preserved");
+});
+
+test("session idle auto-finish blocks poisoned primary protected ownership with repair guidance", async (t) => {
+  const path = await import("node:path");
+  const { git } = await import("./helpers.ts");
+  const { guardianStatus } = await import("../src/recover.ts");
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+
+  await fs.mkdir(path.join(repo, ".opencode"), { recursive: true });
+  await fs.writeFile(path.join(repo, ".opencode", "worktree-guardian.json"), JSON.stringify({ autoFinish: true }));
+  await git(repo, ["add", ".opencode/worktree-guardian.json"]);
+  await git(repo, ["commit", "-m", "enable guardian auto finish"]);
+  const { stdout: commit } = await git(repo, ["rev-parse", "HEAD"]);
+  await recordSession(repo, DEFAULT_CONFIG, {
+    session_id: "ses_idle_poisoned_finish",
+    status: "active",
+    branch: "main",
+    worktree_path: repo,
+    base_ref: "origin/main",
+    head_commit: commit,
+    safety_refs: [],
+  });
+
+  const records: Array<Record<string, any>> = [];
+  const hooks = await plugin.server({ client: createClient(records), directory: repo, worktree: repo });
+  await hooks.event({ event: { type: "session.idle", properties: { sessionID: "ses_idle_poisoned_finish" } } });
+
+  const events = records.filter((record) => record.message === "event");
+  assert.equal(events.length, 1);
+  assert.equal(events[0].autoFinish.ok, false);
+  assert.equal(events[0].autoFinish.status, "blocked");
+  assert.match(events[0].autoFinish.reason, /createWorktree=true/);
+  assert.equal(events[0].autoFinish.suggestedCommand, "guardian_start createWorktree=true");
+  const status = await guardianStatus({ repoRoot: repo, config: DEFAULT_CONFIG });
+  assert.equal(status.sessions.find((session: Record<string, any>) => session.session_id === "ses_idle_poisoned_finish").status, "active");
+  assert.equal(status.poisonedSessions.some((session: Record<string, any>) => session.session_id === "ses_idle_poisoned_finish"), true);
 });
 
 

@@ -119,6 +119,8 @@ The plugin blocks raw destructive shell/git commands in `tool.execute.before`, i
 
 Guardian owns a session worktree by default after the chat-system hook runs. It creates or attaches a session worktree, records repo-local ownership, and routes safe mutating shell/git tool calls for that session into the recorded worktree. Run `guardian_start` explicitly when ownership is needed before the hook has run, or set repo config `autoStart: false` to opt out of automatic ownership. Without recorded ownership, normal non-destructive commands pass through while destructive cleanup/reset/stash/force-push/worktree-removal guards still apply.
 
+If older or corrupted state records an active session on the primary repo worktree or a protected branch, `guardian_start` is the repair path. With `createWorktree: true`, it creates a fresh Guardian worktree, overwrites the poisoned session binding, and leaves the primary worktree untouched. Without worktree creation enabled, it blocks with an actionable reason instead of returning the bad binding.
+
 Guardian hooks do not move the OpenCode host process cwd. Instead, before safe shell/git tools run, Guardian rewrites the tool execution directory to the recorded worktree and then re-applies the destructive-command guards. Missing, unresolvable, or unrecorded worktrees fail closed. Raw cleanup/reset/stash/force-push/worktree-removal commands remain blocked.
 
 Finish Guardian work through `guardian_finish`, not manual protected-branch push or merge commands. Finish always creates a safety ref before risky operations and reports preflight facts/blockers for automation. Dirty worktrees block finish unless every dirty path matches explicit `allowDirtyPaths` config. Allowed dirty paths are reported as `allowedDirtyFiles` and left untouched; any non-matching dirty path remains a blocker. `create-pr` pushes the branch and suggests a PR command; it does not create a PR natively. `merge-to-base` requires explicit approval, and cleanup only runs when `autoCleanup` or `allowCleanup` is set and ancestry is proven.
@@ -295,6 +297,7 @@ Blocked `guardian_finish` exposes `preflight` and `report` for automation:
 ## Troubleshooting
 
 - Blocked mutating command: run `guardian_status`; if the session owns a worktree, Guardian should route safe shell/git tools there automatically. A blocker means the recorded worktree is missing/unresolvable, state is fail-closed, or the command is unsafe.
+- Recorded primary/protected ownership: run `guardian_start` with `createWorktree: true`; Guardian repairs the session into a proper Guardian worktree instead of requiring raw branch or switch commands.
 - No owned worktree: normal non-destructive commands run in the current worktree. If you want Guardian ownership/routing, run `guardian_start`, then check `guardian_status` before retrying mutating commands.
 - Intentional finish or preserve: use `guardian_finish` or `guardian_preserve`; `autoFinish` remains opt-in.
 - Dirty worktree: commit real source/config/doc changes or intentionally preserve. If the only dirt is runtime/local state, configure narrow `allowDirtyPaths`; file-specific patterns can match untracked runtime files. Guardian reports those files as `allowedDirtyFiles`, leaves them untouched, and still blocks any non-matching dirty path.

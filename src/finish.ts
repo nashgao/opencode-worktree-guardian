@@ -1,5 +1,5 @@
 import path from "node:path";
-import { loadConfig } from "./config.ts";
+import { expandWorktreeRoot, loadConfig } from "./config.ts";
 import { createSafetyRef, fetchRemote, getCurrentBranch, getDirtyFiles, getHeadCommit, getRepoRoot, isAncestor, listStashes, pushBranch, runGit } from "./git.ts";
 import { getGuardianPaths, readState, recordSession } from "./state.ts";
 
@@ -26,6 +26,10 @@ function withFinishReport(result: Record<string, any>, preflight: Record<string,
       allowedDirtyFileCount: preflightSnapshot.allowedDirtyFileCount,
       blockingDirtyFileCount: preflightSnapshot.blockingDirtyFileCount,
       stashCount: preflightSnapshot.stashCount,
+      baseWorktree: preflightSnapshot.baseWorktree,
+      baseWorktreeBranch: preflightSnapshot.baseWorktreeBranch,
+      baseWorktreeDirtyFileCount: preflightSnapshot.baseWorktreeDirtyFileCount,
+      baseWorktreeIgnoredDirtyFileCount: preflightSnapshot.baseWorktreeIgnoredDirtyFileCount,
       safetyRef: preflightSnapshot.safetyRef ?? result.safetyRef ?? null,
       remote: preflightSnapshot.remote,
       baseBranch: preflightSnapshot.baseBranch,
@@ -102,6 +106,14 @@ function classifyDirtyFiles(dirtyFiles: string[], allowDirtyPaths: unknown) {
   return { allowedDirtyFiles, blockingDirtyFiles };
 }
 
+function splitPrimaryDirtyFiles(dirtyFiles: string[], repoRoot: string, config: Record<string, any>) {
+  const guardianRoot = normalizeDirtyPath(expandWorktreeRoot(config.worktreeRoot, repoRoot)).replace(/\/$/, "");
+  const guardianRootPrefix = `${guardianRoot}/`;
+  const ignoredDirtyFiles = dirtyFiles.filter((file) => normalizeDirtyPath(file).startsWith(guardianRootPrefix));
+  const blockingDirtyFiles = dirtyFiles.filter((file) => !ignoredDirtyFiles.includes(file));
+  return { ignoredDirtyFiles, blockingDirtyFiles };
+}
+
 export async function guardianFinish(input: Record<string, any> = {}): Promise<Record<string, any>> {
   const cwd = input.cwd ?? input.repoRoot ?? process.cwd();
   const repoRoot = input.repoRoot ?? await getRepoRoot(cwd);
@@ -126,6 +138,12 @@ export async function guardianFinish(input: Record<string, any> = {}): Promise<R
     blockingDirtyFiles: [],
     blockingDirtyFileCount: 0,
     stashCount: 0,
+    baseWorktree: null,
+    baseWorktreeBranch: null,
+    baseWorktreeDirtyFiles: [],
+    baseWorktreeDirtyFileCount: 0,
+    baseWorktreeIgnoredDirtyFiles: [],
+    baseWorktreeIgnoredDirtyFileCount: 0,
     safetyRef: null,
     remote: config.remote,
     baseBranch: config.baseBranch,
@@ -221,6 +239,22 @@ export async function guardianFinish(input: Record<string, any> = {}): Promise<R
   if (mode === "merge-to-base") {
     if (input.allowMergeToBase !== true) {
       return blocked("merge-to-base requires explicit allowMergeToBase=true", { safetyRef, branch }, preflight, { action: "requires-explicit-merge-approval" });
+    }
+    const baseWorktree = await getRepoRoot(repoRoot);
+    const baseWorktreeBranch = await getCurrentBranch(baseWorktree);
+    const baseWorktreeAllDirtyFiles = await getDirtyFiles(baseWorktree);
+    const { ignoredDirtyFiles: baseWorktreeIgnoredDirtyFiles, blockingDirtyFiles: baseWorktreeDirtyFiles } = splitPrimaryDirtyFiles(baseWorktreeAllDirtyFiles, repoRoot, config);
+    preflight.baseWorktree = baseWorktree;
+    preflight.baseWorktreeBranch = baseWorktreeBranch;
+    preflight.baseWorktreeDirtyFiles = baseWorktreeDirtyFiles;
+    preflight.baseWorktreeDirtyFileCount = baseWorktreeDirtyFiles.length;
+    preflight.baseWorktreeIgnoredDirtyFiles = baseWorktreeIgnoredDirtyFiles;
+    preflight.baseWorktreeIgnoredDirtyFileCount = baseWorktreeIgnoredDirtyFiles.length;
+    if (baseWorktreeBranch !== config.baseBranch) {
+      return blocked("merge-to-base requires primary repo worktree to already be on the base branch", { safetyRef, branch, baseWorktree, baseWorktreeBranch, baseBranch: config.baseBranch }, preflight);
+    }
+    if (baseWorktreeDirtyFiles.length > 0) {
+      return blocked("merge-to-base requires primary repo worktree to be clean", { safetyRef, branch, baseWorktree, dirtyFiles: baseWorktreeDirtyFiles }, preflight);
     }
     await runGit(repoRoot, ["checkout", config.baseBranch]);
     await runGit(repoRoot, ["merge", "--ff-only", branch]);

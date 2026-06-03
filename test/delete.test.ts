@@ -233,10 +233,12 @@ test("protected branches and primary/current worktrees are blocked", async () =>
   const protectedStart = await createGuardianWorktree(repo, "ses_delete_protected", "delete protected", "develop");
   const currentStart = await createGuardianWorktree(repo, "ses_delete_current");
 
+  assert.equal(protectedStart.ok, false);
+  assert.match(protectedStart.reason, /protected/);
+
   const protectedResult = await deleteWorktree({ repoRoot: repo, cwd: repo, mode: "plan", branch: "develop", config: DEFAULT_CONFIG });
   assert.equal(protectedResult.ok, false);
   assert.match(protectedResult.reason, /protected/);
-  assert.equal((await worktreePaths(repo)).includes(protectedStart.session.worktree_path), true);
 
   const primaryResult = await deleteWorktree({ repoRoot: repo, cwd: repo, mode: "plan", targetPath: repo, config: DEFAULT_CONFIG });
   assert.equal(primaryResult.ok, false);

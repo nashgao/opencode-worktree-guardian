@@ -319,6 +319,10 @@ export async function guardianDeleteWorktree(input: Record<string, unknown> = {}
 
   if (mode !== "plan" && mode !== "apply") return blocked("mode must be plan or apply", { mode }, preflight);
   if (abandonUnmerged && !deleteRequestedBranch) return blocked("abandonUnmerged requires deleteBranch=true", {}, preflight);
+  if (typeof input.branch === "string" && (config.protectedBranches as string[]).includes(input.branch)) {
+    preflight.branch = input.branch;
+    return blocked("protected branches cannot be deleted by guardian_delete_worktree", { branch: input.branch }, preflight);
+  }
 
   const guardianPaths = await getGuardianPaths(repoRoot);
   const state = input.state && typeof input.state === "object" ? input.state as { sessions?: Record<string, GuardianSession> } : await readState(guardianPaths, { repoRoot, config });

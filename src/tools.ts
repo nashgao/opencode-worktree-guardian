@@ -93,6 +93,27 @@ async function validateRecordedBinding(repoRoot: string, config: Record<string, 
   return { ok: true, branch: entry.branch };
 }
 
+async function validateOwnedSession(repoRoot: string, config: Record<string, any>, session: Record<string, any>) {
+  if (!session.worktree_path) return { ok: false, reason: "recorded session has no worktree path" };
+  return validateRecordedBinding(repoRoot, config, session, session.worktree_path);
+}
+
+function protectedBranchReason(config: Record<string, any>, branch: string | null) {
+  if (!branch) return "detached HEAD cannot be recorded by guardian";
+  return Array.isArray(config.protectedBranches) && config.protectedBranches.includes(branch)
+    ? "protected branches cannot be recorded as Guardian-owned worktrees"
+    : null;
+}
+
+async function createSessionWorktree(repoRoot: string, config: Record<string, any>, input: Record<string, any>, sessionId: string) {
+  const branchName = input.branch ?? `${config.branchPrefix}${slug(input.taskName)}-${slug(sessionId).slice(0, 8)}`;
+  const unsafeReason = protectedBranchReason(config, branchName);
+  if (unsafeReason) return { ok: false, status: "blocked", reason: unsafeReason, branch: branchName };
+  const worktreePath = await resolveWorktreeTarget(repoRoot, config, input.worktreePath, branchName);
+  await runGit(repoRoot, ["worktree", "add", "-b", branchName, worktreePath, `${config.remote}/${config.baseBranch}`]);
+  return { ok: true, branch: branchName, worktreePath };
+}
+
 export async function resolveSessionWorktree(input: Record<string, any> = {}) {
   const sessionId = input.sessionId ?? input.sessionID;
   if (!sessionId) return { ok: true, sessionId: null, expectedWorktree: null, actualWorktree: null, matches: true };
@@ -159,20 +180,48 @@ export async function guardianStart(input: Record<string, any> = {}) {
   const state = await readState(guardianPaths, { repoRoot, config });
   const existing = state.sessions?.[sessionId];
   if (existing?.status === "active" && existing.worktree_path) {
-    return { ok: true, session: existing, stateVersion: state.state_version, existing: true };
+    const binding = await validateOwnedSession(repoRoot, config, existing);
+    if (binding.ok) return { ok: true, session: existing, stateVersion: state.state_version, existing: true };
+    if (input.createWorktree !== true) {
+      return {
+        ok: false,
+        status: "blocked",
+        reason: `recorded session cannot be used: ${binding.reason}; rerun guardian_start with createWorktree=true`,
+        session: existing,
+        stateVersion: state.state_version,
+      };
+    }
+    const previous = { worktree_path: existing.worktree_path, branch: existing.branch, reason: binding.reason };
+    const created = await createSessionWorktree(repoRoot, config, input, sessionId);
+    if (!created.ok) return { ...created, session: existing, stateVersion: state.state_version, previous };
+    const headCommit = await getHeadCommit(created.worktreePath);
+    const repairedSession = {
+      ...existing,
+      session_id: sessionId,
+      status: "active",
+      branch: created.branch,
+      worktree_path: created.worktreePath,
+      base_ref: `${config.remote}/${config.baseBranch}`,
+      head_commit: headCommit,
+      safety_refs: existing.safety_refs ?? [],
+    };
+    const repairedState = await recordSession(repoRoot, config, repairedSession, { event: { type: "guardian_start_repair", session_id: sessionId, reason: binding.reason } });
+    return { ok: true, session: repairedState.sessions[sessionId], stateVersion: repairedState.state_version, existing: false, repaired: true, previous };
   }
 
   let worktreePath = await getRepoRoot(cwd);
   let branch = await getCurrentBranch(worktreePath);
 
   if (input.createWorktree === true) {
-    const branchName = input.branch ?? `${config.branchPrefix}${slug(input.taskName)}-${slug(sessionId).slice(0, 8)}`;
-    worktreePath = await resolveWorktreeTarget(repoRoot, config, input.worktreePath, branchName);
-    await runGit(repoRoot, ["worktree", "add", "-b", branchName, worktreePath, `${config.remote}/${config.baseBranch}`]);
-    branch = branchName;
+    const created = await createSessionWorktree(repoRoot, config, input, sessionId);
+    if (!created.ok) return { ...created, stateVersion: state.state_version };
+    worktreePath = created.worktreePath;
+    branch = created.branch;
   }
 
   if (!branch) throw new Error("Cannot start guardian session from detached HEAD");
+  const unsafeReason = input.createWorktree === true ? null : protectedBranchReason(config, branch);
+  if (unsafeReason) return { ok: false, status: "blocked", reason: unsafeReason, branch, worktreePath };
   const headCommit = await getHeadCommit(worktreePath);
   const session = {
     session_id: sessionId,
@@ -225,6 +274,8 @@ export async function guardianPreserve(input: Record<string, any> = {}) {
   const worktreePath = await getRepoRoot(cwd);
   const branch = await getCurrentBranch(worktreePath);
   if (!branch) throw new Error("Cannot preserve detached HEAD");
+  const unsafeReason = protectedBranchReason(config, branch);
+  if (unsafeReason) return { ok: false, status: "blocked", reason: unsafeReason, branch, worktreePath };
   const headCommit = await getHeadCommit(worktreePath);
   const preservedRef = buildPreservedRef(sessionId, branch, input.timestamp);
   await createRef(worktreePath, preservedRef, headCommit);
@@ -264,6 +315,8 @@ export async function recordLastSafeState(input: Record<string, any> = {}) {
   const worktreePath = await getRepoRoot(cwd);
   const branch = await getCurrentBranch(worktreePath);
   if (!branch) return { ok: false, reason: "detached HEAD" };
+  const unsafeReason = protectedBranchReason(config, branch);
+  if (unsafeReason) return { ok: false, reason: unsafeReason, branch, worktreePath };
   const headCommit = await getHeadCommit(worktreePath);
   const state = await recordSession(repoRoot, config, {
     session_id: sessionId,

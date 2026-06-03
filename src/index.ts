@@ -229,6 +229,7 @@ function countLine(result: Record<string, unknown>) {
     ["sessions", arrayValue(result.sessions).length],
     ["worktrees", arrayValue(result.worktrees).length],
     ["orphaned", arrayValue(result.orphanedSessions).length],
+    ["poisoned", arrayValue(result.poisonedSessions).length],
     ["dirty", arrayValue(result.dirtyFiles).length],
     ["stashes", arrayValue(result.stashes).length],
     ["safetyRefs", arrayValue(result.safetyRefs).length],
@@ -256,6 +257,7 @@ function formatGuardianStatusOutput(name: string, rawResult: unknown) {
 
   const warningSections = [
     ["orphaned sessions", result.orphanedSessions],
+    ["poisoned sessions", result.poisonedSessions],
     ["worktrees without state", result.worktreesWithoutState],
     ["state branches without worktrees", result.stateBranchesWithoutWorktrees],
     ["dirty files", result.dirtyFiles],
@@ -680,21 +682,41 @@ const WorktreeGuardianPlugin = {
               const { config } = await loadConfig(directory);
               if (config.autoFinish === true) {
                 const executionCwd = worktree ?? directory;
-                const sessionWorktree = await resolveSessionWorktree({
+                const recordedSessionWorktree = await resolveSessionWorktree({
                   repoRoot: directory,
                   cwd: executionCwd,
-                actualWorktree: executionCwd,
-                sessionId,
-                cache: sessionWorktreeCache,
-                config,
-                  validateBinding: true,
-              });
-                autoFinish = await runGuardianTool("guardian_finish", {
-                  repoRoot: directory,
-                  cwd: sessionWorktree.expectedWorktree ?? executionCwd,
+                  actualWorktree: executionCwd,
                   sessionId,
-                  finishMode: config.finishMode,
+                  cache: sessionWorktreeCache,
+                  config,
                 });
+                const validationCwd = recordedSessionWorktree.expectedWorktree ?? executionCwd;
+                const validationWorktree = await resolveActualWorktreeOrPath(validationCwd);
+                const sessionWorktree = await resolveSessionWorktree({
+                  repoRoot: directory,
+                  cwd: validationCwd,
+                  actualWorktree: validationWorktree,
+                  sessionId,
+                  cache: sessionWorktreeCache,
+                  config,
+                  validateBinding: true,
+                });
+                if (sessionWorktree?.ok !== true) {
+                  autoFinish = {
+                    ok: false,
+                    status: "blocked",
+                    reason: `recorded session cannot be auto-finished: ${sessionWorktree?.reason ?? "session worktree binding is invalid"}; rerun guardian_start with createWorktree=true`,
+                    sessionWorktree,
+                    suggestedCommand: "guardian_start createWorktree=true",
+                  };
+                } else {
+                  autoFinish = await runGuardianTool("guardian_finish", {
+                    repoRoot: directory,
+                    cwd: sessionWorktree.expectedWorktree ?? executionCwd,
+                    sessionId,
+                    finishMode: config.finishMode,
+                  });
+                }
                 if (autoFinish?.ok === true) autoFinishedSessions.add(sessionId);
               }
             } catch (error) {

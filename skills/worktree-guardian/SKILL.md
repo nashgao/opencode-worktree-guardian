@@ -21,6 +21,7 @@ Use the native guardian tools for worktree inspection and completion. The skill 
 - Use `guardian_preserve` when work should intentionally remain available.
 - Use `guardian_recover` for safety refs, orphaned sessions, stash inventory, reflog, and recovery suggestions.
 - For mutating commands such as `git add` or `git commit`, rely on Guardian routing after the default auto-start hook or explicit `guardian_start` records a session worktree. Repo config `autoStart=false` disables automatic ownership; without recorded ownership, normal non-destructive commands run in the current worktree.
+- If Guardian state records the current session on the primary repo worktree or a protected branch, use `guardian_start` with `createWorktree: true` to repair the session into a proper Guardian worktree. Do not use raw `git switch`, raw branch creation, or protected-branch bypass commands to escape the poisoned binding.
 - If the plugin blocks a command, report the blocker, preserved path, branch, safety refs, and suggested guardian tool.
 
 ## Defaults
