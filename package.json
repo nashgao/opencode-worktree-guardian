@@ -5,9 +5,12 @@
   "type": "module",
   "main": "./src/index.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./server": "./src/index.ts",
+    "./tui": "./src/tui.ts"
   },
   "files": [
+    "commands",
     "src",
     "scripts",
     "skills",
@@ -15,20 +18,21 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "node --import tsx --test test/*.test.ts",
+    "test": "node scripts/with-safe-node-temp.mjs -- node --import tsx --test test/*.test.ts",
     "lint": "npm run typecheck",
     "typecheck": "tsc --noEmit",
-    "coverage": "node --import tsx --test --experimental-test-coverage --test-coverage-lines=80 test/*.test.ts",
+    "coverage": "node scripts/with-safe-node-temp.mjs -- node --import tsx --test --experimental-test-coverage --test-coverage-lines=80 test/*.test.ts",
     "verify": "npm run lint && npm run coverage",
     "audit:deps": "npm audit --registry=https://registry.npmjs.org --omit=dev",
-    "test:contract": "node --import tsx --test test/plugin-contract.test.ts test/index.test.ts",
-    "test:smoke:package": "node --import tsx --test test/package-smoke.test.ts",
-    "test:smoke:host": "node --import tsx --test test/opencode-host-smoke.test.ts",
-    "test:readiness": "node --import tsx scripts/readiness.ts",
+    "test:contract": "node scripts/with-safe-node-temp.mjs -- node --import tsx --test test/plugin-contract.test.ts test/index.test.ts",
+    "test:smoke:package": "node scripts/with-safe-node-temp.mjs -- node --import tsx --test test/package-smoke.test.ts",
+    "test:smoke:host": "node scripts/with-safe-node-temp.mjs -- node --import tsx --test test/opencode-host-smoke.test.ts",
+    "test:readiness": "node scripts/with-safe-node-temp.mjs -- node --import tsx scripts/readiness.ts",
     "prepublishOnly": "npm run test:readiness"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=20",
+    "opencode": ">=1.14.48"
   },
   "dependencies": {
     "@opencode-ai/plugin": "^1.14.48"

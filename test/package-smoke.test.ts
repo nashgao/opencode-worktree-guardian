@@ -9,6 +9,18 @@ import test from "node:test";
 const execFileAsync = promisify(execFile);
 const projectRoot = path.resolve(new URL("..", import.meta.url).pathname);
 const defaultRunTimeoutMs = 2 * 60 * 1000;
+const expectedCommandAssets = [
+  "commands/delete-worktree.md",
+  "commands/finish.md",
+  "commands/hygiene.md",
+  "commands/hygiene-cleanup.md",
+  "commands/preserve.md",
+  "commands/recover.md",
+  "commands/report.md",
+  "commands/start.md",
+  "commands/status.md",
+  "commands/unblock-finish.md",
+];
 
 async function run(command: string, args: string[], options: Record<string, any> = {}) {
   const env = {
@@ -37,6 +49,17 @@ test("package smoke run helper times out hung commands", async () => {
 });
 
 test("packed artifact installs in a clean consumer and exposes plugin contract", async (t) => {
+  const packageJson = JSON.parse(await fs.readFile(path.join(projectRoot, "package.json"), "utf8"));
+  assert.equal(packageJson.exports["./server"], "./src/index.ts");
+  assert.equal(packageJson.exports["./tui"], "./src/tui.ts");
+  assert.equal(packageJson.files.includes("commands"), true);
+  assert.equal(packageJson.files.includes("skills"), true);
+
+  const readme = await fs.readFile(path.join(projectRoot, "README.md"), "utf8");
+  assert.equal(readme.includes('"plugin": ["opencode-worktree-guardian"]'), true);
+  assert.equal(readme.includes('"plugin": ["opencode-worktree-guardian/server"]'), false);
+  assert.equal(readme.includes('"plugin": ["opencode-worktree-guardian/tui"]'), false);
+
   const base = await fs.mkdtemp(path.join(os.tmpdir(), "guardian-package-smoke-"));
   t.after(() => fs.rm(base, { recursive: true, force: true }));
   const packDir = path.join(base, "pack");
@@ -50,7 +73,13 @@ test("packed artifact installs in a clean consumer and exposes plugin contract",
   assert.equal(packInfo.name, "opencode-worktree-guardian");
   assert.equal(packInfo.version, "0.1.0");
   assert.equal(packInfo.files.some((file: { path: string }) => file.path === "src/index.ts"), true);
+  assert.equal(packInfo.files.some((file: { path: string }) => file.path === "src/tui.ts"), true);
   assert.equal(packInfo.files.some((file: { path: string }) => file.path === "scripts/readiness.ts"), true);
+  assert.equal(packInfo.files.some((file: { path: string }) => file.path === "scripts/with-safe-node-temp.mjs"), true);
+  for (const commandAsset of expectedCommandAssets) {
+    assert.equal(packInfo.files.some((file: { path: string }) => file.path === commandAsset), true, commandAsset);
+  }
+  assert.equal(packInfo.files.some((file: { path: string }) => file.path === "skills/worktree-guardian/SKILL.md"), true);
   assert.equal(packInfo.files.some((file: { path: string }) => file.path.startsWith("test/")), false);
   assert.equal(packInfo.files.some((file: { path: string }) => file.path.startsWith(".milestones/")), false);
   assert.equal(packInfo.files.some((file: { path: string }) => file.path === "IMPLEMENTATION_PLAN.md"), false);
@@ -65,14 +94,17 @@ test("packed artifact installs in a clean consumer and exposes plugin contract",
     "--cache",
     npmCache,
     path.join(packDir, packInfo.filename),
+    `tsx@${packageJson.devDependencies.tsx}`,
   ], { cwd: consumer });
 
   const smokeScript = `
     import plugin from "opencode-worktree-guardian";
+    import serverPlugin from "opencode-worktree-guardian/server";
+    import tuiPlugin from "opencode-worktree-guardian/tui";
     const hooks = await plugin.server({ directory: process.cwd(), worktree: process.cwd(), client: { app: { log: async () => {} } } });
-    console.log(JSON.stringify({ id: plugin.id, tools: Object.keys(hooks.tool).sort(), hooks: Object.keys(hooks).filter((key) => key !== "tool").sort() }));
+    console.log(JSON.stringify({ id: plugin.id, serverId: serverPlugin.id, tuiId: tuiPlugin.id, hasTui: typeof tuiPlugin.tui === "function", tools: Object.keys(hooks.tool).sort(), hooks: Object.keys(hooks).filter((key) => key !== "tool").sort() }));
   `;
-  const tsxLoader = path.join(projectRoot, "node_modules", "tsx", "dist", "loader.mjs");
+  const tsxLoader = path.join(consumer, "node_modules", "tsx", "dist", "loader.mjs");
   const smoke = await run("node", ["--import", tsxLoader, "--input-type=module", "-e", smokeScript], {
     cwd: consumer,
     env: {
@@ -83,8 +115,16 @@ test("packed artifact installs in a clean consumer and exposes plugin contract",
     },
   });
 
+  for (const commandAsset of expectedCommandAssets) {
+    await fs.access(path.join(consumer, "node_modules", "opencode-worktree-guardian", commandAsset));
+  }
+  await fs.access(path.join(consumer, "node_modules", "opencode-worktree-guardian", "skills", "worktree-guardian", "SKILL.md"));
+
   const result = JSON.parse(smoke.stdout);
   assert.equal(result.id, "opencode-worktree-guardian");
-  assert.deepEqual(result.tools, ["guardian_finish", "guardian_preserve", "guardian_recover", "guardian_report_html", "guardian_start", "guardian_status"]);
+  assert.equal(result.serverId, "opencode-worktree-guardian");
+  assert.equal(result.tuiId, "opencode-worktree-guardian");
+  assert.equal(result.hasTui, true);
+  assert.deepEqual(result.tools, ["guardian_delete_worktree", "guardian_finish", "guardian_hygiene", "guardian_hygiene_cleanup", "guardian_preserve", "guardian_recover", "guardian_report_html", "guardian_start", "guardian_status", "guardian_unblock_finish"]);
   assert.equal(result.hooks.includes("tool.execute.before"), true);
 });

@@ -1,11 +1,14 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { expandWorktreeRoot, loadConfig } from "./config.ts";
+import { guardianDeleteWorktree } from "./delete.ts";
 import { buildPreservedRef, createRef, getCurrentBranch, getHeadCommit, getRepoRoot, listWorktrees, runGit } from "./git.ts";
 import { guardianFinish } from "./finish.ts";
+import { guardianHygieneCleanup, scanWorkspaceHygiene } from "./hygiene.ts";
 import { guardianRecover, guardianStatus } from "./recover.ts";
 import { guardianReportHtml } from "./report.ts";
 import { getGuardianPaths, readState, recordSession } from "./state.ts";
+import { guardianUnblockFinish } from "./unblock-finish.ts";
 
 async function safeRealpath(candidate: string) {
   try {
@@ -72,6 +75,24 @@ function matchesWorktree(expectedWorktree: string, actualPath: string) {
   return isSameOrInside(path.resolve(actualPath), path.resolve(expectedWorktree));
 }
 
+function samePath(left: string, right: string) {
+  return path.resolve(left) === path.resolve(right);
+}
+
+async function validateRecordedBinding(repoRoot: string, config: Record<string, any>, session: Record<string, any>, actualWorktree: string) {
+  const expectedWorktree = session.worktree_path;
+  if (!matchesWorktree(expectedWorktree, actualWorktree)) return { ok: false, reason: "session worktree path does not match actual worktree" };
+  const entries = await listWorktrees(repoRoot);
+  const matches = entries.filter((entry: any) => samePath(entry.path, expectedWorktree));
+  if (matches.length !== 1) return { ok: false, reason: matches.length > 1 ? "recorded worktree path matches multiple git worktrees" : "recorded worktree is not checked out in git worktree list" };
+  const entry: any = matches[0];
+  if (entry.detached || !entry.branch) return { ok: false, reason: "recorded worktree is detached" };
+  if (typeof session.branch === "string" && entry.branch !== session.branch) return { ok: false, reason: "recorded branch does not match checked-out worktree branch" };
+  if (Array.isArray(config.protectedBranches) && config.protectedBranches.includes(entry.branch)) return { ok: false, reason: "recorded worktree branch is protected" };
+  if (samePath(entry.path, repoRoot)) return { ok: false, reason: "recorded worktree is the primary repository worktree" };
+  return { ok: true, branch: entry.branch };
+}
+
 export async function resolveSessionWorktree(input: Record<string, any> = {}) {
   const sessionId = input.sessionId ?? input.sessionID;
   if (!sessionId) return { ok: true, sessionId: null, expectedWorktree: null, actualWorktree: null, matches: true };
@@ -80,9 +101,10 @@ export async function resolveSessionWorktree(input: Record<string, any> = {}) {
   const repoRoot = input.repoRoot ?? await getRepoRoot(cwd);
   const actualWorktree = input.actualWorktree ?? await getRepoRoot(cwd);
   const cache = input.cache;
+  const validateBinding = input.validateBinding === true;
   const cachedWorktree = typeof cache?.get === "function" ? cache.get(sessionId) : null;
 
-  if (cachedWorktree) {
+  if (cachedWorktree && !validateBinding) {
     const matches = matchesWorktree(cachedWorktree, actualWorktree);
     return {
       ok: matches,
@@ -103,6 +125,20 @@ export async function resolveSessionWorktree(input: Record<string, any> = {}) {
 
   if (typeof cache?.set === "function") cache.set(sessionId, session.worktree_path);
   const matches = matchesWorktree(session.worktree_path, actualWorktree);
+  if (matches && validateBinding) {
+    const binding = await validateRecordedBinding(repoRoot, config, session, actualWorktree);
+    if (!binding.ok) {
+      return {
+        ok: false,
+        reason: binding.reason,
+        sessionId,
+        expectedWorktree: session.worktree_path,
+        actualWorktree,
+        matches: false,
+        source: "state",
+      };
+    }
+  }
   return {
     ok: matches,
     sessionId,
@@ -155,10 +191,11 @@ export async function guardianStart(input: Record<string, any> = {}) {
 export function buildInvisiblePolicy(config: Record<string, any>) {
   return [
     "Worktree Guardian policy:",
-    "- Treat the current guardian-owned worktree and branch as preserved user work.",
+    "- Guardian auto-starts session worktree ownership by default; repo config autoStart=false disables automatic ownership.",
     "- Do not run raw destructive git cleanup, reset, stash mutation, force-push, worktree removal, or rm -rf against worktrees.",
-    "- Finish Guardian work through guardian_finish; do not manually push or merge Guardian branches into protected branches.",
+    "- Finish Guardian work through guardian_finish so the configured mode can push, suggest a PR, preserve, or explicitly merge protected branches after gates pass.",
     "- Use guardian_status for read-only inspection and guardian_finish for gated completion.",
+    "- Safe mutating shell/git tool calls for a recorded Guardian session are routed into that recorded worktree automatically.",
     `- Default finish mode is ${config.finishMode}; auto-finish is ${config.autoFinish ? "enabled by repo config" : "disabled"} unless repo config opts in.`,
   ].join("\n");
 }
@@ -206,11 +243,13 @@ export async function guardianPreserve(input: Record<string, any> = {}) {
 export function rewriteGuardianCommand(input: Record<string, any> = {}, output: Record<string, any> = {}) {
   const command = input?.command;
   if (typeof command !== "string") return false;
-  const match = command.trim().match(/^\/?guardian\s+(status|finish|preserve|recover|report|start)\b(.*)$/);
+  const match = command.trim().match(/^\/?guardian\s+(status|finish|preserve|recover|report|start|hygiene-cleanup|hygiene|delete-worktree|unblock-finish)\b(.*)$/);
   if (!match) return false;
   const [, action, rest] = match;
-  const toolName = action === "report" ? "guardian_report_html" : `guardian_${action}`;
-  const text = `Use the ${toolName} native tool.${rest.trim() ? ` User arguments: ${rest.trim()}` : ""}`;
+  const toolName = action === "report" ? "guardian_report_html" : action === "delete-worktree" ? "guardian_delete_worktree" : action === "hygiene-cleanup" ? "guardian_hygiene_cleanup" : action === "unblock-finish" ? "guardian_unblock_finish" : `guardian_${action}`;
+  const deleteGuidance = action === "delete-worktree" ? " Run mode=plan first. Stale local Guardian branch cleanup requires an exact branch or terminal sessionId plus deleteBranch=true and Guardian ownership proof from terminal state or safety refs. Intentional unmerged local abandonment requires deleteBranch=true plus abandonUnmerged=true in both plan and apply after inspecting unmerged commit evidence." : "";
+  const hygieneCleanupGuidance = action === "hygiene-cleanup" ? " Run mode=plan first, inspect exact targets/blockers, get explicit user confirmation, then apply with confirmDelete=true. guardian_hygiene remains report-only." : "";
+  const text = `Use the ${toolName} native tool.${deleteGuidance}${hygieneCleanupGuidance}${rest.trim() ? ` User arguments: ${rest.trim()}` : ""}`;
   if (!output || typeof output !== "object") return false;
   output.parts = [{ type: "text", text }];
   return true;
@@ -240,9 +279,13 @@ export async function recordLastSafeState(input: Record<string, any> = {}) {
 export async function runGuardianTool(name: string, input: Record<string, any> = {}): Promise<Record<string, any>> {
   if (name === "guardian_start") return guardianStart(input);
   if (name === "guardian_status") return guardianStatus(input);
+  if (name === "guardian_delete_worktree") return guardianDeleteWorktree(input);
   if (name === "guardian_finish") return guardianFinish(input);
   if (name === "guardian_preserve") return guardianPreserve(input);
   if (name === "guardian_recover") return guardianRecover(input);
   if (name === "guardian_report_html") return guardianReportHtml(input);
+  if (name === "guardian_hygiene") return scanWorkspaceHygiene(input);
+  if (name === "guardian_hygiene_cleanup") return guardianHygieneCleanup(input);
+  if (name === "guardian_unblock_finish") return guardianUnblockFinish(input);
   throw new Error(`Unknown guardian tool: ${name}`);
 }

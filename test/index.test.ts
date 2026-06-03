@@ -24,12 +24,16 @@ test("exports the current OpenCode plugin object shape", () => {
 test("exposes guardian native tools", async () => {
   const hooks = await plugin.server({ directory: "/repo", worktree: "/repo/.worktrees/example" });
   assert.deepEqual(Object.keys(hooks.tool).sort(), [
+    "guardian_delete_worktree",
     "guardian_finish",
+    "guardian_hygiene",
+    "guardian_hygiene_cleanup",
     "guardian_preserve",
     "guardian_recover",
     "guardian_report_html",
     "guardian_start",
     "guardian_status",
+    "guardian_unblock_finish",
   ]);
 });
 
@@ -114,6 +118,17 @@ test("tool.execute.before throws to block destructive commands", async () => {
   );
 });
 
+test("tool.execute.before blocks context-mode code payload worktree creation", async () => {
+  const hooks = await plugin.server({ directory: "/repo", worktree: "/repo/.worktrees/example" });
+  await assert.rejects(
+    () => hooks["tool.execute.before"](
+      { tool: "context-mode_ctx_execute", sessionID: "ses_123", callID: "call_code", args: { code: "git worktree add /tmp/unmanaged main" } },
+      {},
+    ),
+    /git worktree add outside Guardian-owned roots/,
+  );
+});
+
 
 test("tool.execute.before blocks manual protected-branch finish bypasses", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
@@ -129,28 +144,54 @@ test("tool.execute.before blocks manual protected-branch finish bypasses", async
   );
 });
 
-test("auto-start records an owned worktree while host context remains repo root", async (t) => {
+test("default chat transform auto-starts and owns a worktree", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
   const records: Array<Record<string, any>> = [];
-  const sessionID = "ses_auto_start_root_context";
+  const sessionID = "ses_default_auto_start";
   const hooks = await plugin.server({ client: createClient(records), directory: repo, worktree: repo });
 
   await hooks["experimental.chat.system.transform"](
-    { sessionID, taskName: "fail closed root context" },
+    { sessionID, taskName: "default auto start" },
     { system: [] },
   );
 
   const paths = await getGuardianPaths(repo);
   const state = await readState(paths, { repoRoot: repo, config: DEFAULT_CONFIG });
-  const session = state.sessions[sessionID];
-  assert.equal(session.status, "active");
-  assert.notEqual(session.worktree_path, repo);
+  assert.equal(state.sessions[sessionID].status, "active");
+  assert.notEqual(state.sessions[sessionID].worktree_path, repo);
+  assert.equal(records[0].invisibleStart.ok, true);
   assert.equal(records[0].directory, repo);
   assert.equal(records[0].worktree, repo);
 });
 
-test("tool.execute.before blocks mutating commands outside the auto-start owned worktree", async (t) => {
+test("explicit autoStart=false disables default chat transform ownership", async (t) => {
+  const path = await import("node:path");
+  const { git } = await import("./helpers.ts");
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  await fs.mkdir(path.join(repo, ".opencode"), { recursive: true });
+  await fs.writeFile(path.join(repo, ".opencode", "worktree-guardian.json"), JSON.stringify({ autoStart: false }));
+  await git(repo, ["add", ".opencode/worktree-guardian.json"]);
+  await git(repo, ["commit", "-m", "disable guardian auto start"]);
+  const records: Array<Record<string, any>> = [];
+  const sessionID = "ses_auto_start_disabled";
+  const hooks = await plugin.server({ client: createClient(records), directory: repo, worktree: repo });
+
+  await hooks["experimental.chat.system.transform"](
+    { sessionID, taskName: "disabled auto start" },
+    { system: [] },
+  );
+
+  const paths = await getGuardianPaths(repo);
+  const state = await readState(paths, { repoRoot: repo, config: { ...DEFAULT_CONFIG, autoStart: false } });
+  assert.equal(state.sessions[sessionID], undefined);
+  assert.equal(records[0].invisibleStart, null);
+  assert.equal(records[0].directory, repo);
+  assert.equal(records[0].worktree, repo);
+});
+
+test("tool.execute.before routes mutating commands to the default auto-start owned worktree", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
   const sessionID = "ses_auto_start_block_mutation";
@@ -164,16 +205,15 @@ test("tool.execute.before blocks mutating commands outside the auto-start owned 
   const state = await readState(paths, { repoRoot: repo, config: DEFAULT_CONFIG });
   assert.notEqual(state.sessions[sessionID].worktree_path, repo);
 
-  await assert.rejects(
-    () => hooks["tool.execute.before"](
-      { tool: "bash", sessionID, callID: "call_root_mutation" },
-      { args: { command: "touch repo-root-mutation.txt" } },
-    ),
-    /Worktree Guardian blocked command/,
-  );
+  const output: { args: { command: string; workdir?: string; cwd?: string } } = { args: { command: "touch repo-root-mutation.txt" } };
+
+  await hooks["tool.execute.before"]({ tool: "bash", sessionID, callID: "call_root_mutation" }, output);
+
+  assert.equal(output.args.workdir, state.sessions[sessionID].worktree_path);
+  assert.equal(output.args.cwd, state.sessions[sessionID].worktree_path);
 });
 
-test("tool.execute.before allows read-only commands after auto-start leaves host at repo root", async (t) => {
+test("tool.execute.before allows read-only commands after default auto-start leaves host at repo root", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
   const sessionID = "ses_auto_start_allow_readonly";
@@ -196,6 +236,14 @@ test("/guardian slash commands rewrite to native tool instructions", async () =>
   const output = { parts: [] };
   await hooks["command.execute.before"]({ command: "/guardian status", sessionID: "ses_123", arguments: [] }, output);
   assert.deepEqual(output.parts, [{ type: "text", text: "Use the guardian_status native tool." }]);
+
+  const deleteOutput = { parts: [] };
+  await hooks["command.execute.before"]({ command: "/guardian delete-worktree", sessionID: "ses_123", arguments: [] }, deleteOutput);
+  assert.deepEqual(deleteOutput.parts, [{ type: "text", text: "Use the guardian_delete_worktree native tool. Run mode=plan first. Stale local Guardian branch cleanup requires an exact branch or terminal sessionId plus deleteBranch=true and Guardian ownership proof from terminal state or safety refs. Intentional unmerged local abandonment requires deleteBranch=true plus abandonUnmerged=true in both plan and apply after inspecting unmerged commit evidence." }]);
+
+  const cleanupOutput = { parts: [] };
+  await hooks["command.execute.before"]({ command: "/guardian hygiene-cleanup", sessionID: "ses_123", arguments: [] }, cleanupOutput);
+  assert.deepEqual(cleanupOutput.parts, [{ type: "text", text: "Use the guardian_hygiene_cleanup native tool. Run mode=plan first, inspect exact targets/blockers, get explicit user confirmation, then apply with confirmDelete=true. guardian_hygiene remains report-only." }]);
 });
 
 test("session idle auto-finish is opt-in and deduplicated", async () => {
@@ -224,17 +272,54 @@ test("hook blocks rm -rf against sibling guardian worktree", async () => {
   );
 });
 
-test("hook blocks recorded session mutating git commands outside the owned worktree", async () => {
+test("hook routes recorded session mutating git commands to the owned worktree", async () => {
   const { createRepoWithOrigin } = await import("./helpers.ts");
   const { guardianStart } = await import("../src/tools.ts");
   const { DEFAULT_CONFIG } = await import("../src/config.ts");
   const { repo } = await createRepoWithOrigin();
   const start = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_owned", taskName: "owned", createWorktree: true, config: DEFAULT_CONFIG });
   const hooks = await plugin.server({ directory: repo, worktree: repo });
+  const addOutput: { args: { command: string; workdir?: string; cwd?: string } } = { args: { command: "git add README.md" } };
+  const commitOutput: { args: { command: string; workdir?: string; cwd?: string } } = { args: { command: "git commit -m test" } };
+
+  await hooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_owned", callID: "call" }, addOutput);
+  await hooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_owned", callID: "call" }, commitOutput);
+
+  assert.equal(addOutput.args.workdir, start.session.worktree_path);
+  assert.equal(addOutput.args.cwd, start.session.worktree_path);
+  assert.equal(commitOutput.args.workdir, start.session.worktree_path);
+  assert.equal(commitOutput.args.cwd, start.session.worktree_path);
+});
+
+test("hook still blocks destructive recorded session commands instead of routing them", async () => {
+  const { createRepoWithOrigin } = await import("./helpers.ts");
+  const { guardianStart } = await import("../src/tools.ts");
+  const { DEFAULT_CONFIG } = await import("../src/config.ts");
+  const { repo } = await createRepoWithOrigin();
+  await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_destructive", taskName: "destructive", createWorktree: true, config: DEFAULT_CONFIG });
+  const hooks = await plugin.server({ directory: repo, worktree: repo });
+  const output: { args: { command: string; workdir?: string } } = { args: { command: "git reset --hard HEAD~1" } };
 
   await assert.rejects(
-    () => hooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_owned", callID: "call" }, { args: { command: "git add README.md" } }),
-    (error: Error) => error.message.includes(start.session.worktree_path) && error.message.includes("actual cwd") && error.message.includes("actual worktree"),
+    () => hooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_destructive", callID: "call" }, output),
+    /git reset --hard is blocked/,
+  );
+  assert.equal(output.args.workdir, undefined);
+});
+
+test("hook blocks recorded session mutating commands when the owned worktree is missing", async () => {
+  const fs = await import("node:fs/promises");
+  const { createRepoWithOrigin } = await import("./helpers.ts");
+  const { guardianStart } = await import("../src/tools.ts");
+  const { DEFAULT_CONFIG } = await import("../src/config.ts");
+  const { repo } = await createRepoWithOrigin();
+  const start = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_missing_owned", taskName: "missing-owned", createWorktree: true, config: DEFAULT_CONFIG });
+  await fs.rm(start.session.worktree_path, { recursive: true, force: true });
+  const hooks = await plugin.server({ directory: repo, worktree: repo });
+
+  await assert.rejects(
+    () => hooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_missing_owned", callID: "call" }, { args: { command: "git add README.md" } }),
+    /recorded worktree.*missing|missing.*recorded worktree/,
   );
 });
 
@@ -249,7 +334,39 @@ test("hook allows recorded session commands in the owned worktree", async () => 
   await hooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_owned_ok", callID: "call" }, { args: { command: "git status --short" } });
 });
 
-test("session idle auto-finish preserves when repo opts in", async () => {
+test("hook allows recorded session commit commands when tool cwd targets the owned worktree", async () => {
+  const { createRepoWithOrigin } = await import("./helpers.ts");
+  const { guardianStart } = await import("../src/tools.ts");
+  const { DEFAULT_CONFIG } = await import("../src/config.ts");
+  const { repo } = await createRepoWithOrigin();
+  const start = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_owned_commit", taskName: "owned-commit", createWorktree: true, config: DEFAULT_CONFIG });
+  const hooks = await plugin.server({ directory: repo, worktree: repo });
+
+  await hooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_owned_commit", callID: "call", args: { cwd: start.session.worktree_path } }, { args: { command: "git add README.md" } });
+  await hooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_owned_commit", callID: "call", args: { workdir: start.session.worktree_path } }, { args: { command: "git commit -m test" } });
+});
+
+test("hook rewrites symlinked cwd to the recorded owned worktree", async () => {
+  const fs = await import("node:fs/promises");
+  const path = await import("node:path");
+  const { createRepoWithOrigin } = await import("./helpers.ts");
+  const { guardianStart } = await import("../src/tools.ts");
+  const { DEFAULT_CONFIG } = await import("../src/config.ts");
+  const { repo } = await createRepoWithOrigin();
+  const start = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_owned_symlink", taskName: "owned-symlink", createWorktree: true, config: DEFAULT_CONFIG });
+  const symlinkToBase = path.join(start.session.worktree_path, "base-link");
+  await fs.symlink(repo, symlinkToBase, "dir");
+  const hooks = await plugin.server({ directory: repo, worktree: repo });
+
+  const output: { args: { command: string; workdir?: string; cwd?: string } } = { args: { command: "git add README.md" } };
+
+  await hooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_owned_symlink", callID: "call", args: { cwd: symlinkToBase } }, output);
+
+  assert.equal(output.args.workdir, start.session.worktree_path);
+  assert.equal(output.args.cwd, start.session.worktree_path);
+});
+
+test("session idle auto-finish uses default create-pr mode when repo opts in", async () => {
   const fs = await import("node:fs/promises");
   const path = await import("node:path");
   const { createRepoWithOrigin, makeBranchCommit } = await import("./helpers.ts");
@@ -324,6 +441,7 @@ test("session idle auto-finish retries after failed finish", async (t) => {
   const events = records.filter((record) => record.message === "event");
   assert.equal(events.length, 2);
   assert.equal(events[1].autoFinish.ok, true);
+  assert.equal(events[1].autoFinish.status, "pr-suggested");
   status = await guardianStatus({ repoRoot: repo, config: DEFAULT_CONFIG });
   assert.equal(status.sessions.find((session: Record<string, any>) => session.session_id === "ses_idle_retry_finish").status, "preserved");
 });
@@ -372,7 +490,7 @@ test("tool.execute.before allows read-only inspection outside a recorded session
   );
 });
 
-test("tool.execute.before blocks mutating commands outside a recorded session worktree", async (t) => {
+test("tool.execute.before routes mutating commands outside a recorded session worktree", async (t) => {
   const { createRepoWithOrigin } = await import("./helpers.ts");
   const { guardianStart } = await import("../src/tools.ts");
   const { DEFAULT_CONFIG } = await import("../src/config.ts");
@@ -383,13 +501,33 @@ test("tool.execute.before blocks mutating commands outside a recorded session wo
   const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_blocked", taskName: "blocked", createWorktree: true, config: DEFAULT_CONFIG });
   const hooks = await plugin.server({ directory: repo, worktree: repo });
 
+  const output: { args: { command: string; workdir?: string; cwd?: string } } = { args: { command: "touch changed.txt" } };
+
+  await hooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_blocked", callID: "call_blocked" }, output);
+
+  assert.equal(output.args.workdir, started.session.worktree_path);
+  assert.equal(output.args.cwd, started.session.worktree_path);
+});
+
+test("tool.execute.before blocks routed mutating commands when recorded branch binding is stale", async (t) => {
+  const { createRepoWithOrigin, git } = await import("./helpers.ts");
+  const { guardianStart } = await import("../src/tools.ts");
+  const { DEFAULT_CONFIG } = await import("../src/config.ts");
+  const fs = await import("node:fs/promises");
+  const path = await import("node:path");
+  const { repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(path.dirname(repo), { recursive: true, force: true }));
+  const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_stale_branch", taskName: "stale branch", createWorktree: true, config: DEFAULT_CONFIG });
+  await git(started.session.worktree_path, ["checkout", "-b", "feature/tampered-binding"]);
+  const hooks = await plugin.server({ directory: repo, worktree: repo });
+  const output: { args: { command: string; workdir?: string; cwd?: string } } = { args: { command: "git add README.md" } };
+
   await assert.rejects(
-    () => hooks["tool.execute.before"](
-      { tool: "bash", sessionID: "ses_blocked", callID: "call_blocked" },
-      { args: { command: "touch changed.txt" } },
-    ),
-    (error: Error) => error.message.includes(started.session.worktree_path) && error.message.includes("actual cwd") && error.message.includes("actual worktree"),
+    () => hooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_stale_branch", callID: "call_stale_branch" }, output),
+    /recorded branch does not match checked-out worktree branch/,
   );
+  assert.equal(output.args.workdir, undefined);
+  assert.equal(output.args.cwd, undefined);
 });
 
 test("tool.execute.before does not alignment-block when no session worktree is recorded", async () => {

@@ -5,6 +5,34 @@ import path from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
+const safeTempDirectoryName = "opencode-worktree-guardian-tests";
+const fallbackTempBases = [
+  path.join("/var/folders/tw/rrg4001s2bdg6m3ht0dz0j1h0000gn/T/opencode"),
+  path.join("/tmp", "opencode"),
+  path.join(os.homedir(), ".cache", "opencode", "tmp"),
+];
+
+function isSameOrInside(candidate: string, root: string) {
+  const relative = path.relative(root, candidate);
+  return relative === "" || Boolean(relative) && !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
+async function safeExternalTempParent() {
+  const projectRoot = await fs.realpath(process.cwd());
+  const candidates = [os.tmpdir(), ...fallbackTempBases];
+  for (const candidate of candidates) {
+    try {
+      const candidatePath = path.resolve(candidate);
+      await fs.mkdir(candidatePath, { recursive: true });
+      const realCandidate = await fs.realpath(candidatePath);
+      if (isSameOrInside(realCandidate, projectRoot)) continue;
+      const parent = path.join(realCandidate, safeTempDirectoryName);
+      await fs.mkdir(parent, { recursive: true });
+      return fs.realpath(parent);
+    } catch {}
+  }
+  throw new Error("Unable to resolve an external temp directory for Guardian tests");
+}
 
 export async function git(cwd: string, args: string[]) {
   const { stdout, stderr } = await execFileAsync("git", ["-C", cwd, ...args], { maxBuffer: 10 * 1024 * 1024 });
@@ -12,7 +40,8 @@ export async function git(cwd: string, args: string[]) {
 }
 
 export async function createTempDir(prefix = "guardian-") {
-  return fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), prefix)));
+  const parent = await safeExternalTempParent();
+  return fs.realpath(await fs.mkdtemp(path.join(parent, prefix)));
 }
 
 export async function createRepo() {

@@ -43,14 +43,37 @@ export async function getHeadCommit(repoRoot: string) {
   return (await runGit(repoRoot, ["rev-parse", "HEAD"])).stdout;
 }
 
+export async function getBranchCommit(repoRoot: string, branch: string) {
+  return (await runGit(repoRoot, ["rev-parse", "--verify", `refs/heads/${branch}^{commit}`])).stdout;
+}
+
 export async function getStatusPorcelain(repoRoot: string) {
   return (await runGit(repoRoot, ["status", "--porcelain"])).stdout;
 }
 
 export async function getDirtyFiles(repoRoot: string) {
-  const status = await getStatusPorcelain(repoRoot);
+  const { stdout: status } = await execFileAsync("git", ["-C", repoRoot, "status", "--porcelain=v1", "--untracked-files=all", "-z"], { maxBuffer: 10 * 1024 * 1024 });
   if (!status) return [];
-  return status.split("\n").map((line) => line.slice(3)).filter(Boolean);
+  const files: string[] = [];
+  const entries = status.split("\0").filter(Boolean);
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index];
+    const statusCode = entry.slice(0, 2);
+    const filePath = entry.slice(3);
+    if (filePath) files.push(filePath);
+    if (statusCode.includes("R") || statusCode.includes("C")) {
+      const sourcePath = entries[index + 1];
+      if (sourcePath) files.push(sourcePath);
+      index += 1;
+    }
+  }
+  return [...new Set(files)];
+}
+
+export async function getIgnoredFiles(repoRoot: string) {
+  const status = (await runGit(repoRoot, ["status", "--porcelain", "--ignored"])).stdout;
+  if (!status) return [];
+  return status.split("\n").filter((line) => line.startsWith("!! ")).map((line) => line.slice(3)).filter(Boolean);
 }
 
 export async function listStashes(repoRoot: string) {
@@ -129,12 +152,33 @@ export async function isAncestor(repoRoot: string, commit: string, ref: string) 
   return result.ok;
 }
 
+export async function listUnmergedCommits(repoRoot: string, head: string, baseRef: string) {
+  const result = await runGit(repoRoot, ["log", "--format=%H%x00%s", `${baseRef}..${head}`]);
+  if (!result.stdout) return [];
+  return result.stdout.split("\n").map((line: string) => {
+    const [commit, subject] = line.split("\0");
+    return { commit, subject };
+  });
+}
+
 export async function pushBranch(repoRoot: string, remote: string, branch: string) {
   await runGit(repoRoot, ["push", "-u", remote, branch]);
 }
 
 export async function fetchRemote(repoRoot: string, remote: string) {
   await runGit(repoRoot, ["fetch", remote]);
+}
+
+export async function removeWorktree(repoRoot: string, worktreePath: string) {
+  await runGit(repoRoot, ["worktree", "remove", worktreePath]);
+}
+
+export async function deleteBranch(repoRoot: string, branch: string) {
+  await runGit(repoRoot, ["branch", "-d", "--", branch]);
+}
+
+export async function abandonBranch(repoRoot: string, branch: string) {
+  await runGit(repoRoot, ["branch", "-D", "--", branch]);
 }
 
 export async function listBranches(repoRoot: string) {

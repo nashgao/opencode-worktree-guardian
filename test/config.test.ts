@@ -5,12 +5,14 @@ import test from "node:test";
 import { DEFAULT_CONFIG, loadConfig, normalizeConfig } from "../src/config.ts";
 import { createTempDir } from "./helpers.ts";
 
-test("config defaults are conservative", () => {
+test("config defaults are delivery-first and cleanup-conservative", () => {
   const config = normalizeConfig();
-  assert.equal(config.finishMode, "preserve-only");
+  assert.equal(config.finishMode, "create-pr");
+  assert.equal(config.autoStart, true);
   assert.equal(config.autoFinish, false);
   assert.equal(config.autoCleanup, false);
   assert.equal(config.allowStashIfUnrelated, false);
+  assert.deepEqual(config.allowDirtyPaths, []);
   assert.deepEqual(config.protectedBranches, DEFAULT_CONFIG.protectedBranches);
 });
 
@@ -19,16 +21,20 @@ test("repo-local config overrides defaults but keeps protected branch baseline",
   await fs.mkdir(path.join(repo, ".opencode"));
   await fs.writeFile(path.join(repo, ".opencode", "worktree-guardian.json"), JSON.stringify({
     finishMode: "create-pr",
+    autoStart: false,
     autoFinish: true,
+    allowDirtyPaths: [".claude/logs/**", "", ".claude/logs/**", ".omx/**"],
     protectedBranches: ["release"],
   }));
 
   const { config, loaded } = await loadConfig(repo);
   assert.equal(loaded, true);
   assert.equal(config.finishMode, "create-pr");
+  assert.equal(config.autoStart, false);
   assert.equal(config.autoFinish, true);
   assert.equal(config.autoCleanup, false);
   assert.equal(config.allowStashIfUnrelated, false);
+  assert.deepEqual(config.allowDirtyPaths, [".claude/logs/**", ".omx/**"]);
   assert.deepEqual(config.protectedBranches, ["main", "master", "develop", "production", "release"]);
 });
 
