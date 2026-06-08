@@ -5,6 +5,7 @@ import { guardianDeleteWorktree } from "./delete.ts";
 import { buildPreservedRef, createRef, getCurrentBranch, getHeadCommit, getRepoRoot, listWorktrees, runGit } from "./git.ts";
 import { guardianFinish } from "./finish.ts";
 import { guardianHygieneCleanup, scanWorkspaceHygiene } from "./hygiene.ts";
+import { isTerminalSession } from "./lifecycle.ts";
 import { guardianRecover, guardianStatus } from "./recover.ts";
 import { guardianReportHtml } from "./report.ts";
 import { getGuardianPaths, readState, recordSession } from "./state.ts";
@@ -140,6 +141,9 @@ export async function resolveSessionWorktree(input: Record<string, any> = {}) {
   const { config } = input.config ? { config: input.config } : await loadConfig(repoRoot);
   const state = input.state ?? await readState(await getGuardianPaths(repoRoot), { repoRoot, config });
   const session = state.sessions?.[sessionId];
+  if (isTerminalSession(session)) {
+    return { ok: true, sessionId, expectedWorktree: null, actualWorktree, matches: true, source: "terminal-state", terminal: true, status: session.status };
+  }
   if (!session?.worktree_path) {
     return { ok: true, sessionId, expectedWorktree: null, actualWorktree, matches: true, source: "state" };
   }
@@ -179,6 +183,15 @@ export async function guardianStart(input: Record<string, any> = {}) {
   const guardianPaths = await getGuardianPaths(repoRoot);
   const state = await readState(guardianPaths, { repoRoot, config });
   const existing = state.sessions?.[sessionId];
+  if (isTerminalSession(existing)) {
+    return {
+      ok: false,
+      status: "blocked",
+      reason: `session ${sessionId} is terminal (${existing.status}); start a new session instead of recreating a deleted or finished worktree`,
+      session: existing,
+      stateVersion: state.state_version,
+    };
+  }
   if (existing?.status === "active" && existing.worktree_path) {
     const binding = await validateOwnedSession(repoRoot, config, existing);
     if (binding.ok) return { ok: true, session: existing, stateVersion: state.state_version, existing: true };
@@ -279,7 +292,7 @@ export async function guardianPreserve(input: Record<string, any> = {}) {
   const headCommit = await getHeadCommit(worktreePath);
   const preservedRef = buildPreservedRef(sessionId, branch, input.timestamp);
   await createRef(worktreePath, preservedRef, headCommit);
-  const state = await recordSession(repoRoot, config, {
+  const recordedState = await recordSession(repoRoot, config, {
     session_id: sessionId,
     status: "preserved",
     branch,
@@ -288,7 +301,7 @@ export async function guardianPreserve(input: Record<string, any> = {}) {
     head_commit: headCommit,
     safety_refs: [preservedRef],
   }, { event: { type: "guardian_preserve", session_id: sessionId, ref: preservedRef } });
-  return { ok: true, status: "preserved", session: state.sessions[sessionId], preservedRef };
+  return { ok: true, status: "preserved", session: recordedState.sessions[sessionId], preservedRef };
 }
 
 export function rewriteGuardianCommand(input: Record<string, any> = {}, output: Record<string, any> = {}) {
@@ -312,13 +325,17 @@ export async function recordLastSafeState(input: Record<string, any> = {}) {
   const { config } = input.config ? { config: input.config } : await loadConfig(repoRoot);
   const sessionId = input.sessionId ?? input.sessionID;
   if (!sessionId) return { ok: false, reason: "sessionId is required" };
+  const guardianPaths = await getGuardianPaths(repoRoot);
+  const state = await readState(guardianPaths, { repoRoot, config });
+  const existing = state.sessions?.[sessionId];
+  if (isTerminalSession(existing)) return { ok: true, status: "skipped", reason: `session ${sessionId} is terminal (${existing.status})`, session: existing };
   const worktreePath = await getRepoRoot(cwd);
   const branch = await getCurrentBranch(worktreePath);
   if (!branch) return { ok: false, reason: "detached HEAD" };
   const unsafeReason = protectedBranchReason(config, branch);
   if (unsafeReason) return { ok: false, reason: unsafeReason, branch, worktreePath };
   const headCommit = await getHeadCommit(worktreePath);
-  const state = await recordSession(repoRoot, config, {
+  const recordedState = await recordSession(repoRoot, config, {
     session_id: sessionId,
     status: "active",
     branch,
@@ -326,7 +343,7 @@ export async function recordLastSafeState(input: Record<string, any> = {}) {
     base_ref: `${config.remote}/${config.baseBranch}`,
     head_commit: headCommit,
   }, { event: { type: "last_safe_state", session_id: sessionId, tool: input.tool } });
-  return { ok: true, session: state.sessions[sessionId], stateVersion: state.state_version };
+  return { ok: true, session: recordedState.sessions[sessionId], stateVersion: recordedState.state_version };
 }
 
 export async function runGuardianTool(name: string, input: Record<string, any> = {}): Promise<Record<string, any>> {

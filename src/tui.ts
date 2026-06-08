@@ -22,8 +22,8 @@ const COMMANDS = [
   {
     name: "guardian-preserve",
     title: "Guardian: Preserve",
-    description: "Mark Guardian-owned work as intentionally preserved.",
-    prompt: "Use the guardian_preserve native tool to mark the current Guardian-owned worktree as intentionally preserved.",
+    description: "Mark Guardian-owned work as terminal/preserved with a safety ref.",
+    prompt: "Use the guardian_preserve native tool to mark the current Guardian-owned session as terminal/preserved with a safety ref. Preserved worktrees are cleanup-eligible; do not treat preservation as a reason to retain disk state forever.",
   },
   {
     name: "guardian-recover",

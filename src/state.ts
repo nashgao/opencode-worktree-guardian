@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { getCommonGitDir } from "./git.ts";
+import { clearTerminalLifecycleFields } from "./lifecycle.ts";
 
 export const STATE_SCHEMA_VERSION = "1.0.0";
 
@@ -144,14 +145,14 @@ export async function updateState(repoRoot: string, config: Record<string, any>,
 export async function recordSession(repoRoot: string, config: Record<string, any>, session: Record<string, any>, options: Record<string, any> = {}) {
   return updateState(repoRoot, config, (state) => {
     const previous = state.sessions[session.session_id];
-    state.sessions[session.session_id] = {
+    state.sessions[session.session_id] = clearTerminalLifecycleFields({
       ...previous,
       ...session,
       state_version: (previous?.state_version ?? 0) + 1,
       safety_refs: session.safety_refs ?? previous?.safety_refs ?? [],
       created_at: previous?.created_at ?? new Date().toISOString(),
       updated_at: new Date().toISOString(),
-    };
+    });
     return state;
   }, { ...options, event: options.event ?? { type: "session_recorded", session_id: session.session_id } });
 }

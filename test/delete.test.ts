@@ -264,6 +264,7 @@ test("apply creates a safety ref, removes only the worktree, and keeps the branc
   assert.equal(result.ok, true);
   assert.equal(result.status, "deleted");
   assert.equal(result.branchDeleted, false);
+  assert.equal(result.worktreeRemoved, true);
   assert.match(result.safetyRef, /^refs\/opencode-guardian\/ses_delete_apply\/guardian\/delete-apply\//);
   assert.equal((await worktreePaths(repo)).includes(start.session.worktree_path), false);
   assert.equal(await branchExists(repo, "guardian/delete-apply"), true);
@@ -328,6 +329,7 @@ test("abandonUnmerged=true plans and applies explicit unmerged worktree abandon"
   assert.equal(result.ok, true);
   assert.equal(result.status, "abandoned");
   assert.equal(result.branchDeleted, true);
+  assert.equal(result.worktreeRemoved, true);
   assert.equal(result.abandonUnmerged, true);
   assert.equal((await worktreePaths(repo)).includes(start.session.worktree_path), false);
   assert.equal(await branchExists(repo, branch), false);
@@ -654,6 +656,40 @@ test("deleteBranch=true plans stale branch cleanup from deleted sessionId", asyn
   assert.equal(session.deleted_worktree_path, absentWorktree);
   assert.equal(session.deleted_branch, branch);
   assert.equal(session.branch_only_delete, true);
+});
+
+test("deleteBranch=true cleans stale branches for finished and preserved terminal sessions", async () => {
+  const { base, repo } = await createRepoWithOrigin();
+  test.after(() => fs.rm(base, { recursive: true, force: true }));
+
+  for (const status of ["finished", "preserved"]) {
+    const branch = `guardian/delete-stale-${status}`;
+    const sessionId = `ses_delete_stale_${status}`;
+    const absentWorktree = path.join(repo, ".worktrees", "opencode-worktree-guardian", `guardian-session-ses-stale-${status}`);
+    await git(repo, ["branch", branch, "main"]);
+    const { stdout: head } = await git(repo, ["rev-parse", branch]);
+    await recordSession(repo, DEFAULT_CONFIG, {
+      session_id: sessionId,
+      status,
+      branch,
+      worktree_path: absentWorktree,
+      base_ref: "origin/main",
+      head_commit: head,
+    });
+
+    const plan = await deleteWorktree({ repoRoot: repo, cwd: repo, mode: "plan", sessionId, deleteBranch: true, config: DEFAULT_CONFIG, timestamp: `20260601T19${status.length}500` });
+    assert.equal(plan.ok, true, status);
+    assert.equal(plan.preflight.targetKind, "stale-branch", status);
+    assert.equal(plan.preflight.ownershipProof, "terminal-session", status);
+
+    const result = await deleteWorktree({ repoRoot: repo, cwd: repo, mode: "apply", sessionId, deleteBranch: true, confirmToken: plan.confirmToken, config: DEFAULT_CONFIG, timestamp: `20260601T19${status.length}500` });
+
+    assert.equal(result.ok, true, status);
+    assert.equal(result.status, "deleted", status);
+    assert.equal(result.branchDeleted, true, status);
+    assert.equal(result.worktreeRemoved, false, status);
+    assert.equal(await branchExists(repo, branch), false, status);
+  }
 });
 
 test("deleteBranch=true by deleted sessionId still requires abandonUnmerged for unmerged stale branch", async () => {

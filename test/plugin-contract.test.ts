@@ -90,6 +90,28 @@ test("guardian native tools expose OpenCode tool definitions", async () => {
 
 test("guardian_status tool execute returns readable output with raw metadata", async () => {
   const repo = await createRepo();
+  const { DEFAULT_CONFIG } = await import("../src/config.ts");
+  const { recordSession } = await import("../src/state.ts");
+  const { git } = await import("./helpers.ts");
+  const { stdout: head } = await git(repo, ["rev-parse", "HEAD"]);
+  await recordSession(repo, DEFAULT_CONFIG, {
+    session_id: "ses_contract_status_active",
+    status: "active",
+    branch: "guardian/contract-status-active",
+    worktree_path: repo,
+    base_ref: "origin/main",
+    head_commit: head,
+    safety_refs: [],
+  });
+  await recordSession(repo, DEFAULT_CONFIG, {
+    session_id: "ses_contract_status_terminal",
+    status: "preserved",
+    branch: "guardian/contract-status-terminal",
+    worktree_path: `${repo}/.worktrees/opencode-worktree-guardian/contract-status-terminal`,
+    base_ref: "origin/main",
+    head_commit: head,
+    safety_refs: [],
+  });
   const hooks = await plugin.server({ directory: repo, worktree: repo });
   const { context, metadataCalls } = createToolContext();
   context.directory = repo;
@@ -103,6 +125,8 @@ test("guardian_status tool execute returns readable output with raw metadata", a
   assert.match(result.output, /\[GOOD\] guardian_status snapshot/);
   assert.match(result.output, /\[INFO\] repoRoot:/);
   assert.match(result.output, /sessions: \d+/);
+  assert.match(result.output, /active sessions: 1/);
+  assert.match(result.output, /terminal sessions: 1/);
   assert.match(result.output, /worktrees: \d+/);
 });
 

@@ -3,6 +3,7 @@ import path from "node:path";
 import { expandWorktreeRoot, loadConfig } from "./config.ts";
 import { getCommonGitDir, getDirtyFiles, getRepoRoot, listBranches, listRecoveryCandidates, listRefs, listStashes, listWorktrees } from "./git.ts";
 import { scanWorkspaceHygiene } from "./hygiene.ts";
+import { isActiveSession, isTerminalSession } from "./lifecycle.ts";
 import { getGuardianPaths, readState } from "./state.ts";
 
 async function pathExists(candidate: string) {
@@ -75,7 +76,8 @@ export async function guardianStatus(input: Record<string, any> = {}): Promise<R
   const worktrees = await listWorktrees(repoRoot);
   const worktreePaths = new Set(worktrees.map((entry) => path.resolve(entry.path)));
   const sessions = Object.values(state.sessions ?? {}) as Record<string, any>[];
-  const activeSessions = sessions.filter((session) => session.status !== "deleted");
+  const activeSessions = sessions.filter(isActiveSession);
+  const terminalSessions = sessions.filter(isTerminalSession);
   const sessionWorktreePaths = new Set(activeSessions.map((session) => session.worktree_path).filter(Boolean).map((entry) => path.resolve(entry)));
   const sessionBranches = new Set(activeSessions.map((session) => session.branch).filter(Boolean));
   const orphanedSessions = [];
@@ -101,6 +103,8 @@ export async function guardianStatus(input: Record<string, any> = {}): Promise<R
     config,
     stateVersion: state.state_version,
     sessions,
+    activeSessions,
+    terminalSessions,
     orphanedSessions,
     poisonedSessions,
     worktrees,

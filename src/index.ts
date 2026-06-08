@@ -271,9 +271,18 @@ function formatGuardianStatusOutput(name: string, rawResult: unknown) {
     }
   }
 
+  const activeSessions = arrayValue(result.activeSessions);
+  const terminalSessions = arrayValue(result.terminalSessions);
   const sessions = arrayValue(result.sessions);
-  lines.push(`[INFO] sessions: ${sessions.length}`);
-  for (const entry of sessions.slice(0, 12)) {
+  const visibleActiveSessions = activeSessions.length > 0 ? activeSessions : sessions.filter((entry) => recordValue(entry).status === "active");
+  lines.push(`[INFO] active sessions: ${visibleActiveSessions.length}`);
+  for (const entry of visibleActiveSessions.slice(0, 12)) {
+    const session = recordValue(entry);
+    lines.push(`  - session_id=${textValue(session.session_id ?? session.sessionId)} status=${textValue(session.status)} branch=${textValue(session.branch)} worktree_path=${textValue(session.worktree_path ?? session.worktreePath)} head=${shortCommit(session.head_commit ?? session.headCommit)}`);
+  }
+
+  lines.push(`[INFO] terminal sessions: ${terminalSessions.length}`);
+  for (const entry of terminalSessions.slice(0, 12)) {
     const session = recordValue(entry);
     lines.push(`  - session_id=${textValue(session.session_id ?? session.sessionId)} status=${textValue(session.status)} branch=${textValue(session.branch)} worktree_path=${textValue(session.worktree_path ?? session.worktreePath)} head=${shortCommit(session.head_commit ?? session.headCommit)}`);
   }
@@ -519,7 +528,7 @@ const WorktreeGuardianPlugin = {
         guardian_hygiene_cleanup: guardianTool("guardian_hygiene_cleanup", "Plan or apply token-gated cleanup for exact approved hygiene findings using internal filesystem APIs.", hygieneCleanupPlanCache),
         guardian_unblock_finish: guardianTool("guardian_unblock_finish", "Plan or apply safe finish blocker resolution, such as committing review artifacts with confirm-token gates.", hygieneCleanupPlanCache),
         guardian_finish: guardianTool("guardian_finish", "Apply the configured gated finish mode for the current guardian-owned worktree.", hygieneCleanupPlanCache),
-        guardian_preserve: guardianTool("guardian_preserve", "Mark the current guardian-owned worktree as intentionally preserved.", hygieneCleanupPlanCache),
+        guardian_preserve: guardianTool("guardian_preserve", "Mark the current guardian-owned session as terminal/preserved with a safety ref.", hygieneCleanupPlanCache),
         guardian_recover: guardianTool("guardian_recover", "List recovery refs, orphaned sessions, stash inventory, and suggested recovery commands without mutation.", hygieneCleanupPlanCache),
         guardian_report_html: guardianTool("guardian_report_html", "Write a static offline HTML report for guardian sessions, worktrees, branches, risks, and recovery commands.", hygieneCleanupPlanCache),
         guardian_hygiene: guardianTool("guardian_hygiene", "Scan untracked and ignored workspace artifacts for hygiene risks without cleanup or mutation.", hygieneCleanupPlanCache),

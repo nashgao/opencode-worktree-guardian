@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { expandWorktreeRoot, loadConfig } from "./config.ts";
 import { abandonBranch, createSafetyRef, deleteBranch, getBranchCommit, getDirtyFiles, getHeadCommit, getIgnoredFiles, getRepoRoot, isAncestor, listRefs, listStashes, listUnmergedCommits, listWorktrees, removeWorktree } from "./git.ts";
+import { isTerminalSession } from "./lifecycle.ts";
 import { getGuardianPaths, readState, recordSession } from "./state.ts";
 
 type GuardianSession = {
@@ -143,10 +144,6 @@ function safetyRefMatchesBranch(refName: string, safeBranch: string) {
   if (parts.length < 3) return false;
   const branchStart = parts[0] === "preserved" ? 2 : 1;
   return parts.slice(branchStart, -1).join("/") === safeBranch;
-}
-
-function isTerminalSession(session: GuardianSession) {
-  return session.status === "deleted" || session.status === "abandoned";
 }
 
 function branchFromInput(input: Record<string, unknown>) {
@@ -521,5 +518,5 @@ export async function guardianDeleteWorktree(input: Record<string, unknown> = {}
   }
 
   const abandoned = preflight.ancestryProven === false && abandonUnmerged;
-  return withDeleteReport({ ok: true, status: abandoned ? "abandoned" : "deleted", targetPath: entry.path, branch: entry.branch, head, safetyRef, branchDeleted, abandonUnmerged: abandoned }, preflight, { action: abandoned ? "worktree-and-branch-abandoned" : branchDeleted ? "worktree-and-branch-deleted" : "worktree-deleted" });
+  return withDeleteReport({ ok: true, status: abandoned ? "abandoned" : "deleted", targetPath: entry.path, branch: entry.branch, head, safetyRef, branchDeleted, worktreeRemoved: true, abandonUnmerged: abandoned }, preflight, { action: abandoned ? "worktree-and-branch-abandoned" : branchDeleted ? "worktree-and-branch-deleted" : "worktree-deleted", worktreeRemoved: true });
 }

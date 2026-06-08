@@ -519,7 +519,7 @@ function classifyGit(segment: string[], options: Record<string, any> = {}) {
     }
   }
   if (subcommand === "worktree" && ["remove", "prune"].includes(rest[0])) {
-    return block("raw git worktree removal/prune is blocked", normalized);
+    return block("raw git worktree removal/prune is blocked; use guardian_delete_worktree", normalized);
   }
   if (subcommand === "worktree" && rest[0] === "add") {
     const addPath = findWorktreeAddPath(rest);

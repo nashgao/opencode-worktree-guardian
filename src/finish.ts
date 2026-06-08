@@ -1,6 +1,7 @@
 import path from "node:path";
 import { expandWorktreeRoot, loadConfig } from "./config.ts";
 import { createSafetyRef, fetchRemote, getCurrentBranch, getDirtyFiles, getHeadCommit, getRepoRoot, isAncestor, listStashes, pushBranch, runGit } from "./git.ts";
+import { isTerminalSession } from "./lifecycle.ts";
 import { getGuardianPaths, readState, recordSession } from "./state.ts";
 
 function snapshotPreflight(preflight: Record<string, any>): Record<string, any> {
@@ -159,6 +160,9 @@ export async function guardianFinish(input: Record<string, any> = {}): Promise<R
   if (!session) return blocked("current session is not recorded in guardian state", { sessionId }, preflight);
   preflight.sessionWorktree = session.worktree_path;
   preflight.sessionBranch = session.branch;
+  if (isTerminalSession(session)) {
+    return blocked(`session ${sessionId} is terminal (${session.status}); start a new session instead of finishing a deleted or closed worktree`, { sessionId, sessionStatus: session.status }, preflight);
+  }
 
   const currentWorktree = await getRepoRoot(cwd);
   preflight.currentWorktree = currentWorktree;
@@ -265,9 +269,23 @@ export async function guardianFinish(input: Record<string, any> = {}): Promise<R
 
     const shouldCleanup = config.autoCleanup === true || input.allowCleanup === true;
     if (!shouldCleanup) {
+      await recordSession(repoRoot, config, {
+        ...session,
+        session_id: sessionId,
+        status: "finished",
+        head_commit: commit,
+        safety_refs: [...(session.safety_refs ?? []), safetyRef],
+      }, { event: { type: "guardian_finish", session_id: sessionId, ref: safetyRef } });
       return withFinishReport({ ok: true, status: "merged", mode, branch, commit, safetyRef, cleaned: false }, preflight, { action: "merged-without-cleanup" });
     }
     if (preflight.allowedDirtyFileCount > 0) {
+      await recordSession(repoRoot, config, {
+        ...session,
+        session_id: sessionId,
+        status: "finished",
+        head_commit: commit,
+        safety_refs: [...(session.safety_refs ?? []), safetyRef],
+      }, { event: { type: "guardian_finish", session_id: sessionId, ref: safetyRef } });
       return withFinishReport({ ok: true, status: "merged", mode, branch, commit, safetyRef, cleaned: false, cleanupSkippedReason: "allowed dirty files are present" }, preflight, { action: "merged-without-cleanup", cleanupSkippedReason: "allowed dirty files are present" });
     }
     if (samePath(currentWorktree, repoRoot)) {
@@ -282,6 +300,8 @@ export async function guardianFinish(input: Record<string, any> = {}): Promise<R
       status: "finished",
       head_commit: commit,
       safety_refs: [...(session.safety_refs ?? []), safetyRef],
+      deleted_worktree_path: currentWorktree,
+      deleted_branch: branch,
     }, { event: { type: "guardian_finish", session_id: sessionId, ref: safetyRef } });
     return withFinishReport({ ok: true, status: "finished", mode, branch, commit, safetyRef, cleaned: true }, preflight, { action: "merged-and-cleaned" });
   }

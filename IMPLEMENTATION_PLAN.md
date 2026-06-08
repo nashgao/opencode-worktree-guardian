@@ -321,7 +321,7 @@ Retention policy once cleanup is implemented:
 |---|---:|---|
 | active session safety refs | indefinite | never while session is active |
 | finished session safety refs | 30 days | only after commit is still reachable from `origin/<base>` |
-| preserved refs | indefinite | user-approved deletion only |
+| preserved refs | 30 days | cleanup-eligible after explicit plan/apply and reachability proof |
 | recovery refs | indefinite | user-approved deletion only |
 
 Any future prune command must be preview-first and read-only by default.

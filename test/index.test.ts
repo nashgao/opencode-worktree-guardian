@@ -4,7 +4,7 @@ import test from "node:test";
 import { DEFAULT_CONFIG } from "../src/config.ts";
 import plugin from "../src/index.ts";
 import { getGuardianPaths, readState, recordSession } from "../src/state.ts";
-import { createRepoWithOrigin } from "./helpers.ts";
+import { createRepoWithOrigin, git } from "./helpers.ts";
 
 function createClient(records: Array<Record<string, any>>) {
   return {
@@ -189,6 +189,50 @@ test("explicit autoStart=false disables default chat transform ownership", async
   assert.equal(records[0].invisibleStart, null);
   assert.equal(records[0].directory, repo);
   assert.equal(records[0].worktree, repo);
+});
+
+test("default chat transform does not recreate terminal session worktrees", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const records: Array<Record<string, any>> = [];
+  const hooks = await plugin.server({ client: createClient(records), directory: repo, worktree: repo });
+
+  for (const status of ["deleted", "abandoned", "finished", "preserved"]) {
+    const sessionID = `ses_terminal_auto_start_${status}`;
+    const branch = `guardian/terminal-auto-start-${status}`;
+    await git(repo, ["branch", branch, "main"]);
+    const { stdout: head } = await git(repo, ["rev-parse", branch]);
+    const terminalPath = `${repo}/.worktrees/opencode-worktree-guardian/guardian-session-terminal-auto-start-${status}`;
+    await recordSession(repo, DEFAULT_CONFIG, {
+      session_id: sessionID,
+      status,
+      branch,
+      worktree_path: terminalPath,
+      deleted_worktree_path: terminalPath,
+      deleted_branch: branch,
+      base_ref: "origin/main",
+      head_commit: head,
+      safety_refs: [],
+    });
+
+    await hooks["experimental.chat.system.transform"](
+      { sessionID, taskName: `terminal auto start ${status}` },
+      { system: [] },
+    );
+  }
+
+  const paths = await getGuardianPaths(repo);
+  const state = await readState(paths, { repoRoot: repo, config: DEFAULT_CONFIG });
+  for (const status of ["deleted", "abandoned", "finished", "preserved"]) {
+    const sessionID = `ses_terminal_auto_start_${status}`;
+    assert.equal(state.sessions[sessionID].status, status);
+    assert.match(state.sessions[sessionID].worktree_path, new RegExp(`terminal-auto-start-${status}$`));
+  }
+  assert.equal(records.length, 4);
+  for (const record of records) {
+    assert.equal(record.invisibleStart.ok, false);
+    assert.match(record.invisibleStart.reason, /terminal/);
+  }
 });
 
 test("tool.execute.before routes mutating commands to the default auto-start owned worktree", async (t) => {
