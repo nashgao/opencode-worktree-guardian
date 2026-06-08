@@ -31,7 +31,7 @@ type WorktreeEntry = {
 type TargetResolution = {
   entry?: WorktreeEntry;
   session?: GuardianSession;
-  targetKind?: "worktree" | "orphan-branch" | "stale-branch";
+  targetKind?: "worktree" | "orphan-branch" | "stale-branch" | "merged-branch";
   branch?: string;
   head?: string;
   ownershipProof?: string;
@@ -208,6 +208,19 @@ async function staleBranchResolution(input: Record<string, unknown>, worktrees: 
   return undefined;
 }
 
+async function mergedBranchResolution(input: Record<string, unknown>, worktrees: WorktreeEntry[], repoRoot: string): Promise<TargetResolution | undefined> {
+  const branch = branchFromInput(input);
+  if (!branch || input.deleteBranch !== true) return undefined;
+  if (branch.startsWith("guardian/")) return undefined;
+  if (worktrees.some((worktree) => worktree.branch === branch)) return undefined;
+  try {
+    const head = await getBranchCommit(repoRoot, branch);
+    return { branch, head, targetKind: "merged-branch", unresolvedReason: "local branch is not checked out in any worktree and can be deleted if ancestry is proven" };
+  } catch {
+    return undefined;
+  }
+}
+
 async function findTarget(input: Record<string, unknown>, worktrees: WorktreeEntry[], sessions: GuardianSession[]): Promise<TargetResolution> {
   const targets = explicitTargets(input);
   if (targets.length > 1) return { unresolvedReason: `target inputs conflict: provide exactly one of targetPath, sessionId, or branch; received ${targets.join(", ")}` };
@@ -231,6 +244,8 @@ async function findTarget(input: Record<string, unknown>, worktrees: WorktreeEnt
   if (typeof input.branch === "string" && input.branch.length > 0) {
     const staleBranch = await staleBranchResolution(input, worktrees, sessions, String(input.repoRoot ?? process.cwd()));
     if (staleBranch) return staleBranch;
+    const mergedBranch = await mergedBranchResolution(input, worktrees, String(input.repoRoot ?? process.cwd()));
+    if (mergedBranch) return mergedBranch;
     const matches = worktrees.filter((worktree) => worktree.branch === input.branch);
     if (matches.length === 1) return { entry: matches[0], session: findSessionByWorktree(sessions, matches[0].path), targetKind: "worktree", unresolvedReason: "" };
     const sessionMatches = sessions.filter((session) => session.branch === input.branch && session.status !== "deleted");
@@ -326,7 +341,7 @@ export async function guardianDeleteWorktree(input: Record<string, unknown> = {}
   const sessions = Object.values(state.sessions ?? {});
   const worktrees = await listWorktrees(repoRoot) as WorktreeEntry[];
   const { entry, session, targetKind, branch: resolvedBranch, head: resolvedHead, ownershipProof, unresolvedReason } = await findTarget({ ...input, repoRoot }, worktrees, sessions);
-  if (!entry && targetKind !== "orphan-branch" && targetKind !== "stale-branch") return blocked(unresolvedReason, {}, preflight);
+  if (!entry && targetKind !== "orphan-branch" && targetKind !== "stale-branch" && targetKind !== "merged-branch") return blocked(unresolvedReason, {}, preflight);
 
   preflight.targetKind = targetKind ?? "worktree";
   preflight.worktreeListed = Boolean(entry);
@@ -334,15 +349,15 @@ export async function guardianDeleteWorktree(input: Record<string, unknown> = {}
   preflight.sessionStatus = session?.status ?? "unrecorded";
   preflight.sessionRecorded = Boolean(session);
 
-  if (targetKind === "orphan-branch" || targetKind === "stale-branch") {
+  if (targetKind === "orphan-branch" || targetKind === "stale-branch" || targetKind === "merged-branch") {
     const branch = String(resolvedBranch ?? session?.branch ?? "");
     preflight.targetPath = session?.worktree_path ? path.resolve(String(session.worktree_path)) : null;
     preflight.branch = branch;
     preflight.detached = false;
-    preflight.ownershipProof = ownershipProof ?? (targetKind === "orphan-branch" ? "active-session" : null);
+    preflight.ownershipProof = ownershipProof ?? (targetKind === "orphan-branch" ? "active-session" : targetKind === "merged-branch" ? "ancestry-proof" : null);
     if (targetKind === "stale-branch" && !ownershipProof) return blocked(unresolvedReason, { branch }, preflight);
 
-    if (!deleteRequestedBranch) return blocked(`${targetKind} Guardian branch cleanup requires deleteBranch=true`, { branch }, preflight);
+    if (!deleteRequestedBranch) return blocked(`${targetKind} cleanup requires deleteBranch=true`, { branch }, preflight);
     if ((config.protectedBranches as string[]).includes(branch)) return blocked("protected branches cannot be deleted by guardian_delete_worktree", { branch }, preflight);
     const checkedOut = worktrees.find((worktree) => worktree.branch === branch);
     preflight.branchCheckedOut = Boolean(checkedOut);
@@ -376,7 +391,7 @@ export async function guardianDeleteWorktree(input: Record<string, unknown> = {}
       return blocked("confirm token mismatch; re-run mode=plan and use the returned confirmToken", { tokenMatched: false }, preflight);
     }
 
-    const safetyRef = await createSafetyRef(repoRoot, { sessionId: session?.session_id ?? "orphan-guardian-branch", branch, commit: head, timestamp: input.timestamp });
+    const safetyRef = await createSafetyRef(repoRoot, { sessionId: session?.session_id ?? (targetKind === "merged-branch" ? "merged-local-branch" : "orphan-guardian-branch"), branch, commit: head, timestamp: input.timestamp });
     preflight.safetyRef = safetyRef;
     if (!proven && abandonUnmerged) await abandonBranch(repoRoot, branch);
     else await deleteBranch(repoRoot, branch);
@@ -397,7 +412,7 @@ export async function guardianDeleteWorktree(input: Record<string, unknown> = {}
       }, { event: { type: targetKind === "stale-branch" ? "guardian_delete_stale_branch" : "guardian_delete_orphan_branch", session_id: session.session_id, ref: safetyRef } });
     }
 
-    const actionPrefix = targetKind === "stale-branch" ? "stale-branch" : "orphan-branch";
+    const actionPrefix = targetKind === "stale-branch" ? "stale-branch" : targetKind === "merged-branch" ? "merged-branch" : "orphan-branch";
     return withDeleteReport({ ok: true, status: !proven && abandonUnmerged ? "abandoned" : "deleted", targetPath: session?.worktree_path ?? null, branch, head, safetyRef, branchDeleted: true, worktreeRemoved: false, abandonUnmerged: !proven && abandonUnmerged }, preflight, { action: !proven && abandonUnmerged ? `${actionPrefix}-abandoned` : `${actionPrefix}-deleted`, worktreeRemoved: false });
   }
 

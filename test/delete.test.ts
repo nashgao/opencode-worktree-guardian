@@ -791,7 +791,7 @@ test("deleteBranch=true blocks Guardian-prefixed stale branches without ownershi
 test("deleteBranch=true does not treat a parent branch safety ref as stale ownership proof", async () => {
   const { base, repo } = await createRepoWithOrigin();
   test.after(() => fs.rm(base, { recursive: true, force: true }));
-  const branch = "foo";
+  const branch = "guardian/foo/bar";
   await git(repo, ["branch", branch, "main"]);
   const { stdout: head } = await git(repo, ["rev-parse", branch]);
   await git(repo, ["update-ref", "refs/opencode-guardian/ses_ref/guardian/foo/20260601T191500", head]);
@@ -931,6 +931,50 @@ test("deleteBranch=true blocks stale branch cleanup when branch is paired with u
   assert.equal(result.status, "blocked");
   assert.match(result.reason, /target inputs conflict/);
   assert.match(result.reason, /provide exactly one/);
+  assert.equal(await branchExists(repo, branch), true);
+});
+
+test("deleteBranch=true deletes a merged local non-Guardian branch through plan/apply", async () => {
+  const { base, repo } = await createRepoWithOrigin();
+  test.after(() => fs.rm(base, { recursive: true, force: true }));
+  const branch = "feature/delete-merged-local";
+  await git(repo, ["branch", branch, "main"]);
+  const { stdout: head } = await git(repo, ["rev-parse", branch]);
+
+  const plan = await deleteWorktree({ repoRoot: repo, cwd: repo, mode: "plan", branch, deleteBranch: true, config: DEFAULT_CONFIG, timestamp: "20260601T201000" });
+  assert.equal(plan.ok, true);
+  assert.equal(plan.status, "planned");
+  assert.equal(plan.preflight.targetKind, "merged-branch");
+  assert.equal(plan.preflight.ownershipProof, "ancestry-proof");
+  assert.equal(plan.preflight.targetPath, null);
+  assert.equal(plan.preflight.branch, branch);
+  assert.equal(plan.preflight.head, head);
+  assert.equal(plan.preflight.ancestryProven, true);
+
+  const result = await deleteWorktree({ repoRoot: repo, cwd: repo, mode: "apply", branch, deleteBranch: true, confirmToken: plan.confirmToken, config: DEFAULT_CONFIG, timestamp: "20260601T201000" });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.status, "deleted");
+  assert.equal(result.branchDeleted, true);
+  assert.equal(result.worktreeRemoved, false);
+  assert.match(result.safetyRef, /^refs\/opencode-guardian\/merged-local-branch\/feature\/delete-merged-local\//);
+  assert.equal(await branchExists(repo, branch), false);
+});
+
+test("deleteBranch=true blocks merged local branch cleanup when branch is checked out", async () => {
+  const { base, repo } = await createRepoWithOrigin();
+  test.after(() => fs.rm(base, { recursive: true, force: true }));
+  const branch = "feature/delete-checked-out-local";
+  await git(repo, ["checkout", "-b", branch]);
+  await git(repo, ["checkout", "main"]);
+  const worktree = path.join(base, "checked-out-feature");
+  await git(repo, ["worktree", "add", worktree, branch]);
+
+  const result = await deleteWorktree({ repoRoot: repo, cwd: repo, mode: "plan", branch, deleteBranch: true, config: DEFAULT_CONFIG });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, "blocked");
+  assert.match(result.reason, /outside the Guardian worktree root|checked out/);
   assert.equal(await branchExists(repo, branch), true);
 });
 
