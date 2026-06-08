@@ -109,21 +109,36 @@ export async function listWorktrees(repoRoot: string) {
 }
 
 function safeRefSegment(value: unknown) {
-  return String(value)
+  const segment = String(value ?? "")
     .replace(/^refs\//, "")
     .replace(/\.\.+/g, ".")
     .replace(/[^A-Za-z0-9._/-]+/g, "-")
     .replace(/^\/+|\/+$/g, "")
     .replace(/\/+/g, "/");
+  return segment.length > 0 ? segment : "unknown";
+}
+
+function defaultRefTimestamp() {
+  return new Date().toISOString().replace(/[-:.]/g, "").slice(0, 15);
+}
+
+function safeRefTimestamp(timestamp: Date | string | undefined) {
+  if (timestamp instanceof Date) return defaultRefTimestampFromDate(timestamp);
+  const stamp = safeRefSegment(timestamp);
+  return stamp === "unknown" ? defaultRefTimestamp() : stamp;
+}
+
+function defaultRefTimestampFromDate(timestamp: Date) {
+  return timestamp.toISOString().replace(/[-:.]/g, "").slice(0, 15);
 }
 
 export function buildSafetyRef(sessionId: string, branch: string, timestamp: Date | string = new Date()) {
-  const stamp = timestamp instanceof Date ? timestamp.toISOString().replace(/[-:.]/g, "").slice(0, 15) : String(timestamp);
+  const stamp = safeRefTimestamp(timestamp);
   return `refs/opencode-guardian/${safeRefSegment(sessionId)}/${safeRefSegment(branch)}/${stamp}`;
 }
 
 export function buildPreservedRef(sessionId: string, branch: string, timestamp: Date | string = new Date()) {
-  const stamp = timestamp instanceof Date ? timestamp.toISOString().replace(/[-:.]/g, "").slice(0, 15) : String(timestamp);
+  const stamp = safeRefTimestamp(timestamp);
   return `refs/opencode-guardian/preserved/${safeRefSegment(sessionId)}/${safeRefSegment(branch)}/${stamp}`;
 }
 

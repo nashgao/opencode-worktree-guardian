@@ -211,6 +211,25 @@ test("allowIgnoredFiles permits explicit deletion of ignored-only target files",
   assert.match(result.safetyRef, /^refs\/opencode-guardian\/ses_delete_allow_ignored\/guardian\/delete-ignored\//);
 });
 
+test("apply tolerates empty timestamp without creating a trailing-slash safety ref", async () => {
+  const { base, repo } = await createRepoWithOrigin();
+  test.after(() => fs.rm(base, { recursive: true, force: true }));
+  const sessionId = "ses_15a6a9af2ffef5mXFgNq3s3zPm";
+  const start = await createGuardianWorktree(repo, sessionId, "delete empty timestamp", "guardian/session-ses-15a6");
+
+  const plan = await deleteWorktree({ repoRoot: repo, cwd: repo, mode: "plan", sessionId, config: DEFAULT_CONFIG });
+  assert.equal(plan.ok, true);
+
+  const result = await deleteWorktree({ repoRoot: repo, cwd: repo, mode: "apply", sessionId, confirmToken: plan.confirmToken, config: DEFAULT_CONFIG, timestamp: "" });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.status, "deleted");
+  assert.equal(result.worktreeRemoved, true);
+  assert.equal((await worktreePaths(repo)).includes(start.session.worktree_path), false);
+  assert.doesNotMatch(result.safetyRef ?? "", /\/$/);
+  await git(repo, ["check-ref-format", String(result.safetyRef)]);
+});
+
 test("stash inventory blocks deletion before safety refs", async () => {
   const { base, repo } = await createRepoWithOrigin();
   test.after(() => fs.rm(base, { recursive: true, force: true }));
