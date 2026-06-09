@@ -25,7 +25,9 @@ test("exposes guardian native tools", async () => {
   const hooks = await plugin.server({ directory: "/repo", worktree: "/repo/.worktrees/example" });
   assert.deepEqual(Object.keys(hooks.tool).sort(), [
     "guardian_delete_worktree",
+    "guardian_done",
     "guardian_finish",
+    "guardian_finish_workflow",
     "guardian_hygiene",
     "guardian_hygiene_cleanup",
     "guardian_preserve",
@@ -321,6 +323,10 @@ test("/guardian slash commands rewrite to native tool instructions", async () =>
   const deleteOutput = { parts: [] };
   await hooks["command.execute.before"]({ command: "/guardian delete-worktree", sessionID: "ses_123", arguments: [] }, deleteOutput);
   assert.deepEqual(deleteOutput.parts, [{ type: "text", text: "Use the guardian_delete_worktree native tool. Run mode=plan first. Stale local Guardian branch cleanup requires an exact branch or terminal sessionId plus deleteBranch=true and Guardian ownership proof from terminal state or safety refs. Intentional unmerged local abandonment requires deleteBranch=true plus abandonUnmerged=true in both plan and apply after inspecting unmerged commit evidence." }]);
+
+  const doneOutput = { parts: [] };
+  await hooks["command.execute.before"]({ command: "/guardian done", sessionID: "ses_123", arguments: [] }, doneOutput);
+  assert.deepEqual(doneOutput.parts, [{ type: "text", text: "Use the guardian_done native tool. Run mode=plan first. Dirty primary-main publishing requires an explicit commitMessage and fresh confirmToken; cleanup after publish returns a separate cleanup plan and must not be silently applied." }]);
 
   const cleanupOutput = { parts: [] };
   await hooks["command.execute.before"]({ command: "/guardian hygiene-cleanup", sessionID: "ses_123", arguments: [] }, cleanupOutput);

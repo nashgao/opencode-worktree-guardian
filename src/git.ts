@@ -47,6 +47,10 @@ export async function getBranchCommit(repoRoot: string, branch: string) {
   return (await runGit(repoRoot, ["rev-parse", "--verify", `refs/heads/${branch}^{commit}`])).stdout;
 }
 
+export async function getRefCommit(repoRoot: string, ref: string) {
+  return (await runGit(repoRoot, ["rev-parse", "--verify", `${ref}^{commit}`])).stdout;
+}
+
 export async function getStatusPorcelain(repoRoot: string) {
   return (await runGit(repoRoot, ["status", "--porcelain"])).stdout;
 }

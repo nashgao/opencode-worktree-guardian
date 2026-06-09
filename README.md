@@ -67,10 +67,12 @@ Defaults are delivery-first, lifecycle-managed, and cleanup-conservative. `guard
 ## Native Tools
 
 - `guardian_start`: create or attach the session to a guardian worktree.
+- `guardian_done`: plan or apply the safest implementation-done path for the current repository state. It delegates recorded session worktrees to `guardian_finish`, routes clean primary-base cleanup to `guardian_finish_workflow`, and handles dirty protected primary `baseBranch` only with an explicit `commitMessage` plus fresh `confirmToken`. Primary-main apply creates a safety ref before committing, pushes normally to the configured remote/base branch, proves the new commit is reachable from `remote/baseBranch`, and returns a separate cleanup plan; it does not silently apply cleanup, force-push, mutate stashes, delete remote branches, or weaken session ownership.
 - `guardian_status`: read-only inventory of sessions, worktrees, refs, stashes, dirty files. Its native tool output renders a terminal-readable summary, while `metadata` keeps the full structured result for automation.
 - `guardian_delete_worktree`: safe explicit worktree deletion. Run `mode: "plan"` first to get a confirm token, then `mode: "apply"` with that token. It creates a safety ref before removal, uses non-force `git worktree remove`, keeps the branch by default, and only uses non-force `git branch -d` when `deleteBranch: true` and ancestry is proven. Intentional unmerged local abandonment requires `deleteBranch: true` plus `abandonUnmerged: true` in both plan and apply.
 - `guardian_unblock_finish`: safe explicit finish-unblock helper. Run `mode: "plan"` first to get a confirm token, then `mode: "apply"` with that token. The first supported action, `commit-review-artifacts`, commits only `.milestones/reviews/*impl-rating-YYYYMMDD.md` or `.milestones/reviews/*impl-rating-YYYYMMDD.txt` review artifacts and refuses mixed source changes, renames/copies, and symlink artifacts. Descriptive branch names are allowed when the recorded session owns that exact branch/worktree binding. If the session is missing from Guardian state, plan and apply can resolve exactly one checked-out worktree under the configured Guardian worktree root from the same explicit `branch` or `worktreePath`.
 - `guardian_finish`: gated finish behavior based on `finishMode`.
+- `guardian_finish_workflow`: high-level implementation-done cleanup workflow. Run `mode: "plan"` first to verify the primary worktree is clean, stash inventory is acceptable, the configured remote can be fetched, and redundant cleanup candidates are already merged to the freshly resolved `remote/baseBranch` commit. Run `mode: "apply"` only with the returned token; the token binds the resolved base commit and cleanup targets, then apply re-plans each target and delegates removal to `guardian_delete_worktree`. It does not create commits, choose commit messages, merge protected branches, mutate stashes, force-delete branches, or run raw cleanup.
 - `guardian_preserve`: mark the session terminal/preserved and create a preserved ref. Preserved worktrees are cleanup-eligible through `guardian_delete_worktree`; preservation is not a long-term retention instruction.
 - `guardian_recover`: read-only recovery refs, reflog/unreachable candidates, and suggested commands. Its native tool output renders a terminal-readable summary, while `metadata` keeps the full structured result for automation.
 - `guardian_report_html`: write a self-contained offline control-room report to `.git/opencode-guardian/report.html` with sessions, worktrees, branch coverage, risks, recovery commands, and raw status/recover metadata.
@@ -82,8 +84,10 @@ Defaults are delivery-first, lifecycle-managed, and cleanup-conservative. `guard
 When the TUI plugin entrypoint is enabled, Guardian registers these slash commands directly in OpenCode's command palette and slash command surface:
 
 - `/guardian-status`
+- `/guardian-done`
 - `/guardian-start`
 - `/guardian-finish`
+- `/guardian-finish-workflow`
 - `/guardian-preserve`
 - `/guardian-recover`
 - `/guardian-report`
@@ -99,8 +103,10 @@ Each command submits a prompt to the current session telling the agent to use th
 The package also ships top-level `commands/*.md` assets for compatibility with hosts that support packaged markdown command discovery. Those hosts may register namespaced commands, for example:
 
 - `/opencode-worktree-guardian:status`
+- `/opencode-worktree-guardian:done`
 - `/opencode-worktree-guardian:start`
 - `/opencode-worktree-guardian:finish`
+- `/opencode-worktree-guardian:finish-workflow`
 - `/opencode-worktree-guardian:preserve`
 - `/opencode-worktree-guardian:recover`
 - `/opencode-worktree-guardian:report`
@@ -109,7 +115,7 @@ The package also ships top-level `commands/*.md` assets for compatibility with h
 - `/opencode-worktree-guardian:delete-worktree`
 - `/opencode-worktree-guardian:unblock-finish`
 
-Each packaged command is a thin prompt wrapper around the matching native Guardian tool. It does not authorize raw shell cleanup, raw worktree removal, stash mutation, raw branch deletion, or bypassing `guardian_finish`, `guardian_delete_worktree`, `guardian_hygiene_cleanup`, or `guardian_unblock_finish` preflights.
+Each packaged command is a thin prompt wrapper around the matching native Guardian tool. It does not authorize raw shell cleanup, raw worktree removal, stash mutation, raw branch deletion, or bypassing `guardian_done`, `guardian_finish`, `guardian_finish_workflow`, `guardian_delete_worktree`, `guardian_hygiene_cleanup`, or `guardian_unblock_finish` preflights.
 
 Native OpenCode command discovery is separate from packaged plugin assets. User or project commands live in `~/.config/opencode/commands/*.md` or `<repo>/.opencode/commands/*.md`; OpenCode core does not automatically discover this package's internal `commands/*.md` without a loader that supports packaged plugin commands.
 
@@ -124,6 +130,10 @@ If older or corrupted state records an active session on the primary repo worktr
 Guardian hooks do not move the OpenCode host process cwd. Instead, before safe shell/git tools run, Guardian rewrites the tool execution directory to the recorded worktree and then re-applies the destructive-command guards. Missing, unresolvable, or unrecorded worktrees fail closed. Raw cleanup/reset/stash/force-push/worktree-removal commands remain blocked.
 
 Finish Guardian work through `guardian_finish`, not manual protected-branch push or merge commands. Finish always creates a safety ref before risky operations and reports preflight facts/blockers for automation. Dirty worktrees block finish unless every dirty path matches explicit `allowDirtyPaths` config. Allowed dirty paths are reported as `allowedDirtyFiles` and left untouched; any non-matching dirty path remains a blocker. `create-pr` pushes the branch and suggests a PR command; it does not create a PR natively. `merge-to-base` requires explicit approval, and cleanup only runs when `autoCleanup` or `allowCleanup` is set and ancestry is proven.
+
+Use `guardian_done` when implementation is complete and you want Guardian to choose the safe next lane. It is the user-facing done workflow: session-owned work still finishes through `guardian_finish`; clean primary-base cleanup still runs through `guardian_finish_workflow`; dirty protected primary-base work can be published only with an explicit `commitMessage` and token-bound dirty snapshot. Apply creates a pre-commit safety ref, commits only the token-bound dirty paths, pushes normally, fetches, proves remote reachability, and returns a fresh cleanup plan for separate confirmation. It does not treat old primary/protected session records as ownership, silently apply cleanup after publishing, merge PRs, delete remote branches, force-push, or mutate stashes.
+
+When implementation is already committed, pushed, merged to the configured base, and synced locally, use `guardian_finish_workflow` to plan redundant local cleanup instead of issuing raw Git cleanup commands. The workflow first verifies the primary worktree is clean and stash policy is satisfied, fetches the configured remote, then discovers only Guardian-root worktrees and local branches whose commits are ancestors of the resolved `remote/baseBranch` commit. Merged local branch cleanup intentionally includes non-protected, checked-out-nowhere local branches, not only `guardian/*` branches, because the workflow represents an implementation-done local cleanup pass. At most 25 cleanup candidates can be applied in one workflow plan; larger batches block and require smaller cleanup passes. `mode: "plan"` returns cleanup candidates, blockers, resolved base commit evidence, and a workflow token. `mode: "apply"` requires that token, re-runs per-target Guardian delete plans, and applies each deletion through `guardian_delete_worktree`. Any blocker fails closed and apply deletes nothing until a fresh plan has no blockers. Unmerged work, dirty worktrees, protected branches, detached heads, stashes, stale tokens, excessive candidate batches, and unresolved ownership remain blockers.
 
 When `guardian_finish` is blocked only by generated review-rating artifacts, use `guardian_unblock_finish`, not raw cleanup or a broad commit. `mode: "plan"` is read-only and returns a `confirmToken` plus the exact review artifacts. If the `sessionId` is not recorded in Guardian state, pass an explicit `branch` or `worktreePath`; the tool refuses to infer a target from the session id alone and proceeds only when that input resolves exactly one checked-out worktree under the configured Guardian worktree root. `mode: "apply"` re-runs the same preflight, requires the fresh token, creates a safety ref, stages only those review artifacts, commits them, updates Guardian state, and refuses mixed dirty/source paths. Apply must receive the same explicit `branch` or `worktreePath` when state is still missing. It never deletes files, stashes, cleans, follows symlink artifacts, accepts renames/copies, or commits non-review source changes.
 

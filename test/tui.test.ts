@@ -5,7 +5,9 @@ import type { TuiPluginApi } from "@opencode-ai/plugin/tui";
 
 const expectedSlashNames = [
   "guardian-delete-worktree",
+  "guardian-done",
   "guardian-finish",
+  "guardian-finish-workflow",
   "guardian-hygiene",
   "guardian-hygiene-cleanup",
   "guardian-preserve",
@@ -98,6 +100,25 @@ test("tui slash command dispatches a Guardian prompt in the current session", as
 });
 
 
+test("tui done prompt preserves primary-main token gates and separate cleanup", async () => {
+  const runtime = createApi();
+  await tui(runtime.api);
+  const command = runtime.layer?.commands.find((candidate) => candidate.slashName === "guardian-done");
+  assert.ok(command);
+
+  await command.run();
+
+  assert.equal(runtime.prompts.length, 1);
+  const prompt = runtime.prompts[0] as { parts: Array<{ text: string }> };
+  assert.match(prompt.parts[0].text, /guardian_done/);
+  assert.match(prompt.parts[0].text, /mode=plan/);
+  assert.match(prompt.parts[0].text, /commitMessage/);
+  assert.match(prompt.parts[0].text, /confirmToken/);
+  assert.match(prompt.parts[0].text, /cleanupPlan/);
+  assert.match(prompt.parts[0].text, /do not silently apply cleanup/);
+  assert.match(prompt.parts[0].text, /Never force-push/);
+});
+
 test("tui hygiene-cleanup prompt preserves report-only hygiene and confirmDelete flow", async () => {
   const runtime = createApi();
   await tui(runtime.api);
@@ -149,6 +170,24 @@ test("tui finish prompt mentions file-specific runtime allowlists", async () => 
   assert.match(prompt.parts[0].text, /guardian_finish/);
   assert.match(prompt.parts[0].text, /file-specific runtime paths/);
   assert.match(prompt.parts[0].text, /allowDirtyPaths/);
+});
+
+test("tui finish-workflow prompt preserves Guardian gated cleanup boundaries", async () => {
+  const runtime = createApi();
+  await tui(runtime.api);
+  const command = runtime.layer?.commands.find((candidate) => candidate.slashName === "guardian-finish-workflow");
+  assert.ok(command);
+
+  await command.run();
+
+  assert.equal(runtime.prompts.length, 1);
+  const prompt = runtime.prompts[0] as { parts: Array<{ text: string }> };
+  assert.match(prompt.parts[0].text, /guardian_finish_workflow/);
+  assert.match(prompt.parts[0].text, /mode=plan/);
+  assert.match(prompt.parts[0].text, /explicit user confirmation/);
+  assert.match(prompt.parts[0].text, /redundant merged Guardian worktrees/);
+  assert.match(prompt.parts[0].text, /must not invent commits/);
+  assert.match(prompt.parts[0].text, /raw cleanup commands/);
 });
 
 test("tui slash command warns outside a session", async () => {

@@ -2,6 +2,12 @@ import type { TuiPluginApi } from "@opencode-ai/plugin/tui";
 
 const COMMANDS = [
   {
+    name: "guardian-done",
+    title: "Guardian: Done",
+    description: "Plan or apply the safest implementation-done path for the current repository state.",
+    prompt: "Use the guardian_done native tool. Run mode=plan first. If it selects dirty primary-main publishing, require an explicit commitMessage and fresh confirmToken before apply; after publish, inspect the returned cleanupPlan and do not silently apply cleanup. Never force-push, mutate stashes, delete remote branches, or run raw cleanup commands.",
+  },
+  {
     name: "guardian-status",
     title: "Guardian: Status",
     description: "Show Guardian session, worktree, branch, stash, and recovery inventory.",
@@ -18,6 +24,12 @@ const COMMANDS = [
     title: "Guardian: Finish",
     description: "Finish Guardian-owned work through the configured gated finish mode.",
     prompt: "Use the guardian_finish native tool for gated completion. Do not manually push, merge, clean, or remove worktrees. If dirty files block finish, distinguish allowedDirtyFiles from blockingDirtyFiles; narrow file-specific runtime paths can be allowed through repo config allowDirtyPaths, and allowed runtime dirt is left untouched.",
+  },
+  {
+    name: "guardian-finish-workflow",
+    title: "Guardian: Finish Workflow",
+    description: "Plan or apply implementation-done cleanup for redundant merged worktrees and branches.",
+    prompt: "Use the guardian_finish_workflow native tool. Run mode=plan first, inspect clean/synced preflight facts, cleanup candidates, blockers, and confirmToken, then apply only after explicit user confirmation with the fresh token. This workflow may remove only redundant merged Guardian worktrees and merged local branches through Guardian gates; it must not invent commits, merge protected branches, mutate stashes, run raw cleanup commands, or bypass guardian_finish/guardian_delete_worktree safety checks.",
   },
   {
     name: "guardian-preserve",

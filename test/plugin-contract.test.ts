@@ -6,7 +6,9 @@ import { createRepo } from "./helpers.ts";
 
 const expectedToolNames = [
   "guardian_delete_worktree",
+  "guardian_done",
   "guardian_finish",
+  "guardian_finish_workflow",
   "guardian_hygiene",
   "guardian_hygiene_cleanup",
   "guardian_preserve",
@@ -26,8 +28,10 @@ const expectedHookNames = [
 ];
 
 const expectedPackagedCommands = new Map([
+  ["done", "guardian_done"],
   ["delete-worktree", "guardian_delete_worktree"],
   ["finish", "guardian_finish"],
+  ["finish-workflow", "guardian_finish_workflow"],
   ["hygiene", "guardian_hygiene"],
   ["hygiene-cleanup", "guardian_hygiene_cleanup"],
   ["preserve", "guardian_preserve"],
@@ -344,6 +348,89 @@ test("guardian_delete_worktree tool execute blocks current worktree from native 
 
   assert.equal(result.metadata.status, "blocked");
   assert.match(result.metadata.reason, /current execution worktree/);
+});
+
+test("guardian_done tool execute returns readable primary-main plan output with raw metadata", async () => {
+  const { createRepoWithOrigin } = await import("./helpers.ts");
+  const path = await import("node:path");
+  const { base, repo } = await createRepoWithOrigin();
+  test.after(() => fs.rm(base, { recursive: true, force: true }));
+  await fs.writeFile(path.join(repo, "contract-done.txt"), "done\n");
+  const hooks = await plugin.server({ directory: repo, worktree: repo });
+  const { context, metadataCalls } = createToolContext();
+  context.directory = repo;
+  context.worktree = repo;
+  const execute: any = hooks.tool.guardian_done.execute;
+
+  const result = await execute({ repoRoot: repo, cwd: repo, mode: "plan", commitMessage: "feat: contract done" }, context);
+
+  assert.equal(typeof result.output, "string");
+  assert.equal(typeof result.metadata, "object");
+  assert.equal(result.metadata.status, "planned");
+  assert.equal(result.metadata.lane, "primary-main-publish");
+  assert.deepEqual(metadataCalls, [{ title: "guardian_done" }]);
+  assert.match(result.output, /guardian_done planned/);
+  assert.match(result.output, /lane: primary-main-publish/);
+  assert.match(result.output, /commitMessage: feat: contract done/);
+  assert.match(result.output, /confirmToken:/);
+  assert.match(result.output, /contract-done.txt/);
+});
+
+test("guardian_finish_workflow tool execute returns readable plan output with raw metadata", async () => {
+  const { createRepoWithOrigin, git } = await import("./helpers.ts");
+  const path = await import("node:path");
+  const { base, repo } = await createRepoWithOrigin();
+  test.after(() => fs.rm(base, { recursive: true, force: true }));
+  const branch = "guardian/contract-finish-workflow";
+  await git(repo, ["checkout", "-b", branch]);
+  await fs.writeFile(path.join(repo, "contract-finish-workflow.txt"), "workflow\n");
+  await git(repo, ["add", "contract-finish-workflow.txt"]);
+  await git(repo, ["commit", "-m", "add contract finish workflow"]);
+  await git(repo, ["checkout", "main"]);
+  await git(repo, ["merge", "--no-ff", branch, "-m", "merge contract finish workflow"]);
+  await git(repo, ["push", "origin", "main"]);
+  const worktreePath = path.join(repo, ".worktrees", path.basename(repo), "contract-finish-workflow");
+  await git(repo, ["worktree", "add", worktreePath, branch]);
+  const hooks = await plugin.server({ directory: repo, worktree: repo });
+  const { context, metadataCalls } = createToolContext();
+  context.directory = repo;
+  context.worktree = repo;
+  const execute: any = hooks.tool.guardian_finish_workflow.execute;
+
+  const result = await execute({ repoRoot: repo, cwd: repo, mode: "plan" }, context);
+
+  assert.equal(result.metadata.status, "planned");
+  assert.equal(result.metadata.preflight.baseRef, "origin/main");
+  assert.equal(typeof result.metadata.preflight.baseRefOid, "string");
+  assert.equal(result.metadata.candidates.length, 1);
+  assert.equal(result.metadata.blockers.length, 0);
+  assert.deepEqual(metadataCalls, [{ title: "guardian_finish_workflow" }]);
+  assert.match(result.output, /guardian_finish_workflow planned/);
+  assert.match(result.output, /baseRef: origin\/main/);
+  assert.match(result.output, /baseRefOid: [a-f0-9]{12}/);
+  assert.match(result.output, /candidates: 1/);
+  assert.match(result.output, /maxCandidates: 25/);
+  assert.match(result.output, /confirmToken:/);
+});
+
+test("guardian_finish_workflow tool execute returns readable blocked output with raw metadata", async () => {
+  const { createRepoWithOrigin } = await import("./helpers.ts");
+  const path = await import("node:path");
+  const { base, repo } = await createRepoWithOrigin();
+  test.after(() => fs.rm(base, { recursive: true, force: true }));
+  await fs.writeFile(path.join(repo, "dirty.txt"), "dirty\n");
+  const hooks = await plugin.server({ directory: repo, worktree: repo });
+  const { context } = createToolContext();
+  context.directory = repo;
+  context.worktree = repo;
+  const execute: any = hooks.tool.guardian_finish_workflow.execute;
+
+  const result = await execute({ repoRoot: repo, cwd: repo, mode: "plan" }, context);
+
+  assert.equal(result.metadata.status, "blocked");
+  assert.match(result.metadata.reason, /primary worktree/);
+  assert.match(result.output, /\[FAIL\] guardian_finish_workflow blocked/);
+  assert.match(result.output, /primary worktree has uncommitted changes/);
 });
 
 test("guardian_finish tool execute defaults cwd to recorded session worktree", async () => {

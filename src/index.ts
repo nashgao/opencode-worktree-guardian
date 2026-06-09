@@ -9,6 +9,7 @@ import { collectKnownWorktreePaths, guardianStart, injectInvisiblePolicy, record
 export { DEFAULT_CONFIG, FINISH_MODES, loadConfig, normalizeConfig } from "./config.ts";
 export { classifyGuardCommand, classifyReadOnlyInspectionCommand, extractCommandText, tokenizeCommand } from "./guards.ts";
 export { guardianDeleteWorktree } from "./delete.ts";
+export { guardianDone } from "./done.ts";
 export { buildPreservedRef, buildSafetyRef, createSafetyRef, deleteBranch, getRepoRoot, listWorktrees, removeWorktree, runGit } from "./git.ts";
 export { guardianHygieneCleanup, scanWorkspaceHygiene } from "./hygiene.ts";
 export { acquireStateLock, appendEvent, getGuardianPaths, readState, recordSession, updateState, writeReportAtomic, writeStateAtomic } from "./state.ts";
@@ -204,7 +205,7 @@ async function tryInvisibleStart(input: any, context: Record<string, any>, confi
 }
 
 
-const READABLE_GUARDIAN_TOOLS = new Set(["guardian_status", "guardian_recover", "guardian_report_html", "guardian_hygiene", "guardian_hygiene_cleanup", "guardian_delete_worktree", "guardian_unblock_finish"]);
+const READABLE_GUARDIAN_TOOLS = new Set(["guardian_status", "guardian_recover", "guardian_report_html", "guardian_hygiene", "guardian_hygiene_cleanup", "guardian_delete_worktree", "guardian_unblock_finish", "guardian_finish_workflow", "guardian_done"]);
 const SESSION_WORKTREE_DEFAULT_TOOLS = new Set(["guardian_finish", "guardian_preserve"]);
 
 function recordValue(value: unknown): Record<string, unknown> {
@@ -435,12 +436,83 @@ function formatGuardianUnblockFinishOutput(rawResult: unknown) {
   return lines.join("\n");
 }
 
+function formatGuardianFinishWorkflowOutput(rawResult: unknown) {
+  const result = recordValue(rawResult);
+  const preflight = recordValue(result.preflight);
+  const candidates = arrayValue(result.candidates);
+  const blockers = arrayValue(result.blockers);
+  const results = arrayValue(result.results);
+  const lines = [
+    `${result.ok === false ? "[FAIL]" : result.status === "planned" ? "[WARN]" : "[GOOD]"} guardian_finish_workflow ${textValue(result.status)}`,
+    `[INFO] mode: ${textValue(preflight.mode)} | branch: ${textValue(preflight.currentBranch)} | baseRef: ${textValue(preflight.baseRef)} | baseRefOid: ${shortCommit(preflight.baseRefOid)}`,
+    `[INFO] candidates: ${candidates.length} | blockers: ${blockers.length} | maxCandidates: ${Number(preflight.maxCandidateCount ?? 0)} | dirty: ${Number(preflight.dirtyFileCount ?? 0)} | stashes: ${Number(preflight.stashCount ?? 0)}`,
+  ];
+  const reason = textValue(result.reason, "");
+  if (result.ok === false || reason) lines.push(`[FAIL] ${reason || "guardian_finish_workflow blocked"}`);
+  if (typeof result.confirmToken === "string") lines.push(`[WARN] confirmToken: ${result.confirmToken}`);
+  if (candidates.length > 0) {
+    lines.push("[INFO] cleanup candidates:");
+    for (const entry of candidates.slice(0, 8)) {
+      const candidate = recordValue(entry);
+      lines.push(`  - kind=${textValue(candidate.kind)} targetKind=${textValue(candidate.targetKind)} branch=${textValue(candidate.branch)} path=${textValue(candidate.targetPath)} head=${shortCommit(candidate.head)}`);
+    }
+  }
+  if (blockers.length > 0) {
+    lines.push("[WARN] cleanup blockers:");
+    for (const entry of blockers.slice(0, 8)) {
+      const blocker = recordValue(entry);
+      lines.push(`  - kind=${textValue(blocker.kind)} branch=${textValue(blocker.branch)} path=${textValue(blocker.targetPath)} reason=${textValue(blocker.reason)}`);
+    }
+  }
+  if (results.length > 0) {
+    lines.push("[INFO] cleanup results:");
+    for (const entry of results.slice(0, 8)) {
+      const item = recordValue(entry);
+      lines.push(`  - status=${textValue(item.status)} branch=${textValue(item.branch)} worktreeRemoved=${String(item.worktreeRemoved === true)} branchDeleted=${String(item.branchDeleted === true)}`);
+    }
+  }
+  return lines.join("\n");
+}
+
+function formatGuardianDoneOutput(rawResult: unknown) {
+  const result = recordValue(rawResult);
+  const preflight = recordValue(result.preflight);
+  const cleanupPlan = recordValue(result.cleanupPlan);
+  const dirtySnapshot = recordValue(result.dirtySnapshot);
+  const dirtyPaths = arrayValue(dirtySnapshot.paths ?? preflight.dirtyFiles);
+  const lines = [
+    `${result.ok === false ? "[FAIL]" : result.status === "planned" ? "[WARN]" : "[GOOD]"} guardian_done ${textValue(result.status)}`,
+    `[INFO] lane: ${textValue(result.lane)} | branch: ${textValue(preflight.currentBranch ?? result.branch)} | baseBranch: ${textValue(preflight.baseBranch)}`,
+    `[INFO] dirty: ${dirtyPaths.length} | stashes: ${Number(preflight.stashCount ?? 0)} | safetyRef: ${textValue(result.safetyRef)}`,
+  ];
+  const reason = textValue(result.reason, "");
+  if (result.ok === false || reason) lines.push(`[FAIL] ${reason || "guardian_done blocked"}`);
+  if (typeof result.confirmToken === "string") lines.push(`[WARN] confirmToken: ${result.confirmToken}`);
+  if (typeof result.commitMessage === "string") lines.push(`[INFO] commitMessage: ${result.commitMessage}`);
+  if (typeof result.commit === "string") lines.push(`[INFO] commit: ${shortCommit(result.commit)}`);
+  if (dirtyPaths.length > 0) {
+    lines.push("[INFO] dirty files:");
+    for (const entry of dirtyPaths.slice(0, 8)) lines.push(`  - ${textValue(entry, String(entry))}`);
+  }
+  if (Object.keys(cleanupPlan).length > 0) {
+    lines.push(`[INFO] cleanupPlan: ${textValue(cleanupPlan.status)} candidates=${arrayValue(cleanupPlan.candidates).length} blockers=${arrayValue(cleanupPlan.blockers).length}`);
+  }
+  const suggestions = arrayValue(result.suggestedCommands);
+  if (suggestions.length > 0) {
+    lines.push("[INFO] suggested commands:");
+    for (const command of suggestions.slice(0, 8)) lines.push(`  - ${textValue(command, String(command))}`);
+  }
+  return lines.join("\n");
+}
+
 function formatGuardianOutput(name: string, result: unknown) {
   if (name === "guardian_report_html") return formatGuardianReportOutput(result);
   if (name === "guardian_hygiene") return formatGuardianHygieneOutput(result);
   if (name === "guardian_hygiene_cleanup") return formatGuardianHygieneCleanupOutput(result);
   if (name === "guardian_delete_worktree") return formatGuardianDeleteOutput(result);
   if (name === "guardian_unblock_finish") return formatGuardianUnblockFinishOutput(result);
+  if (name === "guardian_finish_workflow") return formatGuardianFinishWorkflowOutput(result);
+  if (name === "guardian_done") return formatGuardianDoneOutput(result);
   return formatGuardianStatusOutput(name, result);
 }
 
@@ -522,11 +594,13 @@ const WorktreeGuardianPlugin = {
 
     return {
       tool: {
+        guardian_done: guardianTool("guardian_done", "Plan or apply the safest implementation-done path for this repository state.", hygieneCleanupPlanCache),
         guardian_start: guardianTool("guardian_start", "Create or attach this OpenCode session to a guardian-owned worktree.", hygieneCleanupPlanCache),
         guardian_status: guardianTool("guardian_status", "Report guardian state, worktrees, safety refs, stash inventory, and blockers without mutating the repo.", hygieneCleanupPlanCache),
         guardian_delete_worktree: guardianTool("guardian_delete_worktree", "Plan or apply safe Guardian-mediated worktree deletion with confirm-token and safety-ref gates.", hygieneCleanupPlanCache),
         guardian_hygiene_cleanup: guardianTool("guardian_hygiene_cleanup", "Plan or apply token-gated cleanup for exact approved hygiene findings using internal filesystem APIs.", hygieneCleanupPlanCache),
         guardian_unblock_finish: guardianTool("guardian_unblock_finish", "Plan or apply safe finish blocker resolution, such as committing review artifacts with confirm-token gates.", hygieneCleanupPlanCache),
+        guardian_finish_workflow: guardianTool("guardian_finish_workflow", "Plan or apply an implementation-done workflow that verifies clean state and removes redundant merged worktrees and branches through Guardian gates.", hygieneCleanupPlanCache),
         guardian_finish: guardianTool("guardian_finish", "Apply the configured gated finish mode for the current guardian-owned worktree.", hygieneCleanupPlanCache),
         guardian_preserve: guardianTool("guardian_preserve", "Mark the current guardian-owned session as terminal/preserved with a safety ref.", hygieneCleanupPlanCache),
         guardian_recover: guardianTool("guardian_recover", "List recovery refs, orphaned sessions, stash inventory, and suggested recovery commands without mutation.", hygieneCleanupPlanCache),
