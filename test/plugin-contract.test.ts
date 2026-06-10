@@ -229,6 +229,24 @@ test("guardian_hygiene_cleanup plugin confirmDelete reuses matching plan token a
   assert.equal(apply.metadata.status, "cleaned");
   assert.equal(await fs.access(path.join(repo, "librarian-contract-delete")).then(() => true, () => false), false);
 
+  await fs.mkdir(path.join(repo, "librarian-contract-blank-token"), { recursive: true });
+  await fs.writeFile(path.join(repo, "librarian-contract-blank-token", "file.txt"), "artifact\n");
+  const blankTokenPlan = await execute({ repoRoot: repo, mode: "plan", cleanupPaths: ["librarian-contract-blank-token"] }, context);
+  const blankTokenApply = await execute({ repoRoot: repo, mode: "apply", cleanupPaths: ["librarian-contract-blank-token"], confirmDelete: true, confirmToken: "" }, context);
+
+  assert.equal(blankTokenPlan.metadata.status, "planned");
+  assert.equal(blankTokenApply.metadata.status, "cleaned");
+  assert.equal(await fs.access(path.join(repo, "librarian-contract-blank-token")).then(() => true, () => false), false);
+
+  await fs.mkdir(path.join(repo, "librarian-contract-placeholder-token"), { recursive: true });
+  await fs.writeFile(path.join(repo, "librarian-contract-placeholder-token", "file.txt"), "artifact\n");
+  const placeholderTokenPlan = await execute({ repoRoot: repo, mode: "plan", cleanupPaths: ["librarian-contract-placeholder-token"] }, context);
+  const placeholderTokenApply = await execute({ repoRoot: repo, mode: "apply", cleanupPaths: ["librarian-contract-placeholder-token"], confirmDelete: true, confirmToken: "CONFIRM_DELETE" }, context);
+
+  assert.equal(placeholderTokenPlan.metadata.status, "planned");
+  assert.equal(placeholderTokenApply.metadata.status, "cleaned");
+  assert.equal(await fs.access(path.join(repo, "librarian-contract-placeholder-token")).then(() => true, () => false), false);
+
   await fs.mkdir(path.join(repo, "librarian-contract-stale"), { recursive: true });
   await fs.writeFile(path.join(repo, "librarian-contract-stale", "file.txt"), "original\n");
   const stalePlan = await execute({ repoRoot: repo, mode: "plan", cleanupPaths: ["librarian-contract-stale"] }, context);
@@ -372,8 +390,70 @@ test("guardian_done tool execute returns readable primary-main plan output with 
   assert.match(result.output, /guardian_done planned/);
   assert.match(result.output, /lane: primary-main-publish/);
   assert.match(result.output, /commitMessage: feat: contract done/);
-  assert.match(result.output, /confirmToken:/);
+  assert.match(result.output, /confirm=true/);
+  assert.doesNotMatch(result.output, /confirmToken|sessionId/);
+  assert.equal(typeof result.metadata.confirmToken, "string");
   assert.match(result.output, /contract-done.txt/);
+});
+
+
+
+test("guardian_done plugin confirm reuses matching plan token for primary publish", async () => {
+  const { createRepoWithOrigin } = await import("./helpers.ts");
+  const path = await import("node:path");
+  const { base, repo } = await createRepoWithOrigin();
+  test.after(() => fs.rm(base, { recursive: true, force: true }));
+  await fs.writeFile(path.join(repo, "contract-confirm-done.txt"), "done\n");
+  const hooks = await plugin.server({ directory: repo, worktree: repo });
+  const { context } = createToolContext();
+  context.directory = repo;
+  context.worktree = repo;
+  const execute: any = hooks.tool.guardian_done.execute;
+
+  const plan = await execute({ repoRoot: repo, cwd: repo, mode: "plan", commitMessage: "feat: contract confirm done" }, context);
+  const apply = await execute({ repoRoot: repo, cwd: repo, mode: "apply", commitMessage: "feat: contract confirm done", confirm: true, confirmToken: "" }, context);
+
+  assert.equal(plan.metadata.status, "planned");
+  assert.equal(apply.metadata.status, "published");
+  assert.equal(apply.metadata.lane, "primary-main-publish");
+  const { git } = await import("./helpers.ts");
+  const { stdout: remoteMain } = await git(repo, ["rev-parse", "origin/main"]);
+  assert.equal(remoteMain, apply.metadata.commit);
+});
+
+
+test("guardian_done tool execute treats empty optional strings as absent", async () => {
+  const { createRepoWithOrigin } = await import("./helpers.ts");
+  const path = await import("node:path");
+  const { base, repo } = await createRepoWithOrigin();
+  test.after(() => fs.rm(base, { recursive: true, force: true }));
+  await fs.writeFile(path.join(repo, "contract-empty-args.txt"), "done\n");
+  const hooks = await plugin.server({ directory: repo, worktree: repo });
+  const { context } = createToolContext();
+  context.directory = repo;
+  context.worktree = repo;
+  context.sessionID = "ses_empty_optional";
+  const execute: any = hooks.tool.guardian_done.execute;
+
+  const result = await execute({
+    repoRoot: "",
+    cwd: "",
+    sessionId: "",
+    branch: "",
+    targetPath: "",
+    worktreePath: "",
+    confirmToken: "",
+    mode: "plan",
+    cleanupPaths: [],
+    allowCategories: [],
+    commitMessage: "feat: empty optional args",
+  }, context);
+
+  assert.equal(result.metadata.status, "planned");
+  assert.equal(result.metadata.lane, "primary-main-publish");
+  assert.equal(result.metadata.preflight.repoRoot, repo);
+  assert.equal(result.metadata.preflight.currentWorktree, repo);
+  assert.doesNotMatch(result.output, /confirmToken|sessionId/);
 });
 
 test("guardian_finish_workflow tool execute returns readable plan output with raw metadata", async () => {

@@ -256,9 +256,9 @@ export function buildInvisiblePolicy(config: Record<string, any>) {
   return [
     "Worktree Guardian policy:",
     "- Guardian auto-starts session worktree ownership by default; repo config autoStart=false disables automatic ownership.",
-    "- Do not run raw destructive git cleanup, reset, stash mutation, force-push, worktree removal, or rm -rf against worktrees.",
-    "- Finish Guardian work through guardian_finish so the configured mode can push, suggest a PR, preserve, or explicitly merge protected branches after gates pass.",
-    "- Use guardian_status for read-only inspection and guardian_finish for gated completion.",
+    "- Do not run raw destructive git cleanup, reset, stash mutation, force-push, protected branches mutation, worktree removal, or rm -rf against worktrees.",
+    "- Finish normal Guardian work through guardian_done so Guardian can choose the safe lane; use guardian_finish only for explicit low-level session finishing.",
+    "- Use guardian_status for read-only inspection and guardian_done for normal gated completion.",
     "- Safe mutating shell/git tool calls for a recorded Guardian session are routed into that recorded worktree automatically.",
     `- Default finish mode is ${config.finishMode}; auto-finish is ${config.autoFinish ? "enabled by repo config" : "disabled"} unless repo config opts in.`,
   ].join("\n");
@@ -315,7 +315,7 @@ export function rewriteGuardianCommand(input: Record<string, any> = {}, output: 
   const toolName = action === "report" ? "guardian_report_html" : action === "delete-worktree" ? "guardian_delete_worktree" : action === "hygiene-cleanup" ? "guardian_hygiene_cleanup" : action === "unblock-finish" ? "guardian_unblock_finish" : action === "finish-workflow" ? "guardian_finish_workflow" : `guardian_${action}`;
   const deleteGuidance = action === "delete-worktree" ? " Run mode=plan first. Stale local Guardian branch cleanup requires an exact branch or terminal sessionId plus deleteBranch=true and Guardian ownership proof from terminal state or safety refs. Intentional unmerged local abandonment requires deleteBranch=true plus abandonUnmerged=true in both plan and apply after inspecting unmerged commit evidence." : "";
   const hygieneCleanupGuidance = action === "hygiene-cleanup" ? " Run mode=plan first, inspect exact targets/blockers, get explicit user confirmation, then apply with confirmDelete=true. guardian_hygiene remains report-only." : "";
-  const doneGuidance = action === "done" ? " Run mode=plan first. Dirty primary-main publishing requires an explicit commitMessage and fresh confirmToken; cleanup after publish returns a separate cleanup plan and must not be silently applied." : "";
+  const doneGuidance = action === "done" ? " Run mode=plan first. Dirty primary-main publishing requires an explicit commitMessage and explicit user confirmation; apply with confirm=true so the plugin reuses the matching internal plan token. Cleanup after publish returns a separate cleanup plan and must not be silently applied." : "";
   const text = `Use the ${toolName} native tool.${deleteGuidance}${hygieneCleanupGuidance}${doneGuidance}${rest.trim() ? ` User arguments: ${rest.trim()}` : ""}`;
   if (!output || typeof output !== "object") return false;
   output.parts = [{ type: "text", text }];

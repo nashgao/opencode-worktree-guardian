@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import path from "node:path";
 import { tool } from "@opencode-ai/plugin";
 import { loadConfig } from "./config.ts";
 import { getCurrentBranch, getRepoRoot, listWorktrees } from "./git.ts";
@@ -85,6 +86,67 @@ function getExecutionCwd(input: Record<string, any> = {}, output: Record<string,
   return output?.args?.workdir ?? output?.args?.cwd ?? input?.args?.workdir ?? input?.args?.cwd ?? input?.workdir ?? input?.cwd ?? context.worktree ?? context.directory ?? process.cwd();
 }
 
+
+const DIRECT_FILE_MUTATION_TOOLS = new Set([
+  "write",
+  "edit",
+  "multiedit",
+  "patch",
+  "apply_patch",
+  "functions.apply_patch",
+]);
+const DIRECT_FILE_PATH_KEYS = ["filePath", "filepath", "path", "target", "filename"];
+
+function normalizePathForCompare(candidate: string) {
+  return path.resolve(candidate);
+}
+
+function isPathInside(parent: string, candidate: string) {
+  const relative = path.relative(normalizePathForCompare(parent), normalizePathForCompare(candidate));
+  return relative === "" || Boolean(relative) && !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
+function directFileMutationPathArg(input: Record<string, any> = {}, output: Record<string, any> = {}) {
+  const toolName = String(input?.tool ?? "");
+  if (!DIRECT_FILE_MUTATION_TOOLS.has(toolName)) return null;
+  const args = output?.args && typeof output.args === "object" ? output.args : input?.args && typeof input.args === "object" ? input.args : null;
+  if (!args) return null;
+  for (const key of DIRECT_FILE_PATH_KEYS) {
+    if (typeof args[key] === "string" && path.isAbsolute(args[key])) return { args, key, value: args[key] };
+  }
+  return null;
+}
+
+async function routeDirectFileMutation(input: Record<string, any>, output: Record<string, any>, sessionWorktree: Record<string, any> | null, repoRoot: string | undefined, cache: Map<string, string>) {
+  const pathArg = directFileMutationPathArg(input, output);
+  if (!pathArg) return { routed: false, blocked: false, reason: null };
+  if (!repoRoot) return { routed: false, blocked: true, reason: "direct file mutation cannot be checked without a Guardian repo root" };
+  if (!isPathInside(repoRoot, pathArg.value)) return { routed: false, blocked: false, reason: null };
+  if (sessionWorktree?.sessionId == null) return { routed: false, blocked: false, reason: null };
+  if (typeof sessionWorktree?.expectedWorktree !== "string") {
+    return { routed: false, blocked: true, reason: "direct file mutation cannot be checked against a recorded Guardian worktree" };
+  }
+  if (isPathInside(sessionWorktree.expectedWorktree, pathArg.value)) return { routed: false, blocked: false, reason: null };
+
+  let routedSession = sessionWorktree;
+  if (routedSession.ok !== true) {
+    try {
+      routedSession = await validateRecordedSessionTarget(input, routedSession, repoRoot, cache);
+    } catch (error: any) {
+      return { routed: false, blocked: true, reason: error.message };
+    }
+  }
+
+  const relative = path.relative(normalizePathForCompare(repoRoot), normalizePathForCompare(pathArg.value));
+  const routedPath = path.join(routedSession.expectedWorktree, relative);
+  if (!isPathInside(routedSession.expectedWorktree, routedPath)) {
+    return { routed: false, blocked: true, reason: "direct file mutation path cannot be safely rewritten into the Guardian worktree" };
+  }
+  pathArg.args[pathArg.key] = routedPath;
+  if (!output.args || typeof output.args !== "object") output.args = pathArg.args;
+  return { routed: true, blocked: false, reason: null, originalPath: pathArg.value, routedPath };
+}
+
 function rememberSessionWorktree(cache: Map<string, string>, sessionId: string | undefined, result: Record<string, any> | null) {
   const worktreePath = result?.session?.worktree_path;
   if (sessionId && result?.ok === true && typeof worktreePath === "string") cache.set(sessionId, worktreePath);
@@ -122,28 +184,55 @@ function sortedStringArgs(value: unknown) {
   return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string").sort((left, right) => left.localeCompare(right)) : [];
 }
 
-function hygieneCleanupPlanCacheKey(toolArgs: Record<string, any>) {
+function normalizeOptionalToolStrings(toolArgs: Record<string, any>) {
+  for (const key of ["repoRoot", "cwd", "sessionId", "branch", "targetPath", "worktreePath", "confirmToken"]) {
+    if (typeof toolArgs[key] === "string" && toolArgs[key].trim() === "") delete toolArgs[key];
+  }
+}
+
+function planCacheKey(name: string, toolArgs: Record<string, any>) {
   return JSON.stringify({
+    name,
     sessionId: typeof toolArgs.sessionId === "string" ? toolArgs.sessionId : "",
     repoRoot: typeof toolArgs.repoRoot === "string" ? toolArgs.repoRoot : "",
     cwd: typeof toolArgs.cwd === "string" ? toolArgs.cwd : "",
     cleanupPaths: sortedStringArgs(toolArgs.cleanupPaths),
     allowCategories: sortedStringArgs(toolArgs.allowCategories),
     allowDirtyNestedGit: toolArgs.allowDirtyNestedGit === true,
+    commitMessage: typeof toolArgs.commitMessage === "string" ? toolArgs.commitMessage : "",
+    finishMode: typeof toolArgs.finishMode === "string" ? toolArgs.finishMode : "",
+    deleteBranch: toolArgs.deleteBranch === true,
+    abandonUnmerged: toolArgs.abandonUnmerged === true,
+    allowIgnoredFiles: toolArgs.allowIgnoredFiles === true,
+    action: typeof toolArgs.action === "string" ? toolArgs.action : "",
   });
 }
 
-function maybeInjectHygieneCleanupConfirmToken(name: string, toolArgs: Record<string, any>, planCache?: Map<string, string>) {
-  if (name !== "guardian_hygiene_cleanup" || !planCache) return;
-  if (toolArgs.mode !== "apply" || toolArgs.confirmDelete !== true || typeof toolArgs.confirmToken === "string") return;
-  const cachedToken = planCache.get(hygieneCleanupPlanCacheKey(toolArgs));
+function isPlaceholderConfirmToken(value: unknown) {
+  if (typeof value !== "string") return false;
+  const normalized = value.trim();
+  return normalized === "" || normalized === "CONFIRM_DELETE";
+}
+
+function shouldUseCachedPlanToken(name: string, toolArgs: Record<string, any>) {
+  if (toolArgs.mode !== "apply") return false;
+  if (name === "guardian_hygiene_cleanup") return toolArgs.confirmDelete === true;
+  if (name === "guardian_done" || name === "guardian_finish_workflow") return toolArgs.confirm === true || toolArgs.confirmDelete === true;
+  return false;
+}
+
+function maybeInjectPlanConfirmToken(name: string, toolArgs: Record<string, any>, planCache?: Map<string, string>) {
+  if (!planCache || !shouldUseCachedPlanToken(name, toolArgs)) return;
+  if (typeof toolArgs.confirmToken === "string" && !isPlaceholderConfirmToken(toolArgs.confirmToken)) return;
+  const cachedToken = planCache.get(planCacheKey(name, toolArgs));
   if (cachedToken) toolArgs.confirmToken = cachedToken;
 }
 
-function rememberHygieneCleanupPlan(name: string, toolArgs: Record<string, any>, result: Record<string, any>, planCache?: Map<string, string>) {
-  if (name !== "guardian_hygiene_cleanup" || !planCache) return;
+function rememberPlanConfirmToken(name: string, toolArgs: Record<string, any>, result: Record<string, any>, planCache?: Map<string, string>) {
+  if (!planCache) return;
   if (toolArgs.mode !== "plan" || result.ok !== true || result.status !== "planned" || typeof result.confirmToken !== "string") return;
-  planCache.set(hygieneCleanupPlanCacheKey(toolArgs), result.confirmToken);
+  if (!["guardian_hygiene_cleanup", "guardian_done", "guardian_finish_workflow"].includes(name)) return;
+  planCache.set(planCacheKey(name, toolArgs), result.confirmToken);
 }
 
 async function resolveActualWorktreeOrPath(executionCwd: string) {
@@ -154,7 +243,7 @@ async function resolveActualWorktreeOrPath(executionCwd: string) {
   }
 }
 
-async function routeRecordedSessionCommand(input: Record<string, any>, output: Record<string, any>, sessionWorktree: Record<string, any>, repoRoot: string | undefined, cache: Map<string, string>) {
+async function validateRecordedSessionTarget(input: Record<string, any>, sessionWorktree: Record<string, any>, repoRoot: string | undefined, cache: Map<string, string>) {
   const expectedWorktree = sessionWorktree.expectedWorktree;
   if (typeof expectedWorktree !== "string" || expectedWorktree.length === 0) {
     throw new Error(`recorded worktree is unavailable for session ${sessionWorktree.sessionId}`);
@@ -175,14 +264,18 @@ async function routeRecordedSessionCommand(input: Record<string, any>, output: R
     const reason = routed?.reason ? `${routed.reason}: ` : "";
     throw new Error(`recorded worktree cannot be used for session ${sessionWorktree.sessionId}: ${reason}expected ${routed?.expectedWorktree ?? expectedWorktree}, actual ${routed?.actualWorktree ?? actualWorktree}`);
   }
+  return { ...routed, actualWorktree };
+}
+
+async function routeRecordedSessionCommand(input: Record<string, any>, output: Record<string, any>, sessionWorktree: Record<string, any>, repoRoot: string | undefined, cache: Map<string, string>) {
+  const routed = await validateRecordedSessionTarget(input, sessionWorktree, repoRoot, cache);
   const args = ensureToolArgs(output);
-  args.workdir = expectedWorktree;
-  args.cwd = expectedWorktree;
+  args.workdir = routed.expectedWorktree;
+  args.cwd = routed.expectedWorktree;
   return {
     ...routed,
     routed: true,
     routedFrom: sessionWorktree.actualWorktree,
-    actualWorktree,
   };
 }
 
@@ -429,7 +522,7 @@ function formatGuardianUnblockFinishOutput(rawResult: unknown) {
 
   const reason = textValue(result.reason, "");
   if (result.ok === false || reason) lines.push(`[FAIL] ${reason || "guardian_unblock_finish blocked"}`);
-  if (typeof result.confirmToken === "string") lines.push(`[WARN] confirmToken: ${result.confirmToken}`);
+  if (typeof result.nextAction === "string") lines.push(`[INFO] nextAction: ${result.nextAction}`);
   if (typeof result.commitMessage === "string") lines.push(`[INFO] commitMessage: ${result.commitMessage}`);
   if (typeof result.commit === "string") lines.push(`[INFO] commit: ${shortCommit(result.commit)}`);
   if (typeof result.safetyRef === "string") lines.push(`[INFO] safetyRef: ${result.safetyRef}`);
@@ -487,7 +580,7 @@ function formatGuardianDoneOutput(rawResult: unknown) {
   ];
   const reason = textValue(result.reason, "");
   if (result.ok === false || reason) lines.push(`[FAIL] ${reason || "guardian_done blocked"}`);
-  if (typeof result.confirmToken === "string") lines.push(`[WARN] confirmToken: ${result.confirmToken}`);
+  if (typeof result.nextAction === "string") lines.push(`[INFO] nextAction: ${result.nextAction}`);
   if (typeof result.commitMessage === "string") lines.push(`[INFO] commitMessage: ${result.commitMessage}`);
   if (typeof result.commit === "string") lines.push(`[INFO] commit: ${shortCommit(result.commit)}`);
   if (dirtyPaths.length > 0) {
@@ -545,6 +638,7 @@ function guardianTool(name: string, description: string, hygieneCleanupPlanCache
       mode: z.enum(["plan", "apply"]).optional(),
       confirmToken: z.string().optional(),
       confirmDelete: z.boolean().optional(),
+      confirm: z.boolean().optional(),
       action: z.enum(["commit-review-artifacts"]).optional(),
       commitMessage: z.string().optional(),
       deleteBranch: z.boolean().optional(),
@@ -560,6 +654,7 @@ function guardianTool(name: string, description: string, hygieneCleanupPlanCache
     async execute(args: Record<string, any>, context: any) {
       context.metadata({ title: name });
       const toolArgs = { ...args };
+      normalizeOptionalToolStrings(toolArgs);
       if (toolArgs.repoRoot == null && typeof context?.directory === "string") toolArgs.repoRoot = context.directory;
       if (toolArgs.sessionId == null && (name === "guardian_unblock_finish" || toolArgs.targetPath == null && toolArgs.branch == null)) {
         if (typeof context?.sessionID === "string") toolArgs.sessionId = context.sessionID;
@@ -571,9 +666,9 @@ function guardianTool(name: string, description: string, hygieneCleanupPlanCache
         else if (typeof context?.worktree === "string") toolArgs.cwd = context.worktree;
         else if (typeof context?.directory === "string") toolArgs.cwd = context.directory;
       }
-      maybeInjectHygieneCleanupConfirmToken(name, toolArgs, hygieneCleanupPlanCache);
+      maybeInjectPlanConfirmToken(name, toolArgs, hygieneCleanupPlanCache);
       const result = await runGuardianTool(name, toolArgs);
-      rememberHygieneCleanupPlan(name, toolArgs, result, hygieneCleanupPlanCache);
+      rememberPlanConfirmToken(name, toolArgs, result, hygieneCleanupPlanCache);
       return {
         title: name,
         metadata: result,
@@ -627,10 +722,11 @@ const WorktreeGuardianPlugin = {
       async "tool.execute.before"(input: any, output: any) {
         if (input?.callID) activeToolCalls.add(input.callID);
         const command = extractCommandText(input, output);
+        const directFileMutation = directFileMutationPathArg(input, output);
         const executionCwd = getExecutionCwd(input, output, context);
         let sessionWorktree: Record<string, any> | null = null;
         try {
-          const canResolveSession = Boolean(command) && await pathExists(directory);
+          const canResolveSession = Boolean(command || directFileMutation) && await pathExists(directory);
           const actualWorktree = canResolveSession ? await resolveActualWorktreeOrPath(executionCwd) : executionCwd;
           sessionWorktree = canResolveSession ? await resolveSessionWorktree({
             repoRoot: directory,
@@ -677,6 +773,13 @@ const WorktreeGuardianPlugin = {
         });
         const readOnly = sessionWorktree?.ok === false ? classifyReadOnlyInspectionCommand(command) : { allowed: true, reason: null };
         let routed = false;
+        const directFileRoute = await routeDirectFileMutation(input, output, sessionWorktree, directory, sessionWorktreeCache);
+        if (directFileRoute.blocked) {
+          if (input?.callID) activeToolCalls.delete(input.callID);
+          await writeLog(client, createEvent("tool.execute.before", input, output, context, { guard, sessionWorktree, readOnly, routed, directFileRoute }));
+          throw new Error(`Worktree Guardian blocked direct file mutation: ${directFileRoute.reason}. Use guardian_status to inspect the recorded worktree.`);
+        }
+        if (directFileRoute.routed) routed = true;
         if (guard.blocked) {
           if (input?.callID) activeToolCalls.delete(input.callID);
           await writeLog(client, createEvent("tool.execute.before", input, output, context, { guard, sessionWorktree, readOnly, routed }));

@@ -5,7 +5,7 @@ const COMMANDS = [
     name: "guardian-done",
     title: "Guardian: Done",
     description: "Plan or apply the safest implementation-done path for the current repository state.",
-    prompt: "Use the guardian_done native tool. Run mode=plan first. If it selects dirty primary-main publishing, require an explicit commitMessage and fresh confirmToken before apply; after publish, inspect the returned cleanupPlan and do not silently apply cleanup. Never force-push, mutate stashes, delete remote branches, or run raw cleanup commands.",
+    prompt: "Use the guardian_done native tool. Run mode=plan first. If it selects dirty primary-main publishing, require an explicit commitMessage and explicit user confirmation, then apply with confirm=true so the plugin can reuse the matching internal plan token. After publish, inspect the returned cleanupPlan and do not silently apply cleanup. Never force-push, mutate stashes, delete remote branches, or run raw cleanup commands.",
   },
   {
     name: "guardian-status",

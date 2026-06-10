@@ -9,6 +9,8 @@ const execFileAsync = promisify(execFile);
 import { guardianFinish } from "./finish.ts";
 import { createSafetyRef, fetchRemote, getCurrentBranch, getHeadCommit, getRefCommit, getRepoRoot, isAncestor, listStashes, runGit } from "./git.ts";
 import { guardianFinishWorkflow } from "./workflow.ts";
+import { isActiveSession } from "./lifecycle.ts";
+import { getGuardianPaths, readState } from "./state.ts";
 
 function samePath(left: string, right: string) {
   return path.resolve(left) === path.resolve(right);
@@ -166,11 +168,11 @@ async function primaryMainDone(repoRoot: string, cwd: string, config: Record<str
     commitMessage,
     preflight,
     dirtySnapshot: snapshot,
-    nextAction: "Apply with the same confirmToken and commitMessage to create a safety ref, commit the token-bound dirty files, push the base branch, fetch, and return a fresh cleanup plan.",
+    nextAction: "After explicit user confirmation, apply with confirm=true and the same commitMessage to create a safety ref, commit the token-bound dirty files, push the base branch, fetch, and return a fresh cleanup plan.",
   };
   if (mode === "plan") return plan;
   if (mode !== "apply") return blocked("mode must be plan or apply", { mode }, preflight);
-  if (input.confirmToken !== confirmToken) return blocked("confirm token mismatch; re-run mode=plan and use the returned confirmToken", { tokenMatched: false }, preflight);
+  if (input.confirmToken !== confirmToken) return blocked("plan changed; rerun plan and review the updated dirty files before applying", { tokenMatched: false }, preflight);
 
   const branch = String(preflight.currentBranch);
   const head = String(preflight.head);
@@ -209,10 +211,29 @@ export async function guardianDone(input: Record<string, unknown> = {}): Promise
   const currentBranch = await getCurrentBranch(currentWorktree);
   const baseBranch = String(config.baseBranch);
   const protectedBranches = Array.isArray(config.protectedBranches) ? config.protectedBranches : [];
+  const state = await readState(await getGuardianPaths(repoRoot), { repoRoot, config });
+  const sessionId = typeof input.sessionId === "string" && input.sessionId.trim().length > 0 ? input.sessionId : null;
+  const currentSession = sessionId ? state.sessions?.[sessionId] : null;
+
+  if (currentSession && isActiveSession(currentSession) && typeof currentSession.worktree_path === "string") {
+    if (!samePath(currentWorktree, currentSession.worktree_path)) {
+      const snapshot = samePath(currentWorktree, repoRoot) ? await dirtySnapshot(repoRoot, config) : { paths: [] };
+      if (snapshot.paths.length > 0) {
+        return blocked("changes were made outside the active Guardian lane; consolidate them before finishing", {
+          lane: "wrong-lane-dirty-work",
+          dirtyFiles: snapshot.paths,
+          nextAction: "Review the dirty files, then rerun guardian_done after they are moved into the active lane or intentionally published from primary.",
+        });
+      }
+      const result = await guardianFinish({ ...input, repoRoot, cwd: currentSession.worktree_path, sessionId, config });
+      return { ...result, lane: "session-finish" };
+    }
+    const result = await guardianFinish({ ...input, repoRoot, cwd: currentWorktree, sessionId, config });
+    return { ...result, lane: "session-finish" };
+  }
 
   if (typeof input.sessionId === "string" && !samePath(currentWorktree, repoRoot)) {
-    const result = await guardianFinish({ ...input, repoRoot, cwd: currentWorktree, config });
-    return { ...result, lane: "session-finish" };
+    return blocked("no active Guardian lane is recorded for this session; run guardian_status for recovery details", { lane: "missing-session-lane" });
   }
 
   if (samePath(currentWorktree, repoRoot) && currentBranch === baseBranch && protectedBranches.includes(baseBranch)) {

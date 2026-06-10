@@ -326,7 +326,7 @@ test("/guardian slash commands rewrite to native tool instructions", async () =>
 
   const doneOutput = { parts: [] };
   await hooks["command.execute.before"]({ command: "/guardian done", sessionID: "ses_123", arguments: [] }, doneOutput);
-  assert.deepEqual(doneOutput.parts, [{ type: "text", text: "Use the guardian_done native tool. Run mode=plan first. Dirty primary-main publishing requires an explicit commitMessage and fresh confirmToken; cleanup after publish returns a separate cleanup plan and must not be silently applied." }]);
+  assert.deepEqual(doneOutput.parts, [{ type: "text", text: "Use the guardian_done native tool. Run mode=plan first. Dirty primary-main publishing requires an explicit commitMessage and explicit user confirmation; apply with confirm=true so the plugin reuses the matching internal plan token. Cleanup after publish returns a separate cleanup plan and must not be silently applied." }]);
 
   const cleanupOutput = { parts: [] };
   await hooks["command.execute.before"]({ command: "/guardian hygiene-cleanup", sessionID: "ses_123", arguments: [] }, cleanupOutput);
@@ -583,6 +583,50 @@ test("session idle auto-finish uses the recorded worktree when host context is r
   assert.equal(session.status, "preserved");
   assert.equal(session.worktree_path, started.session.worktree_path);
   assert.equal(records.filter((record) => record.message === "event").length, 1);
+});
+
+
+
+test("tool.execute.before rewrites direct file mutations from primary into the recorded worktree", async (t) => {
+  const path = await import("node:path");
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const sessionID = "ses_direct_file_route";
+  const started = await (await import("../src/tools.ts")).guardianStart({ repoRoot: repo, cwd: repo, sessionId: sessionID, taskName: "direct file route", createWorktree: true, config: DEFAULT_CONFIG });
+  const hooks = await plugin.server({ directory: repo, worktree: repo, client: createClient([]) });
+  const output = { args: { filePath: path.join(repo, "src", "feature.ts"), content: "export {};\n" } };
+
+  await hooks["tool.execute.before"]({ tool: "write", sessionID, callID: "call_direct_file" }, output);
+
+  assert.equal(output.args.filePath, path.join(started.session.worktree_path, "src", "feature.ts"));
+});
+
+test("tool.execute.before leaves direct file mutations alone without a recorded session", async (t) => {
+  const path = await import("node:path");
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const hooks = await plugin.server({ directory: repo, worktree: repo, client: createClient([]) });
+  const output = { args: { filePath: path.join(repo, "README.md"), content: "updated\n" } };
+
+  await hooks["tool.execute.before"]({ tool: "write", callID: "call_direct_file_no_session" }, output);
+
+  assert.equal(output.args.filePath, path.join(repo, "README.md"));
+});
+
+test("tool.execute.before blocks direct file mutations when the recorded worktree is missing", async (t) => {
+  const path = await import("node:path");
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const sessionID = "ses_direct_file_missing";
+  const started = await (await import("../src/tools.ts")).guardianStart({ repoRoot: repo, cwd: repo, sessionId: sessionID, taskName: "direct file missing", createWorktree: true, config: DEFAULT_CONFIG });
+  await fs.rm(started.session.worktree_path, { recursive: true, force: true });
+  const hooks = await plugin.server({ directory: repo, worktree: repo, client: createClient([]) });
+  const output = { args: { filePath: path.join(repo, "README.md"), content: "updated\n" } };
+
+  await assert.rejects(
+    () => hooks["tool.execute.before"]({ tool: "write", sessionID, callID: "call_direct_file_missing" }, output),
+    /blocked direct file mutation.*recorded worktree/,
+  );
 });
 
 test("tool.execute.before allows read-only inspection outside a recorded session worktree", async (t) => {
