@@ -6,6 +6,7 @@ dist/
 *.log
 .DS_Store
 .opencode/
+.omc/
 .sisyphus/
 .milestones/
 .worktrees/
