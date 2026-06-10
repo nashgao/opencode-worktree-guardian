@@ -5,7 +5,7 @@ import test from "node:test";
 import { DEFAULT_CONFIG } from "../src/config.ts";
 import { guardianHygieneCleanup, scanWorkspaceHygiene } from "../src/hygiene.ts";
 import { guardianStatus } from "../src/recover.ts";
-import { createRepo, createRepoWithOrigin, git } from "./helpers.ts";
+import { createRepo, createRepoWithOrigin, createTempDir, git } from "./helpers.ts";
 import { guardianStart, runGuardianTool } from "../src/tools.ts";
 
 async function writeArtifact(repo: string, relative: string) {
@@ -187,6 +187,15 @@ test("hygiene cleanup plans residue roots when categories are allowed", async ()
 
   assert.equal(plan.ok, true);
   assert.deepEqual((plan.targets as Array<Record<string, unknown>>).map((target) => target.path).sort(), ["guardian-clean", "guardian-origin-clean", "opencode-temp-clean"]);
+
+  const apply = await guardianHygieneCleanup({ repoRoot: repo, config: DEFAULT_CONFIG, mode: "apply", allowCategories: ["nested-git", "suspicious"], confirmToken: plan.confirmToken });
+
+  assert.equal(apply.ok, true);
+  assert.equal(apply.status, "cleaned");
+  assert.deepEqual((apply.removedTargets as Array<Record<string, unknown>>).map((target) => target.path).sort(), ["guardian-clean", "guardian-origin-clean", "opencode-temp-clean"]);
+  assert.equal(await pathExists(path.join(repo, "guardian-clean")), false);
+  assert.equal(await pathExists(path.join(repo, "guardian-origin-clean")), false);
+  assert.equal(await pathExists(path.join(repo, "opencode-temp-clean")), false);
 });
 
 test("hygiene cleanup apply blocks stale tokens when approved target contents change", async () => {
@@ -292,4 +301,99 @@ test("hygiene cleanup blocks configured and registered Guardian worktree roots",
   assert.equal(plan.status, "blocked");
   assert.equal((plan.blockers as Array<Record<string, unknown>>).some((blocker) => /Guardian worktree root|registered/.test(String(blocker.reason))), true);
   assert.equal(await pathExists(started.session.worktree_path), true);
+});
+
+test("hygiene cleanup blocks invalid modes without removing anything", async () => {
+  const repo = await createRepo();
+  await writeArtifact(repo, "librarian-mode/file.txt");
+
+  const result = await guardianHygieneCleanup({ repoRoot: repo, config: DEFAULT_CONFIG, mode: "delete" });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, "blocked");
+  assert.match(String(result.reason), /mode must be plan or apply/);
+  assert.equal(result.confirmToken, undefined);
+  assert.equal(await pathExists(path.join(repo, "librarian-mode")), true);
+});
+
+test("hygiene cleanup rejects unsupported allowCategories entries as fatal blockers", async () => {
+  const repo = await createRepo();
+  await writeArtifact(repo, "librarian-categories/file.txt");
+
+  const plan = await guardianHygieneCleanup({ repoRoot: repo, config: DEFAULT_CONFIG, mode: "plan", allowCategories: ["known-cleanable", "everything"] });
+
+  assert.equal(plan.ok, false);
+  assert.equal(plan.status, "blocked");
+  assert.equal(plan.confirmToken, undefined);
+  assert.equal((plan.blockers as Array<Record<string, unknown>>).some((blocker) => blocker.fatal === true && /unsupported allowCategories entry: everything/.test(String(blocker.reason))), true);
+  assert.equal(await pathExists(path.join(repo, "librarian-categories")), true);
+});
+
+test("hygiene cleanup blocks overlapping cleanup targets", async () => {
+  const repo = await createRepo();
+  await writeArtifact(repo, "guardian-overlap/root-file.txt");
+  await writeArtifact(repo, "guardian-overlap/librarian-x/file.txt");
+
+  const plan = await guardianHygieneCleanup({ repoRoot: repo, config: DEFAULT_CONFIG, mode: "plan", allowCategories: ["known-cleanable", "suspicious"] });
+
+  assert.equal(plan.ok, false);
+  assert.equal(plan.status, "blocked");
+  assert.equal(plan.confirmToken, undefined);
+  assert.equal((plan.blockers as Array<Record<string, unknown>>).some((blocker) => blocker.fatal === true && /cleanup paths overlap/.test(String(blocker.reason))), true);
+  assert.equal(await pathExists(path.join(repo, "guardian-overlap")), true);
+});
+
+test("hygiene cleanup applies dirty nested git repositories with the explicit override", async () => {
+  const repo = await createRepo();
+  const nested = path.join(repo, "guardian-dirty-apply");
+  await fs.mkdir(nested, { recursive: true });
+  await git(nested, ["init", "-b", "main"]);
+  await git(nested, ["config", "user.email", "guardian@example.test"]);
+  await git(nested, ["config", "user.name", "Guardian Test"]);
+  await fs.writeFile(path.join(nested, "README.md"), "nested\n");
+  await git(nested, ["add", "README.md"]);
+  await git(nested, ["commit", "-m", "nested initial"]);
+  await fs.writeFile(path.join(nested, "dirty.txt"), "dirty\n");
+
+  const plan = await guardianHygieneCleanup({ repoRoot: repo, config: DEFAULT_CONFIG, mode: "plan", cleanupPaths: ["guardian-dirty-apply"], allowCategories: ["nested-git"], allowDirtyNestedGit: true });
+  assert.equal(plan.status, "planned");
+
+  const apply = await guardianHygieneCleanup({ repoRoot: repo, config: DEFAULT_CONFIG, mode: "apply", cleanupPaths: ["guardian-dirty-apply"], allowCategories: ["nested-git"], allowDirtyNestedGit: true, confirmToken: plan.confirmToken });
+
+  assert.equal(apply.ok, true);
+  assert.equal(apply.status, "cleaned");
+  assert.deepEqual((apply.removedTargets as Array<Record<string, unknown>>).map((target) => target.path), ["guardian-dirty-apply"]);
+  assert.equal(await pathExists(nested), false);
+});
+
+test("hygiene cleanup removes file targets and fingerprints symlinked contents", async () => {
+  const repo = await createRepo();
+  await fs.writeFile(path.join(repo, "node-compile-cache"), "cache-blob\n");
+  await writeArtifact(repo, "librarian-linked/file.txt");
+  await fs.symlink("file.txt", path.join(repo, "librarian-linked", "link"));
+
+  const plan = await guardianHygieneCleanup({ repoRoot: repo, config: DEFAULT_CONFIG, mode: "plan" });
+
+  assert.equal(plan.status, "planned");
+  const targets = plan.targets as Array<Record<string, unknown>>;
+  assert.deepEqual(targets.map((target) => [target.path, target.kind]), [["librarian-linked", "directory"], ["node-compile-cache", "file"]]);
+  const linkedFingerprint = targets[0].fingerprint as Array<Record<string, unknown>>;
+  assert.equal(linkedFingerprint.some((entry) => entry.kind === "symlink" && entry.target === "file.txt"), true);
+
+  const apply = await guardianHygieneCleanup({ repoRoot: repo, config: DEFAULT_CONFIG, mode: "apply", confirmToken: plan.confirmToken });
+
+  assert.equal(apply.status, "cleaned");
+  assert.equal(await pathExists(path.join(repo, "node-compile-cache")), false);
+  assert.equal(await pathExists(path.join(repo, "librarian-linked")), false);
+});
+
+test("hygiene scan reports failure metadata when the repo is unavailable", async () => {
+  const dir = await createTempDir("guardian-hygiene-no-repo-");
+  const result = await scanWorkspaceHygiene({ repoRoot: dir, config: DEFAULT_CONFIG });
+
+  assert.equal(result.ok, false);
+  assert.equal(typeof (result as Record<string, unknown>).reason, "string");
+  assert.deepEqual(result.findings, []);
+  assert.equal(result.summary.findingCount, 0);
+  assert.deepEqual(result.suggestedCommands, ["guardian_hygiene", "guardian_status"]);
 });
