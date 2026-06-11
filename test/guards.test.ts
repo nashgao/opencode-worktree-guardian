@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { classifyGuardCommand, classifyReadOnlyInspectionCommand, extractCommandText, tokenizeCommand } from "../src/guards.ts";
+import { classifyGuardCommand, classifyNormalAgentGitCommand, classifyReadOnlyInspectionCommand, extractCommandText, tokenizeCommand } from "../src/guards.ts";
 
 const blocked = [
   "git reset --hard",
@@ -404,6 +404,33 @@ test("allows read-only stash inspection and normal push", () => {
   assert.equal(classifyGuardCommand("git switch feature").blocked, false);
   assert.equal(classifyGuardCommand("git clean -nfd").blocked, false);
   assert.equal(classifyGuardCommand("git restore --staged").blocked, false);
+});
+
+test("classifies normal non-destructive agent git passthrough", () => {
+  for (const command of [
+    "git status --short",
+    "git add README.md src/index.ts",
+    "git commit -m fix",
+    "git fetch --prune origin",
+    "git push origin main",
+  ]) {
+    assert.equal(classifyNormalAgentGitCommand(command).allowed, true, command);
+  }
+
+  for (const command of [
+    "git reset --hard",
+    "git clean -fd",
+    "git commit --amend",
+    "git push --force origin main",
+    "git push --mirror origin",
+    "git push origin --delete feature",
+    "git push origin :feature",
+    "git branch -D feature",
+    "git stash pop",
+    "bash -lc 'git add README.md'",
+  ]) {
+    assert.equal(classifyNormalAgentGitCommand(command).allowed, false, command);
+  }
 });
 
 test("finds dangerous commands inside shell command chains", () => {

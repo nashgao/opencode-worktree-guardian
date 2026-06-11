@@ -9,6 +9,7 @@ const COMMAND_WRAPPERS = new Set(["command", "sudo", "if", "then", "do"]);
 const SHELL_COMMANDS = new Set(["bash", "sh", "zsh", "dash", "fish"]);
 const READ_ONLY_SHELL_COMMANDS = new Set(["pwd"]);
 const READ_ONLY_GIT_COMMANDS = new Set(["status", "diff", "log", "show", "rev-parse", "branch", "worktree", "stash", "remote", "ls-files"]);
+const NORMAL_AGENT_GIT_COMMANDS = new Set(["add", "commit", "fetch", "push"]);
 
 export function tokenizeCommand(command: string) {
   const tokens = [];
@@ -546,6 +547,9 @@ function classifyGit(segment: string[], options: Record<string, any> = {}) {
   if (subcommand === "push" && (rest.some(isForcePushToken) || pushRefspecs(rest).some((refspec) => refspec.startsWith("+")))) {
     return block("force push is blocked", normalized);
   }
+  if (subcommand === "push" && rest.some((token) => token === "--mirror")) {
+    return block("mirror push is blocked because it can delete remote refs", normalized);
+  }
   return null;
 }
 
@@ -590,6 +594,36 @@ export function classifyReadOnlyInspectionCommand(command: unknown) {
   if (SHELL_COMMANDS.has(stripped[0])) return { allowed: false, reason: "shell payload execution is not read-only allowlisted" };
   if (isAllowedReadOnlyGit(segment)) return { allowed: true, reason: null };
   return { allowed: false, reason: "command is not read-only allowlisted" };
+}
+
+function isAllowedNormalAgentGit(segment: string[], options: Record<string, any> = {}) {
+  if (isAllowedReadOnlyGit(segment)) return true;
+  const parsed = parseGitInvocation(segment, options);
+  if (!parsed?.subcommand || !NORMAL_AGENT_GIT_COMMANDS.has(parsed.subcommand)) return false;
+  if (hasAliasCapableRuntimeConfig(parsed.configs)) return false;
+
+  const { subcommand, rest } = parsed;
+  if (subcommand === "commit") return !rest.some((token) => token === "--amend" || token.startsWith("--amend="));
+  if (subcommand === "push") {
+    if (rest.some(isForcePushToken)) return false;
+    if (rest.some((token) => token === "--delete" || token === "-d" || token === "--mirror")) return false;
+    return !pushRefspecs(rest).some((refspec) => refspec.startsWith("+") || refspec.startsWith(":"));
+  }
+  return true;
+}
+
+export function classifyNormalAgentGitCommand(command: unknown, options: Record<string, any> = {}) {
+  if (typeof command !== "string" || command.trim() === "") return { allowed: false, reason: "empty command" };
+  const tokens = tokenizeCommand(command);
+  if (command.includes("`") || command.includes("$(") || /[<>|()]/.test(command)) return { allowed: false, reason: "compound shell syntax is not normal git passthrough" };
+  let effectiveCwd = stringOption(options, "cwd") ?? process.cwd();
+  for (const { segment, nextSeparator } of commandSegmentsWithSeparators(tokens)) {
+    const scopedOptions = { ...options, cwd: effectiveCwd };
+    if (!isAllowedNormalAgentGit(segment, scopedOptions)) return { allowed: false, reason: "command is not normal non-destructive git" };
+    if (nextSeparator === "||") return { allowed: false, reason: "fallback shell chains are not normal git passthrough" };
+    if (nextSeparator === ";" || nextSeparator === "&&") effectiveCwd = cdTarget(segment, effectiveCwd) ?? effectiveCwd;
+  }
+  return { allowed: true, reason: null };
 }
 
 function classifySegment(segment: string[], options: Record<string, any>) {

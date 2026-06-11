@@ -313,6 +313,39 @@ test("tool.execute.before allows read-only commands after default auto-start lea
   ));
 });
 
+test("tool.execute.before allows normal git when stale guardian state cannot route", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const sessionID = "ses_stale_normal_git";
+  const hooks = await plugin.server({ directory: repo, worktree: repo, client: createClient([]) });
+  const missingWorktree = `${repo}/.worktrees/opencode-worktree-guardian/missing-normal-git`;
+  const { stdout: head } = await git(repo, ["rev-parse", "HEAD"]);
+  await recordSession(repo, DEFAULT_CONFIG, {
+    session_id: sessionID,
+    status: "active",
+    branch: "guardian/missing-normal-git",
+    worktree_path: missingWorktree,
+    base_ref: "origin/main",
+    head_commit: head,
+    safety_refs: [],
+  });
+
+  for (const command of ["git add README.md", "git commit -m noop", "git fetch --prune origin", "git push origin main"]) {
+    await assert.doesNotReject(() => hooks["tool.execute.before"](
+      { tool: "bash", sessionID, callID: `call_${command.replace(/\W+/g, "_")}` },
+      { args: { command } },
+    ), command);
+  }
+
+  await assert.rejects(
+    () => hooks["tool.execute.before"](
+      { tool: "bash", sessionID, callID: "call_stale_destructive" },
+      { args: { command: "git reset --hard" } },
+    ),
+    /Worktree Guardian blocked command/,
+  );
+});
+
 
 test("/guardian slash commands rewrite to native tool instructions", async () => {
   const hooks = await plugin.server({ directory: "/repo", worktree: "/repo/.worktrees/example" });
@@ -394,7 +427,7 @@ test("hook still blocks destructive recorded session commands instead of routing
   assert.equal(output.args.workdir, undefined);
 });
 
-test("hook blocks recorded session mutating commands when the owned worktree is missing", async () => {
+test("hook allows normal git when the recorded owned worktree is missing", async () => {
   const fs = await import("node:fs/promises");
   const { createRepoWithOrigin } = await import("./helpers.ts");
   const { guardianStart } = await import("../src/tools.ts");
@@ -404,9 +437,8 @@ test("hook blocks recorded session mutating commands when the owned worktree is 
   await fs.rm(start.session.worktree_path, { recursive: true, force: true });
   const hooks = await plugin.server({ directory: repo, worktree: repo });
 
-  await assert.rejects(
+  await assert.doesNotReject(
     () => hooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_missing_owned", callID: "call" }, { args: { command: "git add README.md" } }),
-    /recorded worktree.*missing|missing.*recorded worktree/,
   );
 });
 

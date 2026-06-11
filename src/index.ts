@@ -3,12 +3,12 @@ import path from "node:path";
 import { tool } from "@opencode-ai/plugin";
 import { loadConfig } from "./config.ts";
 import { getCurrentBranch, getRepoRoot, listWorktrees } from "./git.ts";
-import { classifyGuardCommand, classifyReadOnlyInspectionCommand, extractCommandText } from "./guards.ts";
+import { classifyGuardCommand, classifyNormalAgentGitCommand, classifyReadOnlyInspectionCommand, extractCommandText } from "./guards.ts";
 import { getGuardianPaths, readState } from "./state.ts";
 import { collectKnownWorktreePaths, guardianStart, injectInvisiblePolicy, recordLastSafeState, resolveSessionWorktree, rewriteGuardianCommand, runGuardianTool } from "./tools.ts";
 
 export { DEFAULT_CONFIG, FINISH_MODES, loadConfig, normalizeConfig } from "./config.ts";
-export { classifyGuardCommand, classifyReadOnlyInspectionCommand, extractCommandText, tokenizeCommand } from "./guards.ts";
+export { classifyGuardCommand, classifyNormalAgentGitCommand, classifyReadOnlyInspectionCommand, extractCommandText, tokenizeCommand } from "./guards.ts";
 export { guardianDeleteWorktree } from "./delete.ts";
 export { guardianDone } from "./done.ts";
 export { buildPreservedRef, buildSafetyRef, createSafetyRef, deleteBranch, getRepoRoot, listWorktrees, removeWorktree, runGit } from "./git.ts";
@@ -277,6 +277,12 @@ async function routeRecordedSessionCommand(input: Record<string, any>, output: R
     routed: true,
     routedFrom: sessionWorktree.actualWorktree,
   };
+}
+
+function canFallbackToNormalGit(error: unknown, normalAgentGit: Record<string, any>) {
+  if (normalAgentGit.allowed !== true) return false;
+  const message = error instanceof Error ? error.message : String(error);
+  return /recorded worktree is (missing|unavailable)/.test(message);
 }
 
 
@@ -777,17 +783,25 @@ const WorktreeGuardianPlugin = {
           currentBranch,
         });
         const readOnly = sessionWorktree?.ok === false ? classifyReadOnlyInspectionCommand(command) : { allowed: true, reason: null };
+        const normalAgentGit = sessionWorktree?.ok === false ? classifyNormalAgentGitCommand(command, {
+          cwd: effectiveCwd,
+          protectedBranches: guardConfig?.protectedBranches,
+          branchPrefix: guardConfig?.branchPrefix,
+          guardianBranches,
+          protectedBranchWorktreePaths,
+          currentBranch,
+        }) : { allowed: true, reason: null };
         let routed = false;
         const directFileRoute = await routeDirectFileMutation(input, output, sessionWorktree, directory, sessionWorktreeCache);
         if (directFileRoute.blocked) {
           if (input?.callID) activeToolCalls.delete(input.callID);
-          await writeLog(client, createEvent("tool.execute.before", input, output, context, { guard, sessionWorktree, readOnly, routed, directFileRoute }));
+          await writeLog(client, createEvent("tool.execute.before", input, output, context, { guard, sessionWorktree, readOnly, normalAgentGit, routed, directFileRoute }));
           throw new Error(`Worktree Guardian blocked direct file mutation: ${directFileRoute.reason}. Use guardian_status to inspect the recorded worktree.`);
         }
         if (directFileRoute.routed) routed = true;
         if (guard.blocked) {
           if (input?.callID) activeToolCalls.delete(input.callID);
-          await writeLog(client, createEvent("tool.execute.before", input, output, context, { guard, sessionWorktree, readOnly, routed }));
+          await writeLog(client, createEvent("tool.execute.before", input, output, context, { guard, sessionWorktree, readOnly, normalAgentGit, routed }));
           throw new Error(`Worktree Guardian blocked command: ${guard.reason}. Use guardian_status or guardian_finish instead.`);
         }
         if (command && sessionWorktree?.ok === false && !readOnly.allowed) {
@@ -811,13 +825,15 @@ const WorktreeGuardianPlugin = {
               currentBranch,
             });
           } catch (error: any) {
-            if (input?.callID) activeToolCalls.delete(input.callID);
-            await writeLog(client, createEvent("tool.execute.before", input, output, context, { guard, sessionWorktree, readOnly, routed, routeError: error.message }));
-            throw new Error(`Worktree Guardian blocked command: ${error.message}. Use guardian_status to inspect the recorded worktree.`);
+            await writeLog(client, createEvent("tool.execute.before", input, output, context, { guard, sessionWorktree, readOnly, normalAgentGit, routed, routeError: error.message }));
+            if (!canFallbackToNormalGit(error, normalAgentGit)) {
+              if (input?.callID) activeToolCalls.delete(input.callID);
+              throw new Error(`Worktree Guardian blocked command: ${error.message}. Use guardian_status to inspect the recorded worktree.`);
+            }
           }
         }
-        await writeLog(client, createEvent("tool.execute.before", input, output, context, { guard, sessionWorktree, readOnly, routed }));
-        if (command && sessionWorktree?.ok === false && (sessionWorktree.reason || !readOnly.allowed)) {
+        await writeLog(client, createEvent("tool.execute.before", input, output, context, { guard, sessionWorktree, readOnly, normalAgentGit, routed }));
+        if (command && sessionWorktree?.ok === false && !normalAgentGit.allowed && (sessionWorktree.reason || !readOnly.allowed)) {
           if (input?.callID) activeToolCalls.delete(input.callID);
           throw new Error(`Worktree Guardian blocked command: session ${sessionWorktree.sessionId} is recorded for expected worktree ${sessionWorktree.expectedWorktree ?? "an unknown worktree"} but actual cwd is ${executionCwd} and actual worktree is ${sessionWorktree.actualWorktree}. Use guardian_status to inspect the recorded worktree.`);
         }
