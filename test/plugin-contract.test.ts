@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs, { readFile } from "node:fs/promises";
 import test from "node:test";
 import plugin from "../src/index.ts";
-import { createRepo } from "./helpers.ts";
+import { createRepo, createTempDir } from "./helpers.ts";
 
 const expectedToolNames = [
   "guardian_delete_worktree",
@@ -184,6 +184,24 @@ test("guardian_hygiene tool execute returns readable output with raw metadata", 
   assert.match(result.output, /\[(GOOD|WARN)\] guardian_hygiene scan/);
   assert.match(result.output, /findings: \d+/);
   assert.match(result.output, /suggested commands:/);
+});
+
+test("guardian_hygiene readable output marks failed scans as incomplete", async () => {
+  const dir = await createTempDir("guardian-hygiene-contract-no-repo-");
+  const hooks = await plugin.server({ directory: dir, worktree: dir });
+  const { context } = createToolContext();
+  context.directory = dir;
+  context.worktree = dir;
+  const execute: any = hooks.tool.guardian_hygiene.execute;
+
+  const result = await execute({ repoRoot: dir }, context);
+
+  assert.equal(result.metadata.ok, false);
+  assert.equal(result.metadata.status, "failed");
+  assert.equal(result.metadata.summary.scanFailed, true);
+  assert.match(result.output, /\[FAIL\] guardian_hygiene scan/);
+  assert.match(result.output, /scan incomplete: findings and candidate counts are not trustworthy/);
+  assert.doesNotMatch(result.output, /findings: 0/);
 });
 
 

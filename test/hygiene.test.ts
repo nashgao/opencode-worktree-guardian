@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { DEFAULT_CONFIG } from "../src/config.ts";
+import { runGitNullSeparated } from "../src/git.ts";
 import { guardianHygieneCleanup, scanWorkspaceHygiene } from "../src/hygiene.ts";
 import { guardianStatus } from "../src/recover.ts";
 import { createRepo, createRepoWithOrigin, createTempDir, git } from "./helpers.ts";
@@ -131,6 +132,23 @@ test("guardian_status includes hygiene metadata without changing dirty files", a
   assert.equal(status.hygiene.ok, true);
   assert.equal(status.hygiene.summary.findingCount, 1);
   assert.equal(status.hygiene.findings[0].path, "librarian-status");
+});
+
+test("git NUL-separated streaming handles hygiene-sized candidate output without exec maxBuffer", async () => {
+  const repo = await createRepo();
+  const script = path.join(await createTempDir("guardian-hygiene-stream-"), "emit-large-output.mjs");
+  await fs.writeFile(script, `
+const suffix = "x".repeat(90);
+for (let index = 0; index < 120000; index += 1) {
+  process.stdout.write(` + "`entry-${String(index).padStart(6, \"0\")}-${suffix}\\0`" + `);
+}
+`);
+
+  const entries = await runGitNullSeparated(repo, ["-c", `alias.guardian-stream=!node ${JSON.stringify(script)}`, "guardian-stream"]);
+
+  assert.equal(entries.length, 120000);
+  assert.equal(entries[0], `entry-000000-${"x".repeat(90)}`);
+  assert.equal(entries.at(-1), `entry-119999-${"x".repeat(90)}`);
 });
 
 
@@ -392,7 +410,10 @@ test("hygiene scan reports failure metadata when the repo is unavailable", async
   const result = await scanWorkspaceHygiene({ repoRoot: dir, config: DEFAULT_CONFIG });
 
   assert.equal(result.ok, false);
+  assert.equal(result.status, "failed");
   assert.equal(typeof (result as Record<string, unknown>).reason, "string");
+  assert.equal(result.failureReason, result.reason);
+  assert.equal((result.summary as Record<string, unknown>).scanFailed, true);
   assert.deepEqual(result.findings, []);
   assert.equal(result.summary.findingCount, 0);
   assert.deepEqual(result.suggestedCommands, ["guardian_hygiene", "guardian_status"]);

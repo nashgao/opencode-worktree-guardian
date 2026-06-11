@@ -1,4 +1,5 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -16,6 +17,56 @@ export async function runGit(repoPath: string, args: string[], options: Record<s
     error.gitStderr = error.stderr?.trim?.() ?? "";
     throw error;
   }
+}
+
+export async function runGitNullSeparated(repoPath: string, args: string[], options: Record<string, any> = {}) {
+  return new Promise<string[]>((resolve, reject) => {
+    const child = spawn("git", ["-C", repoPath, ...args], { ...options, stdio: ["ignore", "pipe", "pipe"] });
+    const decoder = new StringDecoder("utf8");
+    const stderrDecoder = new StringDecoder("utf8");
+    const entries: string[] = [];
+    let current = "";
+    let stderr = "";
+
+    child.stdout.on("data", (chunk: Buffer) => {
+      const text = decoder.write(chunk);
+      const parts = text.split("\0");
+      parts[0] = current + parts[0];
+      current = parts.pop() ?? "";
+      for (const part of parts) {
+        const entry = part.trim();
+        if (entry) entries.push(entry);
+      }
+    });
+
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr += stderrDecoder.write(chunk);
+    });
+
+    child.on("error", (error: NodeJS.ErrnoException) => {
+      (error as any).gitArgs = args;
+      (error as any).gitStdout = "";
+      (error as any).gitStderr = stderr.trim();
+      reject(error);
+    });
+
+    child.on("close", (code, signal) => {
+      const finalText = decoder.end();
+      if (finalText) current += finalText;
+      stderr += stderrDecoder.end();
+      const finalEntry = current.trim();
+      if (finalEntry) entries.push(finalEntry);
+      if (code === 0) {
+        resolve(entries);
+        return;
+      }
+      const error = new Error(`git ${args.join(" ")} failed${signal ? ` with signal ${signal}` : ` with exit code ${code}`}`);
+      (error as any).gitArgs = args;
+      (error as any).gitStdout = "";
+      (error as any).gitStderr = stderr.trim();
+      reject(error);
+    });
+  });
 }
 
 export async function tryGit(repoPath: string, args: string[]) {

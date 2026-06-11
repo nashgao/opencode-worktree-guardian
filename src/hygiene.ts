@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { expandWorktreeRoot, loadConfig } from "./config.ts";
-import { getRepoRoot, listWorktrees, runGit, tryGit } from "./git.ts";
+import { getRepoRoot, listWorktrees, runGit, runGitNullSeparated, tryGit } from "./git.ts";
 import { getGuardianPaths, readState } from "./state.ts";
 
 export type HygieneSeverity = "warn" | "fail";
@@ -69,9 +69,9 @@ function parseNullSeparated(stdout: string) {
 }
 
 async function listCandidatePaths(repoRoot: string) {
-  const untracked = await runGit(repoRoot, ["ls-files", "--others", "--exclude-standard", "-z"]);
-  const ignored = await runGit(repoRoot, ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"]);
-  return [...new Set([...parseNullSeparated(untracked.stdout), ...parseNullSeparated(ignored.stdout)])]
+  const untracked = await runGitNullSeparated(repoRoot, ["ls-files", "--others", "--exclude-standard", "-z"]);
+  const ignored = await runGitNullSeparated(repoRoot, ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"]);
+  return [...new Set([...untracked, ...ignored])]
     .map((entry) => normalizeRelativePath(entry))
     .sort((left, right) => left.localeCompare(right));
 }
@@ -310,6 +310,7 @@ async function buildHygieneCleanupPreflight(input: Record<string, unknown>) {
   const findings = (scan.findings as Array<Record<string, unknown>> | undefined ?? []).filter((finding) => typeof finding.path === "string");
   const findingsByPath = new Map(findings.map((finding) => [String(finding.path), finding]));
   const blockers: CleanupBlocker[] = invalidAllowCategories.map((category) => ({ category, reason: `unsupported allowCategories entry: ${category}`, fatal: true }));
+  if (scan.ok === false) blockers.push({ reason: `guardian_hygiene scan failed: ${String(scan.reason ?? "unknown error")}`, fatal: true });
   const protectedRoots = await collectCleanupProtectedRoots(repoRoot, config);
   const selectedPaths = selectedInput.length > 0
     ? uniqueSorted(selectedInput)
@@ -564,8 +565,11 @@ export async function scanWorkspaceHygiene(input: Record<string, unknown> = {}) 
   } catch (error) {
     return {
       ok: false,
+      status: "failed",
       reason: errorMessage(error),
+      failureReason: errorMessage(error),
       summary: {
+        scanFailed: true,
         candidateCount: 0,
         findingCount: 0,
         exclusionCount: 0,
