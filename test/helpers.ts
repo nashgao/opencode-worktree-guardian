@@ -7,7 +7,6 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 const safeTempDirectoryName = "opencode-worktree-guardian-tests";
 const fallbackTempBases = [
-  path.join("/var/folders/tw/rrg4001s2bdg6m3ht0dz0j1h0000gn/T/opencode"),
   path.join("/tmp", "opencode"),
   path.join(os.homedir(), ".cache", "opencode", "tmp"),
 ];

@@ -6,7 +6,6 @@ import path from "node:path";
 
 const safeTempDirectoryName = "opencode-worktree-guardian-node";
 const fallbackTempBases = [
-  "/var/folders/tw/rrg4001s2bdg6m3ht0dz0j1h0000gn/T/opencode",
   path.join("/tmp", "opencode"),
   path.join(os.homedir(), ".cache", "opencode", "tmp"),
 ];

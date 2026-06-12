@@ -8,21 +8,25 @@ Local development uses a project-local shim so OpenCode loads only the plugin se
 
 ```ts
 // .opencode/plugins/worktree-guardian.ts
-import Guardian from "/Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/src/index.ts"
+import Guardian from "/absolute/path/to/opencode-worktree-guardian/src/index.ts"
 
 export const WorktreeGuardian = Guardian.server
 export default Guardian.server
 ```
 
+Replace `/absolute/path/to/opencode-worktree-guardian/src/index.ts` with the absolute path to this checkout's `src/index.ts`.
+
 Do not mutate global OpenCode config for local smoke tests. Keep local host tests inside disposable repositories.
 
-Published package:
+Package install after publish:
 
 ```bash
 opencode plug opencode-worktree-guardian
 ```
 
-The plugin package exposes both `./server` and `./tui`. `opencode plug` can enable the package in `opencode.json` and `tui.json`; OpenCode selects the right package export for the server or TUI plugin kind. That makes the Guardian slash commands visible in new OpenCode TUI sessions.
+The plugin package exposes both `./server` and `./tui`. After the package is published or otherwise made available to OpenCode's plugin installer, `opencode plug` can enable it in `opencode.json` and `tui.json`; OpenCode selects the right package export for the server or TUI plugin kind. That makes the Guardian slash commands visible in new OpenCode TUI sessions.
+
+The package currently ships TypeScript source entrypoints for OpenCode/plugin-compatible hosts. Package smoke tests verify import through a TypeScript loader, so generic Node consumers need an appropriate TypeScript-capable loader or host until a compiled build is introduced.
 
 Manual config equivalent:
 
@@ -335,7 +339,7 @@ The test suite uses disposable repositories only. Do not run destructive-command
 
 ## Dependency Audit
 
-Last verified on 2026-05-14:
+Last verified on 2026-06-12:
 
 ```text
 npm run audit:deps

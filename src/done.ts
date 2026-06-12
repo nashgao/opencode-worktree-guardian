@@ -179,8 +179,12 @@ async function primaryMainDone(repoRoot: string, cwd: string, config: Record<str
   const safetyRef = await createSafetyRef(repoRoot, { sessionId: input.sessionId ?? "primary-main", branch, commit: head, timestamp: input.timestamp });
   preflight.safetyRef = safetyRef;
   const dirtyPaths = (snapshot as { paths: string[] }).paths;
+  const snapshotEntries = (snapshot as { entries: Array<{ status: string; path: string; sourcePath?: string }> }).entries;
+  const missingPaths = new Set((snapshot as { fingerprints: Array<{ path: string; kind: string }> }).fingerprints.filter((fingerprint) => fingerprint.kind === "missing").map((fingerprint) => fingerprint.path));
+  const unstagedDeletedPaths = new Set(snapshotEntries.filter((entry) => entry.status[1] === "D").flatMap((entry) => [entry.path, entry.sourcePath].filter((value): value is string => typeof value === "string")));
+  const stageablePaths = dirtyPaths.filter((dirtyPath) => !missingPaths.has(dirtyPath) || unstagedDeletedPaths.has(dirtyPath));
   try {
-    await runGit(repoRoot, ["add", "--", ...dirtyPaths]);
+    if (stageablePaths.length > 0) await runGit(repoRoot, ["add", "--all", "--", ...stageablePaths]);
     await runGit(repoRoot, ["commit", "-m", commitMessage]);
   } catch (error) {
     return blocked("commit failed", { safetyRef, error: errorMessage(error) }, preflight);

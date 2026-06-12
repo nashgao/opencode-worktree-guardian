@@ -129,6 +129,28 @@ test("guardian_done applies dirty primary-main publish and returns fresh cleanup
   assert.equal(remoteMain, apply.commit);
 });
 
+test("guardian_done publishes dirty primary-main deletions", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const deletedPath = path.join(repo, "delete-me.txt");
+  await fs.writeFile(deletedPath, "remove me\n");
+  await git(repo, ["add", "delete-me.txt"]);
+  await git(repo, ["commit", "-m", "add deletable file"]);
+  await git(repo, ["push", "origin", "main"]);
+  await fs.rm(deletedPath);
+  await git(repo, ["add", "delete-me.txt"]);
+  const plan = asDone(await guardianDone({ repoRoot: repo, cwd: repo, mode: "plan", commitMessage: "chore: remove obsolete file" }));
+
+  const apply = asDone(await guardianDone({ repoRoot: repo, cwd: repo, mode: "apply", commitMessage: "chore: remove obsolete file", confirmToken: plan.confirmToken, timestamp: "20260609T040404" }));
+
+  assert.equal(apply.ok, true);
+  assert.equal(apply.status, "published");
+  assert.deepEqual(plan.dirtySnapshot.paths, ["delete-me.txt"]);
+  const { stdout: remoteMain } = await git(repo, ["rev-parse", "origin/main"]);
+  assert.equal(remoteMain, apply.commit);
+  await assert.rejects(() => git(repo, ["cat-file", "-e", "origin/main:delete-me.txt"]));
+});
+
 
 
 test("guardian_done plans dirty primary publish when an active session owns another lane", async (t) => {
