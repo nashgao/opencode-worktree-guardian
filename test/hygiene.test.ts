@@ -21,9 +21,11 @@ function findingPaths(result: Record<string, unknown>) {
 
 test("hygiene scanner detects known scratch artifact patterns", async () => {
   const repo = await createRepo();
+  await writeArtifact(repo, ".omo/run-continuation/session.json");
   await writeArtifact(repo, "librarian-alpha/file.txt");
   await writeArtifact(repo, "alpha-librarian/file.txt");
   await writeArtifact(repo, "hyperf-demo/file.txt");
+  await writeArtifact(repo, "export.tsv");
   await writeArtifact(repo, "test-phpkafka/file.txt");
   await writeArtifact(repo, "test-hyperf-kafka/file.txt");
   await writeArtifact(repo, "data/test-wal-001/segment");
@@ -34,8 +36,10 @@ test("hygiene scanner detects known scratch artifact patterns", async () => {
   const result = await scanWorkspaceHygiene({ repoRoot: repo, config: DEFAULT_CONFIG });
   assert.equal(result.ok, true);
   assert.deepEqual(findingPaths(result), [
+    ".omo",
     "alpha-librarian",
     "data/test-wal-001",
+    "export.tsv",
     "hyperf-demo",
     "librarian-alpha",
     "node-compile-cache",
@@ -44,8 +48,10 @@ test("hygiene scanner detects known scratch artifact patterns", async () => {
     "test-phpkafka",
     "tsx-501",
   ]);
-  assert.equal(result.summary.byCategory["known-cleanable"], 9);
+  assert.equal(result.summary.byCategory["known-cleanable"], 11);
   const reasons = new Map((result.findings as Array<Record<string, unknown>>).map((finding) => [finding.path, finding.reason]));
+  assert.equal(reasons.get(".omo"), "local agent state directory");
+  assert.equal(reasons.get("export.tsv"), "generated TSV artifact");
   assert.equal(reasons.get("node-compile-cache"), "generated Node compile cache");
   assert.equal(reasons.get("node-coverage-123"), "generated Node coverage cache");
   assert.equal(reasons.get("tsx-501"), "generated tsx runtime cache");

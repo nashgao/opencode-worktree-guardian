@@ -42,6 +42,7 @@ const PROTECTED_DIR_NAMES = new Set([
 
 const SUSPICIOUS_NAME_PATTERN = /(^|[-_.])(clone|clones|research|dump|dumps|scratch|sandbox|experiment|prototype|poc|checkout|repo)([-_.]|$)/i;
 const RESIDUE_ROOT_PATTERN = /^(guardian-[^/]+|guardian-origin-[^/]+|opencode-temp-[^/]+|omo-research-[^/]+|opencode-research-[^/]+|git-docs-research)$/;
+const LOCAL_AGENT_STATE_DIRS = new Set([".omo", ".omc", ".omx", ".sisyphus", ".milestones"]);
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
@@ -87,6 +88,8 @@ function protectedDirReason(relative: string) {
 
 function knownCleanableMatch(relative: string) {
   const parts = relative.split("/").filter(Boolean);
+  if (LOCAL_AGENT_STATE_DIRS.has(parts[0] ?? "")) return { path: parts[0], reason: "local agent state directory" };
+  if (parts.length === 1 && /^[^/]+\.tsv$/i.test(parts[0] ?? "")) return { path: parts[0], reason: "generated TSV artifact" };
   if (parts[0] === "data" && /^test-wal-[^/]+$/.test(parts[1] ?? "")) {
     return { path: `data/${parts[1]}`, reason: "known test WAL scratch artifact" };
   }

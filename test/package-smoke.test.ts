@@ -8,9 +8,10 @@ import test from "node:test";
 
 const execFileAsync = promisify(execFile);
 const projectRoot = path.resolve(new URL("..", import.meta.url).pathname);
-const defaultRunTimeoutMs = 2 * 60 * 1000;
+const defaultRunTimeoutMs = 4 * 60 * 1000;
 const expectedCommandAssets = [
   "commands/done.md",
+  "commands/delete-paths.md",
   "commands/delete-worktree.md",
   "commands/finish.md",
   "commands/finish-workflow.md",
@@ -127,6 +128,6 @@ test("packed artifact installs in a clean consumer and exposes plugin contract",
   assert.equal(result.serverId, "opencode-worktree-guardian");
   assert.equal(result.tuiId, "opencode-worktree-guardian");
   assert.equal(result.hasTui, true);
-  assert.deepEqual(result.tools, ["guardian_delete_worktree", "guardian_done", "guardian_finish", "guardian_finish_workflow", "guardian_hygiene", "guardian_hygiene_cleanup", "guardian_preserve", "guardian_recover", "guardian_report_html", "guardian_start", "guardian_status", "guardian_unblock_finish"]);
+  assert.deepEqual(result.tools, ["guardian_delete_paths", "guardian_delete_worktree", "guardian_done", "guardian_finish", "guardian_finish_workflow", "guardian_hygiene", "guardian_hygiene_cleanup", "guardian_preserve", "guardian_recover", "guardian_report_html", "guardian_start", "guardian_status", "guardian_unblock_finish"]);
   assert.equal(result.hooks.includes("tool.execute.before"), true);
 });

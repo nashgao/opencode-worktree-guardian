@@ -5,6 +5,7 @@ import plugin from "../src/index.ts";
 import { createRepo, createTempDir } from "./helpers.ts";
 
 const expectedToolNames = [
+  "guardian_delete_paths",
   "guardian_delete_worktree",
   "guardian_done",
   "guardian_finish",
@@ -29,6 +30,7 @@ const expectedHookNames = [
 
 const expectedPackagedCommands = new Map([
   ["done", "guardian_done"],
+  ["delete-paths", "guardian_delete_paths"],
   ["delete-worktree", "guardian_delete_worktree"],
   ["finish", "guardian_finish"],
   ["finish-workflow", "guardian_finish_workflow"],
@@ -87,6 +89,10 @@ test("guardian native tools expose OpenCode tool definitions", async () => {
     assert.equal(typeof definition.args.sessionId.safeParse, "function", toolName);
   }
   assert.equal(typeof hooks.tool.guardian_delete_worktree.args.abandonUnmerged.safeParse, "function");
+  assert.equal(typeof hooks.tool.guardian_delete_paths.args.paths.safeParse, "function");
+  assert.equal(typeof hooks.tool.guardian_delete_paths.args.allowTracked.safeParse, "function");
+  assert.equal(typeof hooks.tool.guardian_delete_paths.args.allowRecursive.safeParse, "function");
+  assert.equal(typeof hooks.tool.guardian_delete_paths.args.confirmDelete.safeParse, "function");
   assert.equal(typeof hooks.tool.guardian_hygiene_cleanup.args.cleanupPaths.safeParse, "function");
   assert.equal(typeof hooks.tool.guardian_hygiene_cleanup.args.allowCategories.safeParse, "function");
   assert.equal(typeof hooks.tool.guardian_hygiene_cleanup.args.confirmDelete.safeParse, "function");
@@ -344,6 +350,57 @@ test("guardian_hygiene_cleanup plugin does not reuse cached token when apply opt
   assert.equal(apply.metadata.status, "blocked");
   assert.match(String(apply.metadata.reason), /confirm token mismatch/);
   assert.equal(await fs.access(path.join(repo, "librarian-contract-options")).then(() => true, () => false), true);
+});
+
+test("guardian_delete_paths tool execute returns readable plan output with raw metadata", async () => {
+  const path = await import("node:path");
+  const repo = await createRepo();
+  await fs.writeFile(path.join(repo, "scratch-delete.txt"), "scratch\n");
+  const hooks = await plugin.server({ directory: repo, worktree: repo });
+  const { context, metadataCalls } = createToolContext();
+  context.directory = repo;
+  context.worktree = repo;
+  const execute: any = hooks.tool.guardian_delete_paths.execute;
+
+  const result = await execute({ repoRoot: repo, mode: "plan", paths: ["scratch-delete.txt"] }, context);
+
+  assert.equal(typeof result.output, "string");
+  assert.equal(typeof result.metadata, "object");
+  assert.deepEqual(metadataCalls, [{ title: "guardian_delete_paths" }]);
+  assert.equal(result.metadata.status, "planned");
+  assert.equal(typeof result.metadata.confirmToken, "string");
+  assert.deepEqual(result.metadata.targets.map((target: Record<string, unknown>) => target.path), ["scratch-delete.txt"]);
+  assert.match(result.output, /guardian_delete_paths planned/);
+  assert.match(result.output, /approvedTargets: 1/);
+  assert.doesNotMatch(result.output, /confirmToken:/);
+});
+
+test("guardian_delete_paths plugin confirmDelete reuses matching plan token and preserves stale safety", async () => {
+  const path = await import("node:path");
+  const repo = await createRepo();
+  await fs.writeFile(path.join(repo, "scratch-cached.txt"), "scratch\n");
+  const hooks = await plugin.server({ directory: repo, worktree: repo });
+  const { context } = createToolContext();
+  context.directory = repo;
+  context.worktree = repo;
+  const execute: any = hooks.tool.guardian_delete_paths.execute;
+
+  const plan = await execute({ repoRoot: repo, mode: "plan", paths: ["scratch-cached.txt"] }, context);
+  const apply = await execute({ repoRoot: repo, mode: "apply", paths: ["scratch-cached.txt"], confirmDelete: true }, context);
+
+  assert.equal(plan.metadata.status, "planned");
+  assert.equal(apply.metadata.status, "deleted");
+  assert.equal(await fs.access(path.join(repo, "scratch-cached.txt")).then(() => true, () => false), false);
+
+  await fs.writeFile(path.join(repo, "scratch-stale.txt"), "original\n");
+  const stalePlan = await execute({ repoRoot: repo, mode: "plan", paths: ["scratch-stale.txt"] }, context);
+  await fs.writeFile(path.join(repo, "scratch-stale.txt"), "changed\n");
+  const staleApply = await execute({ repoRoot: repo, mode: "apply", paths: ["scratch-stale.txt"], confirmDelete: true }, context);
+
+  assert.equal(stalePlan.metadata.status, "planned");
+  assert.equal(staleApply.metadata.status, "blocked");
+  assert.match(String(staleApply.metadata.reason), /confirm token mismatch/);
+  assert.equal(await fs.access(path.join(repo, "scratch-stale.txt")).then(() => true, () => false), true);
 });
 
 test("guardian_delete_worktree tool execute returns readable plan output with raw metadata", async () => {

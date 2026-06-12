@@ -9,6 +9,7 @@ import { collectKnownWorktreePaths, guardianStart, injectInvisiblePolicy, record
 
 export { DEFAULT_CONFIG, FINISH_MODES, loadConfig, normalizeConfig } from "./config.ts";
 export { classifyGuardCommand, classifyNormalAgentGitCommand, classifyReadOnlyInspectionCommand, extractCommandText, tokenizeCommand } from "./guards.ts";
+export { guardianDeletePaths } from "./delete-paths.ts";
 export { guardianDeleteWorktree } from "./delete.ts";
 export { guardianDone } from "./done.ts";
 export { buildPreservedRef, buildSafetyRef, createSafetyRef, deleteBranch, getRepoRoot, listWorktrees, removeWorktree, runGit } from "./git.ts";
@@ -200,8 +201,11 @@ function planCacheKey(name: string, toolArgs: Record<string, any>) {
     sessionId: typeof toolArgs.sessionId === "string" ? toolArgs.sessionId : "",
     repoRoot: typeof toolArgs.repoRoot === "string" ? toolArgs.repoRoot : "",
     cwd: typeof toolArgs.cwd === "string" ? toolArgs.cwd : "",
+    paths: sortedStringArgs(toolArgs.paths),
     cleanupPaths: sortedStringArgs(toolArgs.cleanupPaths),
     allowCategories: sortedStringArgs(toolArgs.allowCategories),
+    allowTracked: toolArgs.allowTracked === true,
+    allowRecursive: toolArgs.allowRecursive === true,
     allowDirtyNestedGit: toolArgs.allowDirtyNestedGit === true,
     commitMessage: typeof toolArgs.commitMessage === "string" ? toolArgs.commitMessage : "",
     finishMode: typeof toolArgs.finishMode === "string" ? toolArgs.finishMode : "",
@@ -220,6 +224,7 @@ function isPlaceholderConfirmToken(value: unknown) {
 
 function shouldUseCachedPlanToken(name: string, toolArgs: Record<string, any>) {
   if (toolArgs.mode !== "apply") return false;
+  if (name === "guardian_delete_paths") return toolArgs.confirmDelete === true;
   if (name === "guardian_hygiene" || name === "guardian_hygiene_cleanup") return toolArgs.confirmDelete === true;
   if (name === "guardian_done" || name === "guardian_finish_workflow") return toolArgs.confirm === true || toolArgs.confirmDelete === true;
   return false;
@@ -235,7 +240,7 @@ function maybeInjectPlanConfirmToken(name: string, toolArgs: Record<string, any>
 function rememberPlanConfirmToken(name: string, toolArgs: Record<string, any>, result: Record<string, any>, planCache?: Map<string, string>) {
   if (!planCache) return;
   if (toolArgs.mode !== "plan" || result.ok !== true || result.status !== "planned" || typeof result.confirmToken !== "string") return;
-  if (!["guardian_hygiene", "guardian_hygiene_cleanup", "guardian_done", "guardian_finish_workflow"].includes(name)) return;
+  if (!["guardian_delete_paths", "guardian_hygiene", "guardian_hygiene_cleanup", "guardian_done", "guardian_finish_workflow"].includes(name)) return;
   planCache.set(planCacheKey(name, toolArgs), result.confirmToken);
 }
 
@@ -308,7 +313,7 @@ async function tryInvisibleStart(input: any, context: Record<string, any>, confi
 }
 
 
-const READABLE_GUARDIAN_TOOLS = new Set(["guardian_status", "guardian_recover", "guardian_report_html", "guardian_hygiene", "guardian_hygiene_cleanup", "guardian_delete_worktree", "guardian_unblock_finish", "guardian_finish_workflow", "guardian_done"]);
+const READABLE_GUARDIAN_TOOLS = new Set(["guardian_status", "guardian_recover", "guardian_report_html", "guardian_hygiene", "guardian_hygiene_cleanup", "guardian_delete_paths", "guardian_delete_worktree", "guardian_unblock_finish", "guardian_finish_workflow", "guardian_done"]);
 const SESSION_WORKTREE_DEFAULT_TOOLS = new Set(["guardian_finish", "guardian_preserve"]);
 
 function recordValue(value: unknown): Record<string, unknown> {
@@ -517,6 +522,37 @@ function formatGuardianDeleteOutput(rawResult: unknown) {
   return lines.join("\n");
 }
 
+function formatGuardianDeletePathsOutput(rawResult: unknown) {
+  const result = recordValue(rawResult);
+  const summary = recordValue(result.summary);
+  const targets = arrayValue(result.targets);
+  const removedTargets = arrayValue(result.removedTargets);
+  const blockers = arrayValue(result.blockers);
+  const preflight = recordValue(result.preflight);
+  const lines = [
+    `${result.ok === false ? "[FAIL]" : result.status === "planned" ? "[WARN]" : "[GOOD]"} guardian_delete_paths ${textValue(result.status)}`,
+    `[INFO] paths: ${arrayValue(preflight.paths).length} | approvedTargets: ${Number(summary.approvedTargetCount ?? targets.length)} | removedTargets: ${Number(summary.removedTargetCount ?? removedTargets.length)} | blockers: ${Number(summary.blockedTargetCount ?? blockers.length)} | fatal: ${Number(summary.fatalBlockerCount ?? 0)}`,
+    `[INFO] allowTracked: ${String(preflight.allowTracked === true)} | allowRecursive: ${String(preflight.allowRecursive === true)}`,
+  ];
+  const reason = textValue(result.reason, "");
+  if (result.ok === false || reason) lines.push(`[FAIL] ${reason || "guardian_delete_paths blocked"}`);
+  if (targets.length > 0) {
+    lines.push("[INFO] approved targets:");
+    for (const entry of targets.slice(0, 8)) {
+      const target = recordValue(entry);
+      lines.push(`  - ${textValue(target.status)} ${textValue(target.kind)} ${textValue(target.path)}`);
+    }
+  }
+  if (blockers.length > 0) {
+    lines.push("[WARN] blockers:");
+    for (const entry of blockers.slice(0, 8)) {
+      const blocker = recordValue(entry);
+      lines.push(`  - ${blocker.fatal === true ? "fatal" : "blocked"} ${textValue(blocker.path)}: ${textValue(blocker.reason)}`);
+    }
+  }
+  return lines.join("\n");
+}
+
 function formatGuardianUnblockFinishOutput(rawResult: unknown) {
   const result = recordValue(rawResult);
   const preflight = recordValue(result.preflight);
@@ -620,6 +656,7 @@ function formatGuardianOutput(name: string, result: unknown) {
   if (name === "guardian_report_html") return formatGuardianReportOutput(result);
   if (name === "guardian_hygiene") return formatGuardianHygieneOutput(result);
   if (name === "guardian_hygiene_cleanup") return formatGuardianHygieneCleanupOutput(result);
+  if (name === "guardian_delete_paths") return formatGuardianDeletePathsOutput(result);
   if (name === "guardian_delete_worktree") return formatGuardianDeleteOutput(result);
   if (name === "guardian_unblock_finish") return formatGuardianUnblockFinishOutput(result);
   if (name === "guardian_finish_workflow") return formatGuardianFinishWorkflowOutput(result);
@@ -662,6 +699,9 @@ function guardianTool(name: string, description: string, hygieneCleanupPlanCache
       deleteBranch: z.boolean().optional(),
       abandonUnmerged: z.boolean().optional(),
       allowIgnoredFiles: z.boolean().optional(),
+      paths: z.array(z.string()).optional(),
+      allowTracked: z.boolean().optional(),
+      allowRecursive: z.boolean().optional(),
       cleanupPaths: z.array(z.string()).optional(),
       allowCategories: z.array(z.enum(["known-cleanable", "nested-git", "suspicious"])).optional(),
       allowDirtyNestedGit: z.boolean().optional(),
@@ -710,6 +750,7 @@ const WorktreeGuardianPlugin = {
         guardian_done: guardianTool("guardian_done", "Plan or apply the safest implementation-done path for this repository state.", hygieneCleanupPlanCache),
         guardian_start: guardianTool("guardian_start", "Create or attach this OpenCode session to a guardian-owned worktree.", hygieneCleanupPlanCache),
         guardian_status: guardianTool("guardian_status", "Report guardian state, worktrees, safety refs, stash inventory, and blockers without mutating the repo.", hygieneCleanupPlanCache),
+        guardian_delete_paths: guardianTool("guardian_delete_paths", "Plan or apply exact path deletion with confirm-token, fingerprint, tracked-file, recursive, and protected-root gates.", hygieneCleanupPlanCache),
         guardian_delete_worktree: guardianTool("guardian_delete_worktree", "Plan or apply safe Guardian-mediated worktree deletion with confirm-token and safety-ref gates.", hygieneCleanupPlanCache),
         guardian_hygiene_cleanup: guardianTool("guardian_hygiene_cleanup", "Compatibility alias for guardian_hygiene mode=plan|apply cleanup using internal filesystem APIs.", hygieneCleanupPlanCache),
         guardian_unblock_finish: guardianTool("guardian_unblock_finish", "Plan or apply safe finish blocker resolution, such as committing review artifacts with confirm-token gates.", hygieneCleanupPlanCache),

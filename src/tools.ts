@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { expandWorktreeRoot, loadConfig } from "./config.ts";
+import { guardianDeletePaths } from "./delete-paths.ts";
 import { guardianDeleteWorktree } from "./delete.ts";
 import { guardianDone } from "./done.ts";
 import { buildPreservedRef, createRef, getCurrentBranch, getHeadCommit, getRepoRoot, listWorktrees, runGit } from "./git.ts";
@@ -309,14 +310,15 @@ export async function guardianPreserve(input: Record<string, any> = {}) {
 export function rewriteGuardianCommand(input: Record<string, any> = {}, output: Record<string, any> = {}) {
   const command = input?.command;
   if (typeof command !== "string") return false;
-  const match = command.trim().match(/^\/?guardian\s+(done|status|finish-workflow|finish|preserve|recover|report|start|hygiene-cleanup|hygiene|delete-worktree|unblock-finish)\b(.*)$/);
+  const match = command.trim().match(/^\/?guardian\s+(done|status|finish-workflow|finish|preserve|recover|report|start|hygiene-cleanup|hygiene|delete-paths|delete-worktree|unblock-finish)\b(.*)$/);
   if (!match) return false;
   const [, action, rest] = match;
-  const toolName = action === "report" ? "guardian_report_html" : action === "delete-worktree" ? "guardian_delete_worktree" : action === "hygiene-cleanup" ? "guardian_hygiene_cleanup" : action === "unblock-finish" ? "guardian_unblock_finish" : action === "finish-workflow" ? "guardian_finish_workflow" : `guardian_${action}`;
+  const toolName = action === "report" ? "guardian_report_html" : action === "delete-worktree" ? "guardian_delete_worktree" : action === "delete-paths" ? "guardian_delete_paths" : action === "hygiene-cleanup" ? "guardian_hygiene_cleanup" : action === "unblock-finish" ? "guardian_unblock_finish" : action === "finish-workflow" ? "guardian_finish_workflow" : `guardian_${action}`;
   const deleteGuidance = action === "delete-worktree" ? " Run mode=plan first. Stale local Guardian branch cleanup requires an exact branch or terminal sessionId plus deleteBranch=true and Guardian ownership proof from terminal state or safety refs. Intentional unmerged local abandonment requires deleteBranch=true plus abandonUnmerged=true in both plan and apply after inspecting unmerged commit evidence." : "";
+  const deletePathsGuidance = action === "delete-paths" ? " Run mode=plan first with exact paths, inspect target status and blockers, get explicit user confirmation, then apply with confirmDelete=true. Tracked source deletion requires allowTracked=true; directory deletion requires allowRecursive=true." : "";
   const hygieneCleanupGuidance = action === "hygiene-cleanup" ? " Prefer guardian_hygiene mode=plan|apply; this cleanup command is a compatibility alias. Run mode=plan first, inspect exact targets/blockers, get explicit user confirmation, then apply with confirmDelete=true." : action === "hygiene" ? " With no mode it scans only. For cleanup, run mode=plan first, inspect exact targets/blockers, get explicit user confirmation, then apply with confirmDelete=true." : "";
   const doneGuidance = action === "done" ? " Run mode=plan first. Dirty primary-main publishing requires an explicit commitMessage and explicit user confirmation; apply with confirm=true so the plugin reuses the matching internal plan token. Cleanup after publish returns a separate cleanup plan and must not be silently applied." : "";
-  const text = `Use the ${toolName} native tool.${deleteGuidance}${hygieneCleanupGuidance}${doneGuidance}${rest.trim() ? ` User arguments: ${rest.trim()}` : ""}`;
+  const text = `Use the ${toolName} native tool.${deleteGuidance}${deletePathsGuidance}${hygieneCleanupGuidance}${doneGuidance}${rest.trim() ? ` User arguments: ${rest.trim()}` : ""}`;
   if (!output || typeof output !== "object") return false;
   output.parts = [{ type: "text", text }];
   return true;
@@ -353,6 +355,7 @@ export async function runGuardianTool(name: string, input: Record<string, any> =
   if (name === "guardian_done") return guardianDone(input);
   if (name === "guardian_start") return guardianStart(input);
   if (name === "guardian_status") return guardianStatus(input);
+  if (name === "guardian_delete_paths") return guardianDeletePaths(input);
   if (name === "guardian_delete_worktree") return guardianDeleteWorktree(input);
   if (name === "guardian_finish") return guardianFinish(input);
   if (name === "guardian_finish_workflow") return guardianFinishWorkflow(input);

@@ -4,6 +4,7 @@ import plugin, { id, tui } from "../src/tui.ts";
 import type { TuiPluginApi } from "@opencode-ai/plugin/tui";
 
 const expectedSlashNames = [
+  "guardian-delete-paths",
   "guardian-delete-worktree",
   "guardian-done",
   "guardian-finish",
@@ -157,6 +158,25 @@ test("tui delete-worktree prompt includes explicit abandon guidance", async () =
   assert.match(prompt.parts[0].text, /deleteBranch=true plus abandonUnmerged=true/);
   assert.match(prompt.parts[0].text, /unmerged commit evidence/);
   assert.match(prompt.parts[0].text, /Never run raw worktree removal/);
+});
+
+test("tui delete-paths prompt points to exact confirmed deletion flow", async () => {
+  const runtime = createApi();
+  await tui(runtime.api);
+  const command = runtime.layer?.commands.find((candidate) => candidate.slashName === "guardian-delete-paths");
+  assert.ok(command);
+
+  await command.run();
+
+  assert.equal(runtime.prompts.length, 1);
+  const prompt = runtime.prompts[0] as { parts: Array<{ text: string }> };
+  assert.match(prompt.parts[0].text, /guardian_delete_paths/);
+  assert.match(prompt.parts[0].text, /mode=plan/);
+  assert.match(prompt.parts[0].text, /explicit user confirmation/);
+  assert.match(prompt.parts[0].text, /confirmDelete=true/);
+  assert.match(prompt.parts[0].text, /allowTracked=true/);
+  assert.match(prompt.parts[0].text, /allowRecursive=true/);
+  assert.match(prompt.parts[0].text, /guardian_delete_worktree/);
 });
 
 test("tui finish prompt mentions file-specific runtime allowlists", async () => {

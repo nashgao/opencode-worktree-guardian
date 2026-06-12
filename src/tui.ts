@@ -68,6 +68,12 @@ const COMMANDS = [
     prompt: "Use the guardian_delete_worktree native tool. Run mode=plan first unless a fresh confirmToken for the exact target/options is provided. Stale local Guardian branch cleanup requires an exact branch or terminal sessionId plus deleteBranch=true and Guardian ownership proof from terminal state or safety refs. Intentional unmerged local abandonment requires deleteBranch=true plus abandonUnmerged=true in both plan and apply after inspecting unmerged commit evidence. Never run raw worktree removal, filesystem deletion, forced branch deletion, hard reset, forced clean, or stash mutation.",
   },
   {
+    name: "guardian-delete-paths",
+    title: "Guardian: Delete Paths",
+    description: "Plan or apply exact path deletion for approved files or directories.",
+    prompt: "Use the guardian_delete_paths native tool. Run mode=plan first with exact paths, inspect target status and blockers, get explicit user confirmation, then apply with confirmDelete=true. Tracked source deletion requires allowTracked=true. Directory deletion requires allowRecursive=true. Use guardian_delete_worktree for worktree removal.",
+  },
+  {
     name: "guardian-unblock-finish",
     title: "Guardian: Unblock Finish",
     description: "Plan or apply safe Guardian finish blocker resolution.",

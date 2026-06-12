@@ -24,6 +24,7 @@ test("exports the current OpenCode plugin object shape", () => {
 test("exposes guardian native tools", async () => {
   const hooks = await plugin.server({ directory: "/repo", worktree: "/repo/.worktrees/example" });
   assert.deepEqual(Object.keys(hooks.tool).sort(), [
+    "guardian_delete_paths",
     "guardian_delete_worktree",
     "guardian_done",
     "guardian_finish",
@@ -356,6 +357,10 @@ test("/guardian slash commands rewrite to native tool instructions", async () =>
   const deleteOutput = { parts: [] };
   await hooks["command.execute.before"]({ command: "/guardian delete-worktree", sessionID: "ses_123", arguments: [] }, deleteOutput);
   assert.deepEqual(deleteOutput.parts, [{ type: "text", text: "Use the guardian_delete_worktree native tool. Run mode=plan first. Stale local Guardian branch cleanup requires an exact branch or terminal sessionId plus deleteBranch=true and Guardian ownership proof from terminal state or safety refs. Intentional unmerged local abandonment requires deleteBranch=true plus abandonUnmerged=true in both plan and apply after inspecting unmerged commit evidence." }]);
+
+  const deletePathsOutput = { parts: [] };
+  await hooks["command.execute.before"]({ command: "/guardian delete-paths src/old.ts", sessionID: "ses_123", arguments: [] }, deletePathsOutput);
+  assert.deepEqual(deletePathsOutput.parts, [{ type: "text", text: "Use the guardian_delete_paths native tool. Run mode=plan first with exact paths, inspect target status and blockers, get explicit user confirmation, then apply with confirmDelete=true. Tracked source deletion requires allowTracked=true; directory deletion requires allowRecursive=true. User arguments: src/old.ts" }]);
 
   const doneOutput = { parts: [] };
   await hooks["command.execute.before"]({ command: "/guardian done", sessionID: "ses_123", arguments: [] }, doneOutput);
