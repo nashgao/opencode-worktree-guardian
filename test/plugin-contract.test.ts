@@ -204,6 +204,55 @@ test("guardian_hygiene readable output marks failed scans as incomplete", async 
   assert.doesNotMatch(result.output, /findings: 0/);
 });
 
+test("guardian_hygiene tool execute plans and applies cleanup with confirmDelete", async () => {
+  const path = await import("node:path");
+  const repo = await createRepo();
+  await fs.mkdir(path.join(repo, "librarian-hygiene-contract"), { recursive: true });
+  await fs.writeFile(path.join(repo, "librarian-hygiene-contract", "file.txt"), "artifact\n");
+  const hooks = await plugin.server({ directory: repo, worktree: repo });
+  const { context } = createToolContext();
+  context.directory = repo;
+  context.worktree = repo;
+  const execute: any = hooks.tool.guardian_hygiene.execute;
+
+  const plan = await execute({ repoRoot: repo, mode: "plan", cleanupPaths: ["librarian-hygiene-contract"] }, context);
+  const apply = await execute({ repoRoot: repo, mode: "apply", cleanupPaths: ["librarian-hygiene-contract"], confirmDelete: true }, context);
+
+  assert.equal(plan.metadata.status, "planned");
+  assert.match(plan.output, /guardian_hygiene planned/);
+  assert.doesNotMatch(plan.output, /confirmToken:/);
+  assert.equal(apply.metadata.status, "cleaned");
+  assert.match(apply.output, /guardian_hygiene cleaned/);
+  assert.equal(await fs.access(path.join(repo, "librarian-hygiene-contract")).then(() => true, () => false), false);
+});
+
+test("guardian_hygiene and cleanup alias share cached confirmDelete plans", async () => {
+  const path = await import("node:path");
+  const repo = await createRepo();
+  await fs.mkdir(path.join(repo, "librarian-cross-canonical"), { recursive: true });
+  await fs.writeFile(path.join(repo, "librarian-cross-canonical", "file.txt"), "artifact\n");
+  await fs.mkdir(path.join(repo, "librarian-cross-alias"), { recursive: true });
+  await fs.writeFile(path.join(repo, "librarian-cross-alias", "file.txt"), "artifact\n");
+  const hooks = await plugin.server({ directory: repo, worktree: repo });
+  const { context } = createToolContext();
+  context.directory = repo;
+  context.worktree = repo;
+  const hygieneExecute: any = hooks.tool.guardian_hygiene.execute;
+  const cleanupExecute: any = hooks.tool.guardian_hygiene_cleanup.execute;
+
+  const canonicalPlan = await hygieneExecute({ repoRoot: repo, mode: "plan", cleanupPaths: ["librarian-cross-canonical"] }, context);
+  const aliasApply = await cleanupExecute({ repoRoot: repo, mode: "apply", cleanupPaths: ["librarian-cross-canonical"], confirmDelete: true }, context);
+  const aliasPlan = await cleanupExecute({ repoRoot: repo, mode: "plan", cleanupPaths: ["librarian-cross-alias"] }, context);
+  const canonicalApply = await hygieneExecute({ repoRoot: repo, mode: "apply", cleanupPaths: ["librarian-cross-alias"], confirmDelete: true }, context);
+
+  assert.equal(canonicalPlan.metadata.status, "planned");
+  assert.equal(aliasApply.metadata.status, "cleaned");
+  assert.equal(aliasPlan.metadata.status, "planned");
+  assert.equal(canonicalApply.metadata.status, "cleaned");
+  assert.equal(await fs.access(path.join(repo, "librarian-cross-canonical")).then(() => true, () => false), false);
+  assert.equal(await fs.access(path.join(repo, "librarian-cross-alias")).then(() => true, () => false), false);
+});
+
 
 test("guardian_hygiene_cleanup tool execute returns readable plan output with raw metadata", async () => {
   const path = await import("node:path");

@@ -76,8 +76,8 @@ Defaults are delivery-first, lifecycle-managed, and cleanup-conservative. `guard
 - `guardian_preserve`: mark the session terminal/preserved and create a preserved ref. Preserved worktrees are cleanup-eligible through `guardian_delete_worktree`; preservation is not a long-term retention instruction.
 - `guardian_recover`: read-only recovery refs, reflog/unreachable candidates, and suggested commands. Its native tool output renders a terminal-readable summary, while `metadata` keeps the full structured result for automation.
 - `guardian_report_html`: write a self-contained offline control-room report to `.git/opencode-guardian/report.html` with sessions, worktrees, branch coverage, risks, recovery commands, and raw status/recover metadata.
-- `guardian_hygiene`: scan untracked and ignored workspace artifacts for report-only hygiene findings. It classifies known scratch artifacts, nested Git repositories, suspicious research dumps, and protected exclusions without deleting or cleaning anything.
-- `guardian_hygiene_cleanup`: plan or apply cleanup for exact approved hygiene findings. Plan is read-only; the plugin flow caches the internal token for the same session/repo/options, then applies after explicit user confirmation with `confirmDelete: true`. Apply still re-runs preflight and removes only internally token-bound paths with internal Node filesystem APIs.
+- `guardian_hygiene`: scan, plan, or apply cleanup for workspace hygiene findings. With no `mode`, it classifies known scratch artifacts, nested Git repositories, suspicious research dumps, and protected exclusions without deleting or cleaning anything. With `mode: "plan"` or `mode: "apply"`, it uses the token-gated cleanup preflight and removes only internally token-bound approved paths with internal Node filesystem APIs after explicit confirmation.
+- `guardian_hygiene_cleanup`: compatibility alias for the `guardian_hygiene mode=plan|apply` cleanup flow.
 
 ## Slash Commands
 
@@ -145,9 +145,9 @@ If a recorded Guardian session's worktree path is already absent from `git workt
 
 If a local Guardian branch remains after its worktree and active state are gone, pass the exact `branch` or terminal `sessionId` with `deleteBranch: true` to request stale-branch cleanup. Terminal states include `deleted`, `abandoned`, `finished`, and `preserved`; preserved is cleanup-eligible, not a retention promise. This branch-only path returns `targetKind: stale-branch` only when terminal Guardian state or matching `refs/opencode-guardian` safety refs prove ownership. Branch prefixes alone are not ownership proof. It still verifies the branch exists, is checked out nowhere, is not protected, and requires ancestry proof unless `abandonUnmerged: true` is explicitly present in both plan and apply.
 
-Workspace hygiene scanning is report-only. `guardian_hygiene` detects untracked or ignored scratch artifacts, nested Git repositories, and suspicious research dumps, but it does not delete, move, stash, or clean anything. `guardian_status`, `guardian_recover`, and `guardian_hygiene` are evidence-only surfaces; their findings do not authorize deletion. Agents should put research clones, downloaded upstream repos, generated fixtures, and temporary test data outside the active project tree, preferably under OS temp space such as `$TMPDIR/opencode/<repo>/<session>/`.
+Workspace hygiene scanning is report-only when `guardian_hygiene` is called without `mode`. It detects untracked or ignored scratch artifacts, nested Git repositories, and suspicious research dumps, but scan output does not authorize deletion. `guardian_status`, `guardian_recover`, and `guardian_hygiene` scan output are evidence-only surfaces. Agents should put research clones, downloaded upstream repos, generated fixtures, and temporary test data outside the active project tree, preferably under OS temp space such as `$TMPDIR/opencode/<repo>/<session>/`.
 
-Hygiene cleanup is a separate native flow. Use `guardian_hygiene_cleanup` only after the user explicitly wants cleanup of reported residue. `mode: "plan"` is read-only and returns exact approved targets, blockers, and summary; raw metadata also carries an internal confirm token for automation/debugging, but the readable output does not ask users to copy or pass it. Defaults allow only `known-cleanable`, including generated `node-compile-cache/`, `node-coverage-*`, and `tsx-<digits>/` cache roots; `suspicious` is blocked by default, and dirty `nested-git` is always blocked. Clean `nested-git` cleanup, when requested, requires explicit `allowCategories: ["nested-git"]` and the same internal fingerprint/token gate. In the plugin tool flow, run `mode: "plan"`, inspect exact targets/blockers, get explicit user confirmation, then run `mode: "apply"` with `confirmDelete: true`; the plugin injects the cached token only for the same session/repo/options. If a tool surface supplies an empty token or the `CONFIRM_DELETE` placeholder, Guardian treats that as no user token and still uses the cached token when the plan matches. Low-level direct calls to `guardianHygieneCleanup` still require the matching `confirmToken` for `mode: "apply"`. Apply re-runs preflight and removes only token-bound approved paths using internal Node `fs` APIs. It never suggests or shells out to broad cleanup commands. Cleanup always blocks tracked files, protected directories, configured or registered Guardian worktrees, paths outside the repo root, `.git`, symlink cleanup roots, missing selected paths, stale fingerprints, and selected roots with unexpected tracked contents.
+Hygiene cleanup is the same native `guardian_hygiene` flow with `mode: "plan"` or `mode: "apply"`; `guardian_hygiene_cleanup` remains as a compatibility alias. `mode: "plan"` is read-only and returns exact approved targets, blockers, and summary; raw metadata also carries an internal confirm token for automation/debugging, but the readable output does not ask users to copy or pass it. By default, cleanup includes current hygiene finding categories: known scratch artifacts, clean nested Git repositories, suspicious residue roots, generated `node-compile-cache/`, `node-coverage-*`, and `tsx-<digits>/` cache roots. Dirty `nested-git` findings require explicit `allowDirtyNestedGit: true`. In the plugin tool flow, run `mode: "plan"`, inspect exact targets/blockers, get explicit user confirmation, then run `mode: "apply"` with `confirmDelete: true`; the plugin injects the cached token only for the same session/repo/options. If a tool surface supplies an empty token or the `CONFIRM_DELETE` placeholder, Guardian treats that as no user token and still uses the cached token when the plan matches. Low-level direct calls to `guardianHygiene` or `guardianHygieneCleanup` still require the matching `confirmToken` for `mode: "apply"`. Apply re-runs preflight and removes only token-bound approved paths using internal Node `fs` APIs. It never suggests or shells out to broad cleanup commands. Cleanup always blocks tracked files, protected directories, configured or registered Guardian worktrees, paths outside the repo root, `.git`, symlink cleanup roots, missing selected paths, stale fingerprints, and selected roots with unexpected tracked contents.
 
 ### Sample Tool Output
 
@@ -234,29 +234,29 @@ Warning-heavy `guardian_recover` lists recovery facts without mutating state:
 [INFO] sessions: 1 | worktrees: 1 | risks: 0 | recoveryCandidates: 0
 ```
 
-`guardian_hygiene` reports workspace residue without cleanup approval:
+`guardian_hygiene` without `mode` reports workspace residue without cleanup approval:
 
 ```text
 [WARN] guardian_hygiene scan
-[INFO] candidates: 7 | findings: 2 | exclusions: 1
-[WARN] known-cleanable: 1 | suspicious: 0 | nested-git: 1
+[INFO] candidates: 8 | findings: 3 | exclusions: 1
+[WARN] known-cleanable: 1 | suspicious: 1 | nested-git: 1
   - severity=warn category=known-cleanable path=librarian-react reason=known librarian scratch artifact
   - severity=fail category=nested-git path=test-hyperf-kafka reason=nested Git repository has uncommitted changes
+  - severity=warn category=suspicious path=research-dump reason=untracked path resembles a clone, research dump, or scratch workspace
 [INFO] suggested commands:
   - guardian_hygiene
   - guardian_status
   - git status --short --ignored
 ```
 
-`guardian_hygiene_cleanup` uses a separate two-step confirmed cleanup flow for approved hygiene findings:
+`guardian_hygiene mode=plan|apply` uses a two-step confirmed cleanup flow for approved hygiene findings:
 
 ```text
-[WARN] guardian_hygiene_cleanup planned
-[INFO] approvedTargets: 1 | removedTargets: 0 | blockers: 1 | fatal: 0
+[WARN] guardian_hygiene planned
+[INFO] approvedTargets: 2 | removedTargets: 0 | blockers: 0 | fatal: 0
 [INFO] approved targets:
   - known-cleanable librarian-react: known librarian scratch artifact
-[WARN] blockers:
-  - blocked research-dump: category suspicious is not allowed for hygiene cleanup
+  - suspicious research-dump: untracked path resembles a clone, research dump, or scratch workspace
 ```
 
 After explicit user confirmation, apply through the plugin with `confirmDelete: true`; no manual `confirmToken` is needed in the normal plugin flow. The plugin uses the cached internal token only when the session, repo, and cleanup options still match the plan, and treats empty or `CONFIRM_DELETE` token placeholders as absent. If any selected target disappears, gains tracked contents, changes fingerprint, resolves outside the repo, is a symlink root, or overlaps Guardian worktree/protected paths, apply blocks and requires a new plan.
@@ -312,7 +312,7 @@ Blocked `guardian_finish` exposes `preflight` and `report` for automation:
 - Intentional finish or preserve: use `guardian_finish` or `guardian_preserve`; `autoFinish` remains opt-in. Preservation creates a safety ref and terminal state, not a permanent worktree retention promise.
 - Dirty worktree: commit real source/config/doc changes or intentionally preserve. If the only dirt is runtime/local state, configure narrow `allowDirtyPaths`; file-specific patterns can match untracked runtime files. Guardian reports those files as `allowedDirtyFiles`, leaves them untouched, and still blocks any non-matching dirty path.
 - Dirty review artifact blocks finish: run `guardian_unblock_finish` with `mode: "plan"`, inspect the listed artifacts and confirm token, then apply only if the plan contains no source changes. If the session is unrecorded, include the explicit `branch` or `worktreePath` shown by `guardian_status`.
-- Workspace residue: run `guardian_hygiene`; known artifacts, nested repos, and suspicious paths are reported only. If the user explicitly approves cleanup, run `guardian_hygiene_cleanup` with `mode: "plan"`, inspect exact targets/blockers, get explicit delete confirmation, then apply through the plugin with `mode: "apply"` and `confirmDelete: true` for approved targets. The internal token/fingerprint gate remains enforced.
+- Workspace residue: run `guardian_hygiene`; with no `mode`, known artifacts, nested repos, and suspicious paths are reported only. If the user explicitly approves cleanup, run `guardian_hygiene` with `mode: "plan"`, inspect exact targets/blockers, get explicit delete confirmation, then apply through the plugin with `mode: "apply"` and `confirmDelete: true` for approved targets. The internal token/fingerprint gate remains enforced. `guardian_hygiene_cleanup` remains a compatibility alias for the same cleanup flow.
 - Stash exists: inspect with `git stash list` and `git stash show -p`; Guardian will not mutate stashes.
 - Orphaned worktree: run `guardian_recover` for evidence. If deletion is explicitly intended, run `guardian_delete_worktree` in `mode: "plan"`, inspect the preflight and confirm token, then re-run with `mode: "apply"` and that token.
 

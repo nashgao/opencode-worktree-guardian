@@ -52,14 +52,14 @@ const COMMANDS = [
   {
     name: "guardian-hygiene",
     title: "Guardian: Hygiene",
-    description: "Scan workspace residue, scratch artifacts, and nested Git repositories without cleanup.",
-    prompt: "Use the guardian_hygiene native tool. Treat findings as report-only evidence and do not delete, move, clean, stash, or reset anything.",
+    description: "Scan, plan, or apply confirmed cleanup for workspace hygiene findings.",
+    prompt: "Use the guardian_hygiene native tool. With no mode it scans only. For cleanup, run mode=plan first, inspect exact approved targets and blockers, get explicit user confirmation, then apply with confirmDelete=true. Never run raw cleanup commands.",
   },
   {
     name: "guardian-hygiene-cleanup",
     title: "Guardian: Hygiene Cleanup",
-    description: "Plan or apply token-gated cleanup for exact approved hygiene findings.",
-    prompt: "Use the guardian_hygiene_cleanup native tool. Run mode=plan first, inspect exact approved targets and blockers, get explicit user confirmation, then apply with confirmDelete=true. Default cleanup allows only known-cleanable findings; guardian_hygiene remains report-only. Never run raw cleanup commands.",
+    description: "Compatibility alias for token-gated hygiene cleanup.",
+    prompt: "Prefer guardian_hygiene mode=plan|apply. guardian_hygiene_cleanup is a compatibility alias for the same token-gated cleanup path. Run mode=plan first, inspect exact approved targets and blockers, get explicit user confirmation, then apply with confirmDelete=true. Never run raw cleanup commands.",
   },
   {
     name: "guardian-delete-worktree",

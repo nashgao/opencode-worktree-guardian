@@ -120,7 +120,7 @@ test("tui done prompt preserves primary-main token gates and separate cleanup", 
   assert.match(prompt.parts[0].text, /Never force-push/);
 });
 
-test("tui hygiene-cleanup prompt preserves report-only hygiene and confirmDelete flow", async () => {
+test("tui hygiene-cleanup prompt points to unified confirmDelete flow", async () => {
   const runtime = createApi();
   await tui(runtime.api);
   const command = runtime.layer?.commands.find((candidate) => candidate.slashName === "guardian-hygiene-cleanup");
@@ -130,12 +130,13 @@ test("tui hygiene-cleanup prompt preserves report-only hygiene and confirmDelete
 
   assert.equal(runtime.prompts.length, 1);
   const prompt = runtime.prompts[0] as { parts: Array<{ text: string }> };
-  assert.match(prompt.parts[0].text, /guardian_hygiene_cleanup/);
+  assert.match(prompt.parts[0].text, /guardian_hygiene/);
+  assert.match(prompt.parts[0].text, /compatibility alias/);
   assert.match(prompt.parts[0].text, /mode=plan/);
   assert.match(prompt.parts[0].text, /explicit user confirmation/);
   assert.match(prompt.parts[0].text, /confirmDelete=true/);
   assert.doesNotMatch(prompt.parts[0].text, /confirmToken/);
-  assert.match(prompt.parts[0].text, /guardian_hygiene remains report-only/);
+  assert.doesNotMatch(prompt.parts[0].text, /remains report-only/);
   assert.match(prompt.parts[0].text, /Never run raw cleanup commands/);
 });
 

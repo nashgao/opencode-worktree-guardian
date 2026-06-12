@@ -4,7 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { DEFAULT_CONFIG } from "../src/config.ts";
 import { runGitNullSeparated } from "../src/git.ts";
-import { guardianHygieneCleanup, scanWorkspaceHygiene } from "../src/hygiene.ts";
+import { guardianHygiene, guardianHygieneCleanup, scanWorkspaceHygiene } from "../src/hygiene.ts";
 import { guardianStatus } from "../src/recover.ts";
 import { createRepo, createRepoWithOrigin, createTempDir, git } from "./helpers.ts";
 import { guardianStart, runGuardianTool } from "../src/tools.ts";
@@ -156,36 +156,66 @@ async function pathExists(candidate: string) {
   return fs.access(candidate).then(() => true, () => false);
 }
 
-test("hygiene cleanup plans and applies only default known-cleanable targets", async () => {
+test("hygiene cleanup plans and applies all default hygiene targets", async () => {
   const repo = await createRepo();
   await writeArtifact(repo, "librarian-clean/file.txt");
   await writeArtifact(repo, "node-compile-cache/cache.blob");
   await writeArtifact(repo, "node-coverage-456/coverage.json");
   await writeArtifact(repo, "research-dump/file.txt");
   await writeArtifact(repo, "tsx-501/runtime-cache.json");
+  const nested = path.join(repo, "research-clone-clean");
+  await fs.mkdir(nested, { recursive: true });
+  await git(nested, ["init", "-b", "main"]);
+  await git(nested, ["config", "user.email", "guardian@example.test"]);
+  await git(nested, ["config", "user.name", "Guardian Test"]);
+  await fs.writeFile(path.join(nested, "README.md"), "nested\n");
+  await git(nested, ["add", "README.md"]);
+  await git(nested, ["commit", "-m", "nested initial"]);
 
   const plan = await runGuardianTool("guardian_hygiene_cleanup", { repoRoot: repo, config: DEFAULT_CONFIG, mode: "plan" });
 
   assert.equal(plan.ok, true);
   assert.equal(plan.status, "planned");
   assert.equal(typeof plan.confirmToken, "string");
-  assert.deepEqual((plan.targets as Array<Record<string, unknown>>).map((target) => target.path), ["librarian-clean", "node-compile-cache", "node-coverage-456", "tsx-501"]);
-  assert.equal((plan.blockers as Array<Record<string, unknown>>).some((blocker) => blocker.path === "research-dump" && blocker.fatal === false), true);
+  assert.deepEqual((plan.targets as Array<Record<string, unknown>>).map((target) => target.path), ["librarian-clean", "node-compile-cache", "node-coverage-456", "research-clone-clean", "research-dump", "tsx-501"]);
   assert.equal(await pathExists(path.join(repo, "librarian-clean")), true);
   assert.equal(await pathExists(path.join(repo, "node-compile-cache")), true);
   assert.equal(await pathExists(path.join(repo, "node-coverage-456")), true);
+  assert.equal(await pathExists(path.join(repo, "research-clone-clean")), true);
+  assert.equal(await pathExists(path.join(repo, "research-dump")), true);
   assert.equal(await pathExists(path.join(repo, "tsx-501")), true);
 
   const apply = await runGuardianTool("guardian_hygiene_cleanup", { repoRoot: repo, config: DEFAULT_CONFIG, mode: "apply", confirmToken: plan.confirmToken });
 
   assert.equal(apply.ok, true);
   assert.equal(apply.status, "cleaned");
-  assert.deepEqual((apply.removedTargets as Array<Record<string, unknown>>).map((target) => target.path), ["librarian-clean", "node-compile-cache", "node-coverage-456", "tsx-501"]);
+  assert.deepEqual((apply.removedTargets as Array<Record<string, unknown>>).map((target) => target.path), ["librarian-clean", "node-compile-cache", "node-coverage-456", "research-clone-clean", "research-dump", "tsx-501"]);
   assert.equal(await pathExists(path.join(repo, "librarian-clean")), false);
   assert.equal(await pathExists(path.join(repo, "node-compile-cache")), false);
   assert.equal(await pathExists(path.join(repo, "node-coverage-456")), false);
+  assert.equal(await pathExists(path.join(repo, "research-clone-clean")), false);
+  assert.equal(await pathExists(path.join(repo, "research-dump")), false);
   assert.equal(await pathExists(path.join(repo, "tsx-501")), false);
-  assert.equal(await pathExists(path.join(repo, "research-dump")), true);
+});
+
+test("guardian_hygiene plans and applies cleanup for approved target files and directories", async () => {
+  const repo = await createRepo();
+  await fs.writeFile(path.join(repo, "node-compile-cache"), "cache-blob\n");
+  await writeArtifact(repo, "librarian-hygiene/file.txt");
+
+  const plan = await guardianHygiene({ repoRoot: repo, config: DEFAULT_CONFIG, mode: "plan" });
+
+  assert.equal(plan.ok, true);
+  assert.equal(plan.status, "planned");
+  assert.deepEqual((plan.targets as Array<Record<string, unknown>>).map((target) => [target.path, target.kind]), [["librarian-hygiene", "directory"], ["node-compile-cache", "file"]]);
+
+  const apply = await guardianHygiene({ repoRoot: repo, config: DEFAULT_CONFIG, mode: "apply", confirmToken: plan.confirmToken });
+
+  assert.equal(apply.ok, true);
+  assert.equal(apply.status, "cleaned");
+  assert.deepEqual((apply.removedTargets as Array<Record<string, unknown>>).map((target) => target.path), ["librarian-hygiene", "node-compile-cache"]);
+  assert.equal(await pathExists(path.join(repo, "librarian-hygiene")), false);
+  assert.equal(await pathExists(path.join(repo, "node-compile-cache")), false);
 });
 
 test("hygiene cleanup plans residue roots when categories are allowed", async () => {

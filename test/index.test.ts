@@ -363,7 +363,7 @@ test("/guardian slash commands rewrite to native tool instructions", async () =>
 
   const cleanupOutput = { parts: [] };
   await hooks["command.execute.before"]({ command: "/guardian hygiene-cleanup", sessionID: "ses_123", arguments: [] }, cleanupOutput);
-  assert.deepEqual(cleanupOutput.parts, [{ type: "text", text: "Use the guardian_hygiene_cleanup native tool. Run mode=plan first, inspect exact targets/blockers, get explicit user confirmation, then apply with confirmDelete=true. guardian_hygiene remains report-only." }]);
+  assert.deepEqual(cleanupOutput.parts, [{ type: "text", text: "Use the guardian_hygiene_cleanup native tool. Prefer guardian_hygiene mode=plan|apply; this cleanup command is a compatibility alias. Run mode=plan first, inspect exact targets/blockers, get explicit user confirmation, then apply with confirmDelete=true." }]);
 });
 
 test("session idle auto-finish is opt-in and deduplicated", async () => {

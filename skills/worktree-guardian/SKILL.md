@@ -12,8 +12,8 @@ Use the native guardian tools for worktree inspection and completion. The skill 
 
 - Do not run raw cleanup, reset, stash mutation, force-push, worktree removal, raw `git worktree add` outside Guardian-owned roots, or `rm -rf` against worktrees. Use `guardian_start` for session worktree creation.
 - Use `guardian_status` for read-only inventory.
-- Use `guardian_hygiene` when the user asks about unowned scratch, research clones, nested repos, or workspace residue. It is report-only and must not be treated as cleanup approval.
-- Use `guardian_hygiene_cleanup` only when the user explicitly wants cleanup of hygiene findings. First run `mode: "plan"`; inspect exact approved targets and blockers, get explicit user confirmation, then run `mode: "apply"` with `confirmDelete: true`. Defaults clean only `known-cleanable` findings, including generated `node-compile-cache/`, `node-coverage-*`, and `tsx-<digits>/` cache roots; dirty `nested-git` is always blocked.
+- Use `guardian_hygiene` when the user asks about unowned scratch, research clones, nested repos, or workspace residue. With no `mode`, it scans only. For cleanup, first run `mode: "plan"`; inspect exact approved targets and blockers, get explicit user confirmation, then run `mode: "apply"` with `confirmDelete: true`.
+- Use `guardian_hygiene_cleanup` only as a compatibility alias for `guardian_hygiene mode=plan|apply`. Default cleanup includes current hygiene finding categories, including known scratch artifacts, clean nested Git repositories, suspicious residue roots, generated `node-compile-cache/`, `node-coverage-*`, and `tsx-<digits>/` cache roots. Dirty `nested-git` requires explicit `allowDirtyNestedGit: true`.
 - Use `guardian_report_html` or `/guardian report` when the user wants a browser-readable branch/worktree/session report. It writes a static offline file at `.git/opencode-guardian/report.html` and returns the exact path.
 - Use `guardian_delete_worktree` only when the user explicitly wants a Guardian-mediated worktree deleted. First run `mode: "plan"`; only run `mode: "apply"` with the returned `confirmToken` after checking blockers.
 - Use `guardian_unblock_finish` when `guardian_finish` is blocked by narrow generated review artifacts. First run `mode: "plan"`; only run `mode: "apply"` with the returned `confirmToken` after verifying the plan contains only `.milestones/reviews/*impl-rating-YYYYMMDD.md` or `.milestones/reviews/*impl-rating-YYYYMMDD.txt` artifacts. Descriptive branch names are allowed when state proves the session owns the exact branch/worktree binding. If state does not record the session, pass the same explicit `branch` or `worktreePath` during plan and apply; the target must be under the configured Guardian worktree root.
@@ -32,8 +32,8 @@ Use the native guardian tools for worktree inspection and completion. The skill 
 - `autoFinish`: disabled unless repo config opts in
 - `autoCleanup`: disabled unless repo config opts in
 - stash mutation is never cleanup
-- workspace hygiene scanning is report-only; no artifact deletion is implied from `guardian_hygiene`
-- hygiene cleanup is separate, internally token-gated, exact-target only, and never uses raw shell cleanup
+- workspace hygiene scan mode is report-only; cleanup requires `guardian_hygiene mode=plan`, exact-target review, explicit confirmation, and `mode=apply confirmDelete=true`
+- hygiene cleanup is internally token-gated, exact-target only, and never uses raw shell cleanup
 - worktree deletion is never automatic from `guardian_status`, `guardian_recover`, or `guardian_hygiene`
 - finish unblocking is never broad cleanup; `commit-review-artifacts` commits only matching review-rating artifacts and refuses mixed dirty/source paths, source-to-review renames/copies, and symlink artifacts
 
@@ -41,7 +41,7 @@ Use the native guardian tools for worktree inspection and completion. The skill 
 
 - Put research clones, downloaded upstream repos, generated fixtures, and temporary test data outside the active project tree, preferably under OS temp space such as `$TMPDIR/opencode/<repo>/<session>/`.
 - If scratch inside a repo is explicitly required, use a configured scratch root and keep it clearly session-scoped.
-- Treat `guardian_hygiene` findings as evidence to report. If cleanup is approved, use `guardian_hygiene_cleanup` plan, inspect targets/blockers, get explicit confirmation, then apply with `confirmDelete: true` rather than raw cleanup or `guardian_delete_worktree`.
+- Treat `guardian_hygiene` scan findings as evidence to report. If cleanup is approved, use `guardian_hygiene mode=plan`, inspect targets/blockers, get explicit confirmation, then apply with `confirmDelete: true` rather than raw cleanup or `guardian_delete_worktree`.
 - Treat `external-temp-worktree` and `external-worktree` findings in `guardian_status`/`guardian_recover` as report-only evidence, not cleanup approval.
 
 ## Delete posture
@@ -54,7 +54,7 @@ Use the native guardian tools for worktree inspection and completion. The skill 
 - `allowIgnoredFiles` is for deleting a whole stale worktree that contains ignored local residue such as `.claude/` or `data/`; it is not a general hygiene cleanup approval.
 - `deleteBranch` defaults to `false`; with `true`, Guardian normally requires ancestry proof and uses non-force `git branch -d`.
 - Use `abandonUnmerged: true` only when the user explicitly intends to abandon unmerged local Guardian work. It must be present with `deleteBranch: true` in both plan and apply, and the plan's unmerged commits must be inspected before applying. Guardian creates a safety ref before deleting the local branch and records the session as `abandoned`; do not replace this with raw branch deletion.
-- `guardian_status`, `guardian_recover`, and `guardian_hygiene` are evidence-only. Their output can identify candidates, but it is not approval to delete. `guardian_hygiene_cleanup` is the only native hygiene artifact cleanup path, and apply removes only internally token-bound approved paths. The plugin caches the plan token for matching session/repo/options when applying with `confirmDelete: true`; low-level direct calls still require the matching token.
+- `guardian_status`, `guardian_recover`, and `guardian_hygiene` scan output are evidence-only. Their output can identify candidates, but it is not approval to delete. `guardian_hygiene mode=plan|apply` is the canonical native hygiene artifact cleanup path, and apply removes only internally token-bound approved paths. The plugin caches the plan token for matching session/repo/options when applying with `confirmDelete: true`; low-level direct calls still require the matching token.
 
 ## Recovery posture
 

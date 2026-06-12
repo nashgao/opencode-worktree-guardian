@@ -303,7 +303,9 @@ async function buildHygieneCleanupPreflight(input: Record<string, unknown>) {
   const mode = input.mode;
   const rawAllowCategories = stringArray(input.allowCategories);
   const invalidAllowCategories = rawAllowCategories.filter((category) => !CLEANUP_CATEGORIES.has(category as HygieneCategory));
-  const allowCategories = rawAllowCategories.length > 0 ? uniqueSorted(rawAllowCategories.filter((category) => CLEANUP_CATEGORIES.has(category as HygieneCategory))) : ["known-cleanable"];
+  const allowCategories = rawAllowCategories.length > 0
+    ? uniqueSorted(rawAllowCategories.filter((category) => CLEANUP_CATEGORIES.has(category as HygieneCategory)))
+    : uniqueSorted([...CLEANUP_CATEGORIES]);
   const allowDirtyNestedGit = input.allowDirtyNestedGit === true;
   const selectedInput = stringArray(input.cleanupPaths);
   const scan = await scanWorkspaceHygiene({ ...input, repoRoot, config });
@@ -442,6 +444,11 @@ export async function guardianHygieneCleanup(input: Record<string, unknown> = {}
   }
   const finalSummary = cleanupSummary(targets, blockers, Number((preflight.scanSummary as Record<string, unknown> | undefined)?.findingCount ?? targets.length), removedTargets);
   return cleanupReport({ ok: true, status: "cleaned", summary: finalSummary, targets, removedTargets, blockers, suggestedCommands: ["guardian_hygiene", "guardian_status"] }, { ...preflight, summary: finalSummary }, removedTargets);
+}
+
+export async function guardianHygiene(input: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+  if (input.mode === "plan" || input.mode === "apply") return guardianHygieneCleanup(input);
+  return scanWorkspaceHygiene(input);
 }
 
 export async function scanWorkspaceHygiene(input: Record<string, unknown> = {}) {

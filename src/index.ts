@@ -184,6 +184,10 @@ function sortedStringArgs(value: unknown) {
   return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string").sort((left, right) => left.localeCompare(right)) : [];
 }
 
+function planCacheToolName(name: string) {
+  return name === "guardian_hygiene_cleanup" ? "guardian_hygiene" : name;
+}
+
 function normalizeOptionalToolStrings(toolArgs: Record<string, any>) {
   for (const key of ["repoRoot", "cwd", "sessionId", "branch", "targetPath", "worktreePath", "confirmToken"]) {
     if (typeof toolArgs[key] === "string" && toolArgs[key].trim() === "") delete toolArgs[key];
@@ -192,7 +196,7 @@ function normalizeOptionalToolStrings(toolArgs: Record<string, any>) {
 
 function planCacheKey(name: string, toolArgs: Record<string, any>) {
   return JSON.stringify({
-    name,
+    name: planCacheToolName(name),
     sessionId: typeof toolArgs.sessionId === "string" ? toolArgs.sessionId : "",
     repoRoot: typeof toolArgs.repoRoot === "string" ? toolArgs.repoRoot : "",
     cwd: typeof toolArgs.cwd === "string" ? toolArgs.cwd : "",
@@ -216,7 +220,7 @@ function isPlaceholderConfirmToken(value: unknown) {
 
 function shouldUseCachedPlanToken(name: string, toolArgs: Record<string, any>) {
   if (toolArgs.mode !== "apply") return false;
-  if (name === "guardian_hygiene_cleanup") return toolArgs.confirmDelete === true;
+  if (name === "guardian_hygiene" || name === "guardian_hygiene_cleanup") return toolArgs.confirmDelete === true;
   if (name === "guardian_done" || name === "guardian_finish_workflow") return toolArgs.confirm === true || toolArgs.confirmDelete === true;
   return false;
 }
@@ -231,7 +235,7 @@ function maybeInjectPlanConfirmToken(name: string, toolArgs: Record<string, any>
 function rememberPlanConfirmToken(name: string, toolArgs: Record<string, any>, result: Record<string, any>, planCache?: Map<string, string>) {
   if (!planCache) return;
   if (toolArgs.mode !== "plan" || result.ok !== true || result.status !== "planned" || typeof result.confirmToken !== "string") return;
-  if (!["guardian_hygiene_cleanup", "guardian_done", "guardian_finish_workflow"].includes(name)) return;
+  if (!["guardian_hygiene", "guardian_hygiene_cleanup", "guardian_done", "guardian_finish_workflow"].includes(name)) return;
   planCache.set(planCacheKey(name, toolArgs), result.confirmToken);
 }
 
@@ -425,6 +429,9 @@ function formatGuardianReportOutput(rawResult: unknown) {
 
 function formatGuardianHygieneOutput(rawResult: unknown) {
   const result = recordValue(rawResult);
+  if (["planned", "cleaned", "blocked"].includes(textValue(result.status, ""))) {
+    return formatGuardianHygieneCleanupOutput(rawResult, "guardian_hygiene");
+  }
   const summary = recordValue(result.summary);
   const findings = arrayValue(result.findings);
   const exclusions = arrayValue(result.exclusions);
@@ -457,18 +464,18 @@ function formatGuardianHygieneOutput(rawResult: unknown) {
   return lines.join("\n");
 }
 
-function formatGuardianHygieneCleanupOutput(rawResult: unknown) {
+function formatGuardianHygieneCleanupOutput(rawResult: unknown, toolName = "guardian_hygiene_cleanup") {
   const result = recordValue(rawResult);
   const summary = recordValue(result.summary);
   const targets = arrayValue(result.targets);
   const removedTargets = arrayValue(result.removedTargets);
   const blockers = arrayValue(result.blockers);
   const lines = [
-    `${result.ok === false ? "[FAIL]" : result.status === "planned" ? "[WARN]" : "[GOOD]"} guardian_hygiene_cleanup ${textValue(result.status)}`,
+    `${result.ok === false ? "[FAIL]" : result.status === "planned" ? "[WARN]" : "[GOOD]"} ${toolName} ${textValue(result.status)}`,
     `[INFO] approvedTargets: ${Number(summary.approvedTargetCount ?? targets.length)} | removedTargets: ${Number(summary.removedTargetCount ?? removedTargets.length)} | blockers: ${Number(summary.blockedTargetCount ?? blockers.length)} | fatal: ${Number(summary.fatalBlockerCount ?? 0)}`,
   ];
   const reason = textValue(result.reason, "");
-  if (result.ok === false || reason) lines.push(`[FAIL] ${reason || "guardian_hygiene_cleanup blocked"}`);
+  if (result.ok === false || reason) lines.push(`[FAIL] ${reason || `${toolName} blocked`}`);
   if (targets.length > 0) {
     lines.push("[INFO] approved targets:");
     for (const entry of targets.slice(0, 8)) {
@@ -704,14 +711,14 @@ const WorktreeGuardianPlugin = {
         guardian_start: guardianTool("guardian_start", "Create or attach this OpenCode session to a guardian-owned worktree.", hygieneCleanupPlanCache),
         guardian_status: guardianTool("guardian_status", "Report guardian state, worktrees, safety refs, stash inventory, and blockers without mutating the repo.", hygieneCleanupPlanCache),
         guardian_delete_worktree: guardianTool("guardian_delete_worktree", "Plan or apply safe Guardian-mediated worktree deletion with confirm-token and safety-ref gates.", hygieneCleanupPlanCache),
-        guardian_hygiene_cleanup: guardianTool("guardian_hygiene_cleanup", "Plan or apply token-gated cleanup for exact approved hygiene findings using internal filesystem APIs.", hygieneCleanupPlanCache),
+        guardian_hygiene_cleanup: guardianTool("guardian_hygiene_cleanup", "Compatibility alias for guardian_hygiene mode=plan|apply cleanup using internal filesystem APIs.", hygieneCleanupPlanCache),
         guardian_unblock_finish: guardianTool("guardian_unblock_finish", "Plan or apply safe finish blocker resolution, such as committing review artifacts with confirm-token gates.", hygieneCleanupPlanCache),
         guardian_finish_workflow: guardianTool("guardian_finish_workflow", "Plan or apply an implementation-done workflow that verifies clean state and removes redundant merged worktrees and branches through Guardian gates.", hygieneCleanupPlanCache),
         guardian_finish: guardianTool("guardian_finish", "Apply the configured gated finish mode for the current guardian-owned worktree.", hygieneCleanupPlanCache),
         guardian_preserve: guardianTool("guardian_preserve", "Mark the current guardian-owned session as terminal/preserved with a safety ref.", hygieneCleanupPlanCache),
         guardian_recover: guardianTool("guardian_recover", "List recovery refs, orphaned sessions, stash inventory, and suggested recovery commands without mutation.", hygieneCleanupPlanCache),
         guardian_report_html: guardianTool("guardian_report_html", "Write a static offline HTML report for guardian sessions, worktrees, branches, risks, and recovery commands.", hygieneCleanupPlanCache),
-        guardian_hygiene: guardianTool("guardian_hygiene", "Scan untracked and ignored workspace artifacts for hygiene risks without cleanup or mutation.", hygieneCleanupPlanCache),
+        guardian_hygiene: guardianTool("guardian_hygiene", "Scan, plan, or apply token-gated cleanup for workspace hygiene findings.", hygieneCleanupPlanCache),
       },
 
       async "experimental.chat.system.transform"(input: any, output: any) {
