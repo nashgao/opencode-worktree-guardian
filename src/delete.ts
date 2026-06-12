@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { expandWorktreeRoot, loadConfig } from "./config.ts";
 import { abandonBranch, createSafetyRef, deleteBranch, getBranchCommit, getDirtyFiles, getHeadCommit, getIgnoredFiles, getRepoRoot, isAncestor, listRefs, listStashes, listUnmergedCommits, listWorktrees, removeWorktree } from "./git.ts";
-import { isTerminalSession } from "./lifecycle.ts";
+import { isActiveSession, isTerminalSession } from "./lifecycle.ts";
 import { getGuardianPaths, readState, recordSession } from "./state.ts";
 
 type GuardianSession = {
@@ -117,7 +117,8 @@ function createConfirmToken(preflight: Record<string, unknown>) {
 }
 
 function findSessionByWorktree(sessions: GuardianSession[], targetPath: string) {
-  return sessions.find((session) => typeof session.worktree_path === "string" && samePath(session.worktree_path, targetPath));
+  const matchingSessions = sessions.filter((session) => typeof session.worktree_path === "string" && samePath(session.worktree_path, targetPath));
+  return matchingSessions.find(isActiveSession) ?? matchingSessions[0];
 }
 
 function sessionWorktreeEntry(session: GuardianSession | undefined, worktrees: WorktreeEntry[]) {

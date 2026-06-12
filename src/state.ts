@@ -145,13 +145,27 @@ export async function updateState(repoRoot: string, config: Record<string, any>,
 export async function recordSession(repoRoot: string, config: Record<string, any>, session: Record<string, any>, options: Record<string, any> = {}) {
   return updateState(repoRoot, config, (state) => {
     const previous = state.sessions[session.session_id];
+    const now = new Date().toISOString();
+    if (session.status === "active" && typeof session.worktree_path === "string") {
+      for (const [sessionId, candidate] of Object.entries(state.sessions) as Array<[string, Record<string, any>]>) {
+        if (sessionId !== session.session_id && candidate.status === "active" && typeof candidate.worktree_path === "string" && path.resolve(candidate.worktree_path) === path.resolve(session.worktree_path)) {
+          state.sessions[sessionId] = {
+            ...candidate,
+            status: "superseded",
+            superseded_by: session.session_id,
+            superseded_at: now,
+            updated_at: now,
+          };
+        }
+      }
+    }
     state.sessions[session.session_id] = clearTerminalLifecycleFields({
       ...previous,
       ...session,
       state_version: (previous?.state_version ?? 0) + 1,
       safety_refs: session.safety_refs ?? previous?.safety_refs ?? [],
-      created_at: previous?.created_at ?? new Date().toISOString(),
-      updated_at: new Date().toISOString(),
+      created_at: previous?.created_at ?? now,
+      updated_at: now,
     });
     return state;
   }, { ...options, event: options.event ?? { type: "session_recorded", session_id: session.session_id } });

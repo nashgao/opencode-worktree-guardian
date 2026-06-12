@@ -4,6 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { DEFAULT_CONFIG } from "../src/config.ts";
 import { guardianDone } from "../src/done.ts";
+import { guardianStatus } from "../src/recover.ts";
 import { guardianStart } from "../src/tools.ts";
 import { createRepoWithOrigin, git } from "./helpers.ts";
 
@@ -130,21 +131,35 @@ test("guardian_done applies dirty primary-main publish and returns fresh cleanup
 
 
 
-test("guardian_done blocks dirty primary work when an active session owns another lane", async (t) => {
+test("guardian_done plans dirty primary publish when an active session owns another lane", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
   const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_done_wrong_lane", taskName: "done wrong lane", createWorktree: true, config: DEFAULT_CONFIG });
   await fs.writeFile(path.join(repo, "wrong-lane.txt"), "primary dirt\n");
 
-  const result = asDone(await guardianDone({ repoRoot: repo, cwd: repo, mode: "plan", sessionId: "ses_done_wrong_lane" }));
+  const result = asDone(await guardianDone({ repoRoot: repo, cwd: repo, mode: "plan", sessionId: "ses_done_wrong_lane", commitMessage: "feat: publish primary work" }));
+
+  assert.equal(result.ok, true);
+  assert.equal(result.status, "planned");
+  assert.equal(result.lane, "primary-main-publish");
+  assert.deepEqual(result.dirtySnapshot.paths, ["wrong-lane.txt"]);
+  assert.equal(result.commitMessage, "feat: publish primary work");
+  assert.equal(typeof result.confirmToken, "string");
+  assert.equal(await pathExists(started.session.worktree_path), true);
+});
+
+test("guardian_done still requires an explicit message for dirty primary publish when a session owns another lane", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_done_wrong_lane_no_message", taskName: "done wrong lane no message", createWorktree: true, config: DEFAULT_CONFIG });
+  await fs.writeFile(path.join(repo, "wrong-lane.txt"), "primary dirt\n");
+
+  const result = asDone(await guardianDone({ repoRoot: repo, cwd: repo, mode: "plan", sessionId: "ses_done_wrong_lane_no_message" }));
 
   assert.equal(result.ok, false);
   assert.equal(result.status, "blocked");
-  assert.equal(result.lane, "wrong-lane-dirty-work");
+  assert.match(result.reason, /commitMessage is required/);
   assert.deepEqual(result.dirtyFiles, ["wrong-lane.txt"]);
-  assert.match(result.reason, /outside the active Guardian lane/);
-  assert.doesNotMatch(result.reason, /sessionId|required|confirmToken|confirm token/);
-  assert.equal(await pathExists(started.session.worktree_path), true);
 });
 
 test("guardian_done finishes the active session from primary cwd when primary is clean", async (t) => {
@@ -159,6 +174,27 @@ test("guardian_done finishes the active session from primary cwd when primary is
   assert.equal(result.status, "pr-suggested");
   assert.equal(result.preflight.currentWorktree, started.session.worktree_path);
   assert.equal(result.preflight.sessionOwnedWorktree, true);
+});
+
+test("guardian_done reattaches a new session inside an existing Guardian worktree", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_done_lost_original", taskName: "done lost original", createWorktree: true, config: DEFAULT_CONFIG });
+  await fs.writeFile(path.join(started.session.worktree_path, "reattached.txt"), "reattached\n");
+  await git(started.session.worktree_path, ["add", "reattached.txt"]);
+  await git(started.session.worktree_path, ["commit", "-m", "add reattached work"]);
+
+  const result = asDone(await guardianDone({ repoRoot: repo, cwd: started.session.worktree_path, sessionId: "ses_done_new_session", timestamp: "20260609T030303" }));
+
+  assert.equal(result.ok, true);
+  assert.equal(result.lane, "session-finish");
+  assert.equal(result.status, "pr-suggested");
+  assert.equal(result.reattached, true);
+  assert.equal(result.preflight.sessionId, "ses_done_new_session");
+  assert.equal(result.preflight.currentWorktree, started.session.worktree_path);
+  const status = await guardianStatus({ repoRoot: repo, config: DEFAULT_CONFIG });
+  assert.equal(status.terminalSessions.some((session: Record<string, unknown>) => session.session_id === "ses_done_new_session" && session.status === "preserved"), true);
+  assert.equal(status.terminalSessions.some((session: Record<string, unknown>) => session.session_id === "ses_done_lost_original" && session.status === "superseded"), true);
 });
 
 test("guardian_done blocks protected primary rescue scenarios outside base branch", async (t) => {

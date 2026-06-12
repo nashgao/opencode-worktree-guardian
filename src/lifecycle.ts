@@ -1,4 +1,4 @@
-export const TERMINAL_SESSION_STATUSES = new Set(["deleted", "abandoned", "finished", "preserved"]);
+export const TERMINAL_SESSION_STATUSES = new Set(["deleted", "abandoned", "finished", "preserved", "superseded"]);
 
 export function isTerminalSessionStatus(status: unknown) {
   return typeof status === "string" && TERMINAL_SESSION_STATUSES.has(status);

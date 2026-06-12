@@ -10,7 +10,7 @@ import { guardianFinish } from "./finish.ts";
 import { createSafetyRef, fetchRemote, getCurrentBranch, getHeadCommit, getRefCommit, getRepoRoot, isAncestor, listStashes, runGit } from "./git.ts";
 import { guardianFinishWorkflow } from "./workflow.ts";
 import { isActiveSession } from "./lifecycle.ts";
-import { getGuardianPaths, readState } from "./state.ts";
+import { getGuardianPaths, readState, recordSession } from "./state.ts";
 
 function samePath(left: string, right: string) {
   return path.resolve(left) === path.resolve(right);
@@ -200,6 +200,31 @@ async function primaryMainDone(repoRoot: string, cwd: string, config: Record<str
   return { ok: true, status: "published", lane: "primary-main-publish", branch, commit, safetyRef, preflight, cleanupPlan };
 }
 
+async function reattachCurrentGuardianWorktree(repoRoot: string, currentWorktree: string, currentBranch: string | null, config: Record<string, any>, sessionId: string, input: Record<string, unknown>) {
+  const guardianRoot = path.resolve(repoRoot, expandWorktreeRoot(String(config.worktreeRoot), repoRoot));
+  if (!isInside(currentWorktree, guardianRoot)) {
+    return blocked("no active Guardian lane is recorded for this session; run guardian_status for recovery details", { lane: "missing-session-lane" });
+  }
+  if (!currentBranch) return blocked("detached HEAD cannot be reattached by guardian_done", { lane: "missing-session-lane", currentWorktree });
+  const protectedBranches = Array.isArray(config.protectedBranches) ? config.protectedBranches : [];
+  if (protectedBranches.includes(currentBranch)) {
+    return blocked("protected branches cannot be reattached as Guardian-owned worktrees", { lane: "missing-session-lane", currentBranch, currentWorktree });
+  }
+
+  const headCommit = await getHeadCommit(currentWorktree);
+  await recordSession(repoRoot, config, {
+    session_id: sessionId,
+    status: "active",
+    branch: currentBranch,
+    worktree_path: currentWorktree,
+    base_ref: `${String(config.remote)}/${String(config.baseBranch)}`,
+    head_commit: headCommit,
+    safety_refs: [],
+  }, { event: { type: "guardian_done_reattach", session_id: sessionId } });
+  const result = await guardianFinish({ ...input, repoRoot, cwd: currentWorktree, sessionId, config });
+  return { ...result, lane: "session-finish", reattached: true };
+}
+
 export async function guardianDone(input: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
   const cwd = typeof input.cwd === "string" ? input.cwd : typeof input.repoRoot === "string" ? input.repoRoot : process.cwd();
   const repoRoot = typeof input.repoRoot === "string" ? input.repoRoot : await getRepoRoot(cwd);
@@ -219,10 +244,13 @@ export async function guardianDone(input: Record<string, unknown> = {}): Promise
     if (!samePath(currentWorktree, currentSession.worktree_path)) {
       const snapshot = samePath(currentWorktree, repoRoot) ? await dirtySnapshot(repoRoot, config) : { paths: [] };
       if (snapshot.paths.length > 0) {
+        if (currentBranch === baseBranch && protectedBranches.includes(baseBranch)) {
+          return primaryMainDone(repoRoot, currentWorktree, config, input);
+        }
         return blocked("changes were made outside the active Guardian lane; consolidate them before finishing", {
           lane: "wrong-lane-dirty-work",
           dirtyFiles: snapshot.paths,
-          nextAction: "Review the dirty files, then rerun guardian_done after they are moved into the active lane or intentionally published from primary.",
+          nextAction: "Review the dirty files, then rerun guardian_done after they are moved into the active lane.",
         });
       }
       const result = await guardianFinish({ ...input, repoRoot, cwd: currentSession.worktree_path, sessionId, config });
@@ -233,7 +261,7 @@ export async function guardianDone(input: Record<string, unknown> = {}): Promise
   }
 
   if (typeof input.sessionId === "string" && !samePath(currentWorktree, repoRoot)) {
-    return blocked("no active Guardian lane is recorded for this session; run guardian_status for recovery details", { lane: "missing-session-lane" });
+    return reattachCurrentGuardianWorktree(repoRoot, currentWorktree, currentBranch, config, input.sessionId, input);
   }
 
   if (samePath(currentWorktree, repoRoot) && currentBranch === baseBranch && protectedBranches.includes(baseBranch)) {
