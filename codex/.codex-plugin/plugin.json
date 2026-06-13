@@ -1,0 +1,31 @@
+{
+  "name": "opencode-worktree-guardian",
+  "version": "0.1.0",
+  "description": "Codex adapter for Guardian worktree safety hooks and commands.",
+  "author": {
+    "name": "Nash Gao"
+  },
+  "homepage": "https://github.com/nashgao/opencode-worktree-guardian",
+  "repository": "https://github.com/nashgao/opencode-worktree-guardian",
+  "license": "MIT",
+  "keywords": ["codex", "codex-plugin", "git", "worktree", "safety"],
+  "skills": "./skills/",
+  "hooks": "./hooks/hooks.json",
+  "interface": {
+    "displayName": "Worktree Guardian",
+    "shortDescription": "Guard Codex git/worktree workflows from unsafe destructive actions.",
+    "longDescription": "Worktree Guardian reuses the Guardian safety engine to block unsafe shell/git commands in Codex hooks and provides skill-driven command wrappers for Guardian workflows.",
+    "developerName": "Nash Gao",
+    "category": "Developer Tools",
+    "capabilities": ["Hooks", "Workflow", "Git Safety"],
+    "websiteURL": "https://github.com/nashgao/opencode-worktree-guardian",
+    "privacyPolicyURL": "https://github.com/nashgao/opencode-worktree-guardian#readme",
+    "termsOfServiceURL": "https://github.com/nashgao/opencode-worktree-guardian#license",
+    "defaultPrompt": [
+      "Run guardian status",
+      "Run guardian done in plan mode"
+    ],
+    "brandColor": "#2563EB",
+    "screenshots": []
+  }
+}

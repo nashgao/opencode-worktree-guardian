@@ -7,21 +7,40 @@ import { guardianDeleteWorktree } from "../src/delete.ts";
 import { guardianStatus } from "../src/recover.ts";
 import { recordSession } from "../src/state.ts";
 import { guardianStart } from "../src/tools.ts";
+import type { GuardianSession, GuardianToolResult } from "../src/types.ts";
 import { createRepoWithOrigin, git } from "./helpers.ts";
 
 type DeleteResult = Record<string, unknown> & {
   ok: boolean;
   status: string;
-  reason?: string;
-  confirmToken?: string;
-  safetyRef?: string;
-  branchDeleted?: boolean;
+  reason: string;
+  confirmToken: string;
+  safetyRef: string;
+  branchDeleted: boolean;
   preflight: Record<string, unknown>;
   report: Record<string, unknown>;
 };
 
+type StartedSession = GuardianSession & {
+  readonly session_id: string;
+  readonly branch: string;
+  readonly worktree_path: string;
+};
+
+type StartSuccess = GuardianToolResult & {
+  readonly ok: true;
+  readonly session: StartedSession;
+};
+
+function assertStartSuccess(result: GuardianToolResult): asserts result is StartSuccess {
+  assert.equal(result.ok, true);
+  assert.equal(typeof result.session?.session_id, "string");
+  assert.equal(typeof result.session?.branch, "string");
+  assert.equal(typeof result.session?.worktree_path, "string");
+}
+
 async function createGuardianWorktree(repo: string, sessionId: string, taskName = sessionId, branch = `guardian/${sessionId}`) {
-  return guardianStart({
+  const result = await guardianStart({
     repoRoot: repo,
     cwd: repo,
     sessionId,
@@ -30,6 +49,8 @@ async function createGuardianWorktree(repo: string, sessionId: string, taskName 
     createWorktree: true,
     config: DEFAULT_CONFIG,
   });
+  assertStartSuccess(result);
+  return result;
 }
 
 async function worktreePaths(repo: string) {
@@ -48,6 +69,12 @@ async function deleteWorktree(input: Record<string, unknown>) {
 function assertNoExpectedToken(result: Record<string, unknown>) {
   assert.equal(Object.hasOwn(result, "expectedToken"), false);
   assert.equal(JSON.stringify(result).includes("expectedToken"), false);
+}
+
+function findSession(status: Awaited<ReturnType<typeof guardianStatus>>, sessionId: string): GuardianSession {
+  const session = status.sessions.find((candidate) => candidate.session_id === sessionId);
+  assert.ok(session);
+  return session;
 }
 
 test("plan mode is read-only and returns a confirm token", async () => {
@@ -249,11 +276,11 @@ test("stash inventory blocks deletion before safety refs", async () => {
 test("protected branches and primary/current worktrees are blocked", async () => {
   const { base, repo } = await createRepoWithOrigin();
   test.after(() => fs.rm(base, { recursive: true, force: true }));
-  const protectedStart = await createGuardianWorktree(repo, "ses_delete_protected", "delete protected", "develop");
+  const protectedStart = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_delete_protected", taskName: "delete protected", branch: "develop", createWorktree: true, config: DEFAULT_CONFIG });
   const currentStart = await createGuardianWorktree(repo, "ses_delete_current");
 
   assert.equal(protectedStart.ok, false);
-  assert.match(protectedStart.reason, /protected/);
+  assert.match(String(protectedStart.reason), /protected/);
 
   const protectedResult = await deleteWorktree({ repoRoot: repo, cwd: repo, mode: "plan", branch: "develop", config: DEFAULT_CONFIG });
   assert.equal(protectedResult.ok, false);
@@ -289,7 +316,7 @@ test("apply creates a safety ref, removes only the worktree, and keeps the branc
   assert.equal(await branchExists(repo, "guardian/delete-apply"), true);
   const status = await guardianStatus({ repoRoot: repo, config: DEFAULT_CONFIG });
   assert.equal(status.safetyRefs.some((ref: Record<string, unknown>) => ref.name === result.safetyRef), true);
-  const session = status.sessions.find((candidate: Record<string, unknown>) => candidate.session_id === "ses_delete_apply");
+  const session = findSession(status, "ses_delete_apply");
   assert.equal(session.status, "deleted");
   assert.deepEqual(session.safety_refs, [result.safetyRef]);
   assert.equal(status.orphanedSessions.some((candidate: Record<string, unknown>) => candidate.session_id === "ses_delete_apply"), false);
@@ -354,7 +381,7 @@ test("abandonUnmerged=true plans and applies explicit unmerged worktree abandon"
   assert.equal(await branchExists(repo, branch), false);
   assert.match(result.safetyRef, /^refs\/opencode-guardian\/ses_delete_abandon_unmerged\/guardian\/delete-abandon-unmerged\//);
   const status = await guardianStatus({ repoRoot: repo, config: DEFAULT_CONFIG });
-  const session = status.sessions.find((candidate: Record<string, unknown>) => candidate.session_id === sessionId);
+  const session = findSession(status, sessionId);
   assert.equal(session.status, "abandoned");
   assert.equal(session.deleted_worktree_path, start.session.worktree_path);
   assert.equal(session.deleted_branch, branch);
@@ -449,7 +476,7 @@ test("deleteBranch=true deletes a Guardian orphan branch when the recorded workt
   assert.equal(await branchExists(repo, branch), false);
   assert.match(result.safetyRef, /^refs\/opencode-guardian\/ses_delete_orphan_branch\/guardian\/delete-orphan-branch\//);
   const status = await guardianStatus({ repoRoot: repo, config: DEFAULT_CONFIG });
-  const session = status.sessions.find((candidate: Record<string, unknown>) => candidate.session_id === sessionId);
+  const session = findSession(status, sessionId);
   assert.equal(session.status, "deleted");
   assert.equal(session.deleted_worktree_path, absentWorktree);
   assert.equal(session.deleted_branch, branch);
@@ -502,7 +529,7 @@ test("abandonUnmerged=true abandons an unmerged Guardian orphan branch when the 
   assert.equal(await branchExists(repo, branch), false);
   assert.match(result.safetyRef, /^refs\/opencode-guardian\/ses_delete_orphan_abandon\/guardian\/delete-orphan-abandon\//);
   const status = await guardianStatus({ repoRoot: repo, config: DEFAULT_CONFIG });
-  const session = status.sessions.find((candidate: Record<string, unknown>) => candidate.session_id === sessionId);
+  const session = findSession(status, sessionId);
   assert.equal(session.status, "abandoned");
   assert.equal(session.deleted_worktree_path, absentWorktree);
   assert.equal(session.deleted_branch, branch);
@@ -547,7 +574,7 @@ test("deleteBranch=true deletes only the branch when Guardian state records the 
   assert.equal((await worktreePaths(repo)).includes(repo), true);
   assert.match(result.safetyRef, /^refs\/opencode-guardian\/ses_delete_poisoned_root\/guardian\/delete-poisoned-root\//);
   const status = await guardianStatus({ repoRoot: repo, config: DEFAULT_CONFIG });
-  const session = status.sessions.find((candidate: Record<string, unknown>) => candidate.session_id === sessionId);
+  const session = findSession(status, sessionId);
   assert.equal(session.status, "deleted");
   assert.equal(session.deleted_worktree_path, repo);
   assert.equal(session.deleted_branch, branch);
@@ -626,7 +653,7 @@ test("deleteBranch=true deletes a stale branch when terminal Guardian state prov
   assert.equal(await branchExists(repo, branch), false);
   assert.match(result.safetyRef, /^refs\/opencode-guardian\/ses_delete_stale_terminal\/guardian\/delete-stale-terminal\//);
   const status = await guardianStatus({ repoRoot: repo, config: DEFAULT_CONFIG });
-  const session = status.sessions.find((candidate: Record<string, unknown>) => candidate.session_id === sessionId);
+  const session = findSession(status, sessionId);
   assert.equal(session.status, "deleted");
   assert.equal(session.deleted_worktree_path, absentWorktree);
   assert.equal(session.deleted_branch, branch);
@@ -670,7 +697,7 @@ test("deleteBranch=true plans stale branch cleanup from deleted sessionId", asyn
   assert.equal(await branchExists(repo, branch), false);
   assert.match(result.safetyRef, /^refs\/opencode-guardian\/ses_delete_stale_by_session\/guardian\/delete-stale-by-session\//);
   const status = await guardianStatus({ repoRoot: repo, config: DEFAULT_CONFIG });
-  const session = status.sessions.find((candidate: Record<string, unknown>) => candidate.session_id === sessionId);
+  const session = findSession(status, sessionId);
   assert.equal(session.status, "deleted");
   assert.equal(session.deleted_worktree_path, absentWorktree);
   assert.equal(session.deleted_branch, branch);
@@ -876,7 +903,7 @@ test("abandonUnmerged=true is required for unmerged stale branch deletion", asyn
   assert.equal(result.branchDeleted, true);
   assert.equal(await branchExists(repo, branch), false);
   const status = await guardianStatus({ repoRoot: repo, config: DEFAULT_CONFIG });
-  const session = status.sessions.find((candidate: Record<string, unknown>) => candidate.session_id === sessionId);
+  const session = findSession(status, sessionId);
   assert.equal(session.status, "abandoned");
   assert.equal(session.branch_only_delete, true);
   assert.equal(session.abandoned_branch, branch);
@@ -1019,7 +1046,7 @@ test("deleteBranch=true reports partial success when branch deletion fails after
   assert.equal((await worktreePaths(repo)).includes(start.session.worktree_path), false);
   assert.equal(await branchExists(repo, "guardian/delete-partial"), true);
   const status = await guardianStatus({ repoRoot: repo, config: DEFAULT_CONFIG });
-  const session = status.sessions.find((candidate: Record<string, unknown>) => candidate.session_id === "ses_delete_partial");
+  const session = findSession(status, "ses_delete_partial");
   assert.equal(session.status, "deleted");
   assert.equal(session.branch_delete_failed, true);
   assert.equal(session.deleted_branch, null);

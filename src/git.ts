@@ -1,25 +1,39 @@
 import { execFile, spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import { promisify } from "node:util";
+import { gitMetadataFromError, withGitMetadata } from "./types.ts";
+import type { ExecFileOptionsWithStringEncoding, SpawnOptionsWithoutStdio } from "node:child_process";
+import type { GitCommandFailure, GitCommandOutput, WorktreeEntry } from "./types.ts";
 
 const execFileAsync = promisify(execFile);
 
-export async function runGit(repoPath: string, args: string[], options: Record<string, any> = {}) {
+export type TryGitResult =
+  | ({ readonly ok: true } & GitCommandOutput)
+  | ({ readonly ok: false; readonly error: GitCommandFailure } & GitCommandOutput);
+
+export type GitStashEntry = { readonly name: string; readonly commit: string; readonly message: string };
+export type GitRefEntry = { readonly name: string; readonly commit: string; readonly date: string; readonly subject: string };
+export type GitBranchEntry = { readonly name: string; readonly commit: string };
+export type GitCommitEntry = { readonly commit: string; readonly subject: string };
+export type GitRecoveryCandidates = { readonly reflog: readonly (GitCommitEntry & { readonly selector: string })[]; readonly unreachable: readonly string[] };
+type CreateSafetyRefOptions = { readonly sessionId?: unknown; readonly branch?: unknown; readonly commit?: string; readonly timestamp?: unknown };
+type GitExecOptions = Omit<ExecFileOptionsWithStringEncoding, "encoding">;
+type GitSpawnOptions = Omit<SpawnOptionsWithoutStdio, "stdio">;
+
+export async function runGit(repoPath: string, args: readonly string[], options: GitExecOptions = {}): Promise<GitCommandOutput> {
   try {
     const { stdout, stderr } = await execFileAsync("git", ["-C", repoPath, ...args], {
       maxBuffer: 10 * 1024 * 1024,
+      encoding: "utf8",
       ...options,
     });
     return { stdout: stdout.trim(), stderr: stderr.trim() };
-  } catch (error: any) {
-    error.gitArgs = args;
-    error.gitStdout = error.stdout?.trim?.() ?? "";
-    error.gitStderr = error.stderr?.trim?.() ?? "";
-    throw error;
+  } catch (error) {
+    throw withGitMetadata(error, gitMetadataFromError(args, error));
   }
 }
 
-export async function runGitNullSeparated(repoPath: string, args: string[], options: Record<string, any> = {}) {
+export async function runGitNullSeparated(repoPath: string, args: readonly string[], options: GitSpawnOptions = {}): Promise<string[]> {
   return new Promise<string[]>((resolve, reject) => {
     const child = spawn("git", ["-C", repoPath, ...args], { ...options, stdio: ["ignore", "pipe", "pipe"] });
     const decoder = new StringDecoder("utf8");
@@ -44,10 +58,7 @@ export async function runGitNullSeparated(repoPath: string, args: string[], opti
     });
 
     child.on("error", (error: NodeJS.ErrnoException) => {
-      (error as any).gitArgs = args;
-      (error as any).gitStdout = "";
-      (error as any).gitStderr = stderr.trim();
-      reject(error);
+      reject(withGitMetadata(error, gitMetadataFromError(args, error, { stdout: "", stderr: stderr.trim() })));
     });
 
     child.on("close", (code, signal) => {
@@ -61,19 +72,23 @@ export async function runGitNullSeparated(repoPath: string, args: string[], opti
         return;
       }
       const error = new Error(`git ${args.join(" ")} failed${signal ? ` with signal ${signal}` : ` with exit code ${code}`}`);
-      (error as any).gitArgs = args;
-      (error as any).gitStdout = "";
-      (error as any).gitStderr = stderr.trim();
-      reject(error);
+      reject(withGitMetadata(error, {
+        gitArgs: [...args],
+        gitStdout: "",
+        gitStderr: stderr.trim(),
+        ...(typeof code === "number" ? { gitExitCode: code } : {}),
+        ...(signal ? { gitSignal: signal } : {}),
+      }));
     });
   });
 }
 
-export async function tryGit(repoPath: string, args: string[]) {
+export async function tryGit(repoPath: string, args: readonly string[]): Promise<TryGitResult> {
   try {
     return { ok: true, ...(await runGit(repoPath, args)) };
   } catch (error) {
-    return { ok: false, error, stdout: error.gitStdout ?? "", stderr: error.gitStderr ?? "" };
+    const failure = withGitMetadata(error, gitMetadataFromError(args, error));
+    return { ok: false, error: failure, stdout: failure.gitStdout, stderr: failure.gitStderr };
   }
 }
 
@@ -131,7 +146,7 @@ export async function getIgnoredFiles(repoRoot: string) {
   return status.split("\n").filter((line) => line.startsWith("!! ")).map((line) => line.slice(3)).filter(Boolean);
 }
 
-export async function listStashes(repoRoot: string) {
+export async function listStashes(repoRoot: string): Promise<GitStashEntry[]> {
   const result = await tryGit(repoRoot, ["stash", "list", "--format=%gd%x00%H%x00%gs"]);
   if (!result.ok || !result.stdout) return [];
   return result.stdout.split("\n").map((line: string) => {
@@ -140,11 +155,11 @@ export async function listStashes(repoRoot: string) {
   });
 }
 
-export async function listWorktrees(repoRoot: string) {
+export async function listWorktrees(repoRoot: string): Promise<WorktreeEntry[]> {
   const { stdout } = await runGit(repoRoot, ["worktree", "list", "--porcelain"]);
   if (!stdout) return [];
-  const entries = [];
-  let current = null;
+  const entries: WorktreeEntry[] = [];
+  let current: { path: string; head?: string; branch?: string; detached?: boolean; bare?: boolean } | null = null;
   for (const line of stdout.split("\n")) {
     if (line.startsWith("worktree ")) {
       if (current) entries.push(current);
@@ -177,7 +192,7 @@ function defaultRefTimestamp() {
   return new Date().toISOString().replace(/[-:.]/g, "").slice(0, 15);
 }
 
-function safeRefTimestamp(timestamp: Date | string | undefined) {
+function safeRefTimestamp(timestamp: unknown) {
   if (timestamp instanceof Date) return defaultRefTimestampFromDate(timestamp);
   const stamp = safeRefSegment(timestamp);
   return stamp === "unknown" ? defaultRefTimestamp() : stamp;
@@ -187,12 +202,12 @@ function defaultRefTimestampFromDate(timestamp: Date) {
   return timestamp.toISOString().replace(/[-:.]/g, "").slice(0, 15);
 }
 
-export function buildSafetyRef(sessionId: string, branch: string, timestamp: Date | string = new Date()) {
+export function buildSafetyRef(sessionId: string, branch: string, timestamp: unknown = new Date()) {
   const stamp = safeRefTimestamp(timestamp);
   return `refs/opencode-guardian/${safeRefSegment(sessionId)}/${safeRefSegment(branch)}/${stamp}`;
 }
 
-export function buildPreservedRef(sessionId: string, branch: string, timestamp: Date | string = new Date()) {
+export function buildPreservedRef(sessionId: string, branch: string, timestamp: unknown = new Date()) {
   const stamp = safeRefTimestamp(timestamp);
   return `refs/opencode-guardian/preserved/${safeRefSegment(sessionId)}/${safeRefSegment(branch)}/${stamp}`;
 }
@@ -202,13 +217,13 @@ export async function createRef(repoRoot: string, refName: string, commit = "HEA
   return refName;
 }
 
-export async function createSafetyRef(repoRoot: string, { sessionId, branch, commit = "HEAD", timestamp }: Record<string, any> = {}) {
-  const ref = buildSafetyRef(sessionId, branch, timestamp);
+export async function createSafetyRef(repoRoot: string, { sessionId, branch, commit = "HEAD", timestamp }: CreateSafetyRefOptions = {}) {
+  const ref = buildSafetyRef(String(sessionId ?? ""), String(branch ?? ""), timestamp);
   await createRef(repoRoot, ref, commit);
   return ref;
 }
 
-export async function listRefs(repoRoot: string, prefix: string) {
+export async function listRefs(repoRoot: string, prefix: string): Promise<GitRefEntry[]> {
   const result = await tryGit(repoRoot, ["for-each-ref", "--format=%(refname)%00%(objectname)%00%(committerdate:iso8601)%00%(subject)", prefix]);
   if (!result.ok || !result.stdout) return [];
   return result.stdout.split("\n").map((line: string) => {
@@ -222,7 +237,7 @@ export async function isAncestor(repoRoot: string, commit: string, ref: string) 
   return result.ok;
 }
 
-export async function listUnmergedCommits(repoRoot: string, head: string, baseRef: string) {
+export async function listUnmergedCommits(repoRoot: string, head: string, baseRef: string): Promise<GitCommitEntry[]> {
   const result = await runGit(repoRoot, ["log", "--format=%H%x00%s", `${baseRef}..${head}`]);
   if (!result.stdout) return [];
   return result.stdout.split("\n").map((line: string) => {
@@ -251,7 +266,7 @@ export async function abandonBranch(repoRoot: string, branch: string) {
   await runGit(repoRoot, ["branch", "-D", "--", branch]);
 }
 
-export async function listBranches(repoRoot: string) {
+export async function listBranches(repoRoot: string): Promise<GitBranchEntry[]> {
   const result = await tryGit(repoRoot, ["for-each-ref", "--format=%(refname:short)%00%(objectname)", "refs/heads"]);
   if (!result.ok || !result.stdout) return [];
   return result.stdout.split("\n").map((line: string) => {
@@ -260,7 +275,7 @@ export async function listBranches(repoRoot: string) {
   });
 }
 
-export async function listRecoveryCandidates(repoRoot: string) {
+export async function listRecoveryCandidates(repoRoot: string): Promise<GitRecoveryCandidates> {
   const reflog = await tryGit(repoRoot, ["reflog", "--format=%H%x00%gd%x00%gs", "-n", "25"]);
   const unreachable = await tryGit(repoRoot, ["fsck", "--no-reflogs", "--unreachable"]);
   return {

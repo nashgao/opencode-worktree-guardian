@@ -3,10 +3,23 @@ import type { FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { getCommonGitDir } from "./git.ts";
 import { clearTerminalLifecycleFields } from "./lifecycle.ts";
+import type { GuardianConfig, GuardianPaths, GuardianSession, GuardianState, GuardianStateRecord, RecordLike } from "./types.ts";
+import { errorCode, isRecordLike } from "./types.ts";
 
 export const STATE_SCHEMA_VERSION = "1.0.0";
 
-export async function getGuardianPaths(repoRoot: string) {
+export type StateErrorKind = "invalid_shape" | "unsupported_schema" | "symlink" | "lock_timeout";
+export type StateBoundaryError = Error & { readonly stateErrorKind: StateErrorKind; readonly guardianPath?: string };
+type GuardianConfigInput = GuardianConfig | RecordLike;
+
+function stateError(kind: StateErrorKind, message: string, guardianPath?: string): StateBoundaryError {
+  return Object.assign(new Error(message), {
+    stateErrorKind: kind,
+    ...(guardianPath === undefined ? {} : { guardianPath }),
+  });
+}
+
+export async function getGuardianPaths(repoRoot: string): Promise<GuardianPaths> {
   const gitDir = await getCommonGitDir(repoRoot);
   const dir = path.join(gitDir, "opencode-guardian");
   return {
@@ -18,15 +31,15 @@ export async function getGuardianPaths(repoRoot: string) {
   };
 }
 
-export function createEmptyState({ repoRoot, config }: Record<string, any>) {
+export function createEmptyState({ repoRoot, config }: { readonly repoRoot: string; readonly config: GuardianConfigInput }): GuardianState {
   return {
     schema_version: STATE_SCHEMA_VERSION,
     state_version: 0,
     repo_root: repoRoot,
-    base_branch: config.baseBranch,
-    remote: config.remote,
-    finish_mode: config.finishMode,
-    worktree_root: config.worktreeRoot,
+    base_branch: typeof config.baseBranch === "string" ? config.baseBranch : "",
+    remote: typeof config.remote === "string" ? config.remote : "",
+    finish_mode: typeof config.finishMode === "string" ? config.finishMode : "",
+    worktree_root: typeof config.worktreeRoot === "string" ? config.worktreeRoot : "",
     sessions: {},
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
@@ -36,31 +49,39 @@ export function createEmptyState({ repoRoot, config }: Record<string, any>) {
 async function assertNotSymlink(filePath: string, label: string) {
   try {
     const stat = await fs.lstat(filePath);
-    if (stat.isSymbolicLink()) throw new Error(`Refusing guardian ${label} symlink: ${filePath}`);
-  } catch (error: any) {
-    if (error.code !== "ENOENT") throw error;
+    if (stat.isSymbolicLink()) throw stateError("symlink", `Refusing guardian ${label} symlink: ${filePath}`, filePath);
+  } catch (error) {
+    if (errorCode(error) !== "ENOENT") throw error;
   }
 }
 
-function validateStateShape(state: any) {
-  if (!state || typeof state !== "object" || Array.isArray(state)) throw new Error("Invalid guardian state: expected object");
+function validateStateShape(state: unknown): GuardianStateRecord {
+  if (!state || typeof state !== "object" || Array.isArray(state)) throw stateError("invalid_shape", "Invalid guardian state: expected object");
+  if (!isRecordLike(state)) throw stateError("invalid_shape", "Invalid guardian state: expected object");
   if (state.schema_version !== STATE_SCHEMA_VERSION) {
-    throw new Error(`Unsupported guardian state schema_version: ${state.schema_version}`);
+    throw stateError("unsupported_schema", `Unsupported guardian state schema_version: ${String(state.schema_version)}`);
   }
-  if (typeof state.state_version !== "number") throw new Error("Invalid guardian state: state_version must be a number");
+  if (typeof state.state_version !== "number") throw stateError("invalid_shape", "Invalid guardian state: state_version must be a number");
   if (!state.sessions || typeof state.sessions !== "object" || Array.isArray(state.sessions)) {
-    throw new Error("Invalid guardian state: sessions must be an object");
+    throw stateError("invalid_shape", "Invalid guardian state: sessions must be an object");
   }
-  return state;
+  const sessions: Record<string, GuardianSession> = {};
+  for (const [sessionId, session] of Object.entries(state.sessions)) {
+    if (isRecordLike(session)) sessions[sessionId] = session;
+  }
+  return {
+    ...state,
+    sessions,
+  };
 }
 
-export async function readState(paths: Record<string, string>, context: Record<string, any>) {
+export async function readState(paths: GuardianPaths, context: { readonly repoRoot: string; readonly config: GuardianConfigInput }): Promise<GuardianStateRecord> {
   try {
     await assertNotSymlink(paths.statePath, "state");
     const raw = await fs.readFile(paths.statePath, "utf8");
     return validateStateShape(JSON.parse(raw));
   } catch (error) {
-    if (error.code !== "ENOENT") throw error;
+    if (errorCode(error) !== "ENOENT") throw error;
     return createEmptyState(context);
   }
 }
@@ -69,7 +90,7 @@ async function sleep(ms: number) {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export async function acquireStateLock(paths: Record<string, string>, options: Record<string, any> = {}) {
+export async function acquireStateLock(paths: GuardianPaths, options: { readonly timeoutMs?: number } = {}) {
   const timeoutMs = options.timeoutMs ?? 5_000;
   const started = Date.now();
   await fs.mkdir(paths.dir, { recursive: true });
@@ -80,24 +101,25 @@ export async function acquireStateLock(paths: Record<string, string>, options: R
       await assertNotSymlink(paths.lockPath, "lock");
       handle = await fs.open(paths.lockPath, "wx");
       await handle.writeFile(JSON.stringify({ pid: process.pid, acquired_at: new Date().toISOString() }));
+      const acquiredHandle = handle;
       return async () => {
-        await handle.close();
+        await acquiredHandle.close();
         await fs.unlink(paths.lockPath).catch((error) => {
-          if (error.code !== "ENOENT") throw error;
+          if (errorCode(error) !== "ENOENT") throw error;
         });
       };
     } catch (error) {
       if (handle) await handle.close().catch(() => {});
-      if (error.code !== "EEXIST") throw error;
+      if (errorCode(error) !== "EEXIST") throw error;
       if (Date.now() - started >= timeoutMs) {
-        throw new Error(`Timed out acquiring guardian state lock at ${paths.lockPath}`);
+        throw stateError("lock_timeout", `Timed out acquiring guardian state lock at ${paths.lockPath}`, paths.lockPath);
       }
       await sleep(25);
     }
   }
 }
 
-export async function writeStateAtomic(paths: Record<string, string>, state: Record<string, any>) {
+export async function writeStateAtomic(paths: GuardianPaths, state: GuardianState | GuardianStateRecord) {
   await fs.mkdir(paths.dir, { recursive: true });
   await assertNotSymlink(paths.statePath, "state");
   const tmpPath = `${paths.statePath}.${process.pid}.${Date.now()}.tmp`;
@@ -105,7 +127,7 @@ export async function writeStateAtomic(paths: Record<string, string>, state: Rec
   await fs.rename(tmpPath, paths.statePath);
 }
 
-export async function writeReportAtomic(paths: Record<string, string>, html: string) {
+export async function writeReportAtomic(paths: GuardianPaths, html: string) {
   await fs.mkdir(paths.dir, { recursive: true });
   await assertNotSymlink(paths.reportPath, "report");
   const tmpPath = `${paths.reportPath}.${process.pid}.${Date.now()}.tmp`;
@@ -113,15 +135,15 @@ export async function writeReportAtomic(paths: Record<string, string>, html: str
   await fs.rename(tmpPath, paths.reportPath);
 }
 
-export async function appendEvent(paths: Record<string, string>, event: Record<string, any>) {
+export async function appendEvent(paths: GuardianPaths, event: RecordLike) {
   await fs.mkdir(paths.dir, { recursive: true });
   await assertNotSymlink(paths.eventsPath, "events");
   await fs.appendFile(paths.eventsPath, `${JSON.stringify({ ...event, at: event.at ?? new Date().toISOString() })}\n`);
 }
 
-export async function updateState(repoRoot: string, config: Record<string, any>, updater: (state: any) => any | Promise<any>, options: Record<string, any> = {}) {
+export async function updateState(repoRoot: string, config: GuardianConfigInput, updater: (state: GuardianStateRecord) => GuardianStateRecord | Promise<GuardianStateRecord>, options: { readonly paths?: GuardianPaths; readonly event?: RecordLike } = {}) {
   const paths = options.paths ?? await getGuardianPaths(repoRoot);
-  const release = await acquireStateLock(paths, { timeoutMs: config.lockTimeoutMs });
+  const release = await acquireStateLock(paths, { timeoutMs: typeof config.lockTimeoutMs === "number" ? config.lockTimeoutMs : 5_000 });
   try {
     const previous = await readState(paths, { repoRoot, config });
     const next = await updater(structuredClone(previous));
@@ -142,27 +164,30 @@ export async function updateState(repoRoot: string, config: Record<string, any>,
   }
 }
 
-export async function recordSession(repoRoot: string, config: Record<string, any>, session: Record<string, any>, options: Record<string, any> = {}) {
+export async function recordSession(repoRoot: string, config: GuardianConfigInput, session: GuardianSession, options: { readonly paths?: GuardianPaths; readonly event?: RecordLike } = {}) {
   return updateState(repoRoot, config, (state) => {
-    const previous = state.sessions[session.session_id];
+    if (!state.sessions) state.sessions = {};
+    const sessionId = session.session_id;
+    if (!sessionId) throw new Error("session.session_id is required");
+    const previous = isRecordLike(state.sessions[sessionId]) ? state.sessions[sessionId] : undefined;
     const now = new Date().toISOString();
     if (session.status === "active" && typeof session.worktree_path === "string") {
-      for (const [sessionId, candidate] of Object.entries(state.sessions) as Array<[string, Record<string, any>]>) {
-        if (sessionId !== session.session_id && candidate.status === "active" && typeof candidate.worktree_path === "string" && path.resolve(candidate.worktree_path) === path.resolve(session.worktree_path)) {
-          state.sessions[sessionId] = {
+      for (const [candidateSessionId, candidate] of Object.entries(state.sessions)) {
+        if (candidateSessionId !== sessionId && isRecordLike(candidate) && candidate.status === "active" && typeof candidate.worktree_path === "string" && path.resolve(candidate.worktree_path) === path.resolve(session.worktree_path)) {
+          state.sessions[candidateSessionId] = {
             ...candidate,
             status: "superseded",
-            superseded_by: session.session_id,
+            superseded_by: sessionId,
             superseded_at: now,
             updated_at: now,
           };
         }
       }
     }
-    state.sessions[session.session_id] = clearTerminalLifecycleFields({
+    state.sessions[sessionId] = clearTerminalLifecycleFields({
       ...previous,
       ...session,
-      state_version: (previous?.state_version ?? 0) + 1,
+      state_version: (typeof previous?.state_version === "number" ? previous.state_version : 0) + 1,
       safety_refs: session.safety_refs ?? previous?.safety_refs ?? [],
       created_at: previous?.created_at ?? now,
       updated_at: now,

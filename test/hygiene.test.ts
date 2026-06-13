@@ -4,7 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { DEFAULT_CONFIG } from "../src/config.ts";
 import { runGitNullSeparated } from "../src/git.ts";
-import { guardianHygiene, guardianHygieneCleanup, scanWorkspaceHygiene } from "../src/hygiene.ts";
+import { guardianHygiene, scanWorkspaceHygiene } from "../src/hygiene.ts";
 import { guardianStatus } from "../src/recover.ts";
 import { createRepo, createRepoWithOrigin, createTempDir, git } from "./helpers.ts";
 import { guardianStart, runGuardianTool } from "../src/tools.ts";
@@ -136,6 +136,7 @@ test("guardian_status includes hygiene metadata without changing dirty files", a
   assert.equal(Array.isArray(status.dirtyFiles), true);
   assert.equal(status.dirtyFiles.some((entry: string) => entry.startsWith("librarian-status")), true);
   assert.equal(status.hygiene.ok, true);
+  assert.ok(status.hygiene.summary);
   assert.equal(status.hygiene.summary.findingCount, 1);
   assert.equal(status.hygiene.findings[0].path, "librarian-status");
 });
@@ -178,7 +179,7 @@ test("hygiene cleanup plans and applies all default hygiene targets", async () =
   await git(nested, ["add", "README.md"]);
   await git(nested, ["commit", "-m", "nested initial"]);
 
-  const plan = await runGuardianTool("guardian_hygiene_cleanup", { repoRoot: repo, config: DEFAULT_CONFIG, mode: "plan" });
+  const plan = await runGuardianTool("guardian_hygiene", { repoRoot: repo, config: DEFAULT_CONFIG, mode: "plan" });
 
   assert.equal(plan.ok, true);
   assert.equal(plan.status, "planned");
@@ -191,7 +192,7 @@ test("hygiene cleanup plans and applies all default hygiene targets", async () =
   assert.equal(await pathExists(path.join(repo, "research-dump")), true);
   assert.equal(await pathExists(path.join(repo, "tsx-501")), true);
 
-  const apply = await runGuardianTool("guardian_hygiene_cleanup", { repoRoot: repo, config: DEFAULT_CONFIG, mode: "apply", confirmToken: plan.confirmToken });
+  const apply = await runGuardianTool("guardian_hygiene", { repoRoot: repo, config: DEFAULT_CONFIG, mode: "apply", confirmToken: plan.confirmToken });
 
   assert.equal(apply.ok, true);
   assert.equal(apply.status, "cleaned");
@@ -237,12 +238,12 @@ test("hygiene cleanup plans residue roots when categories are allowed", async ()
   await git(nested, ["add", "README.md"]);
   await git(nested, ["commit", "-m", "nested initial"]);
 
-  const plan = await guardianHygieneCleanup({ repoRoot: repo, config: DEFAULT_CONFIG, mode: "plan", allowCategories: ["nested-git", "suspicious"] });
+  const plan = await guardianHygiene({ repoRoot: repo, config: DEFAULT_CONFIG, mode: "plan", allowCategories: ["nested-git", "suspicious"] });
 
   assert.equal(plan.ok, true);
   assert.deepEqual((plan.targets as Array<Record<string, unknown>>).map((target) => target.path).sort(), ["guardian-clean", "guardian-origin-clean", "opencode-temp-clean"]);
 
-  const apply = await guardianHygieneCleanup({ repoRoot: repo, config: DEFAULT_CONFIG, mode: "apply", allowCategories: ["nested-git", "suspicious"], confirmToken: plan.confirmToken });
+  const apply = await guardianHygiene({ repoRoot: repo, config: DEFAULT_CONFIG, mode: "apply", allowCategories: ["nested-git", "suspicious"], confirmToken: plan.confirmToken });
 
   assert.equal(apply.ok, true);
   assert.equal(apply.status, "cleaned");
@@ -256,11 +257,11 @@ test("hygiene cleanup apply blocks stale tokens when approved target contents ch
   const repo = await createRepo();
   await fs.mkdir(path.join(repo, "librarian-stale"), { recursive: true });
   await fs.writeFile(path.join(repo, "librarian-stale", "file.txt"), "original\n");
-  const plan = await guardianHygieneCleanup({ repoRoot: repo, config: DEFAULT_CONFIG, mode: "plan", cleanupPaths: ["librarian-stale"] });
+  const plan = await guardianHygiene({ repoRoot: repo, config: DEFAULT_CONFIG, mode: "plan", cleanupPaths: ["librarian-stale"] });
   assert.equal(plan.status, "planned");
 
   await fs.writeFile(path.join(repo, "librarian-stale", "file.txt"), "replaced\n");
-  const apply = await guardianHygieneCleanup({ repoRoot: repo, config: DEFAULT_CONFIG, mode: "apply", cleanupPaths: ["librarian-stale"], confirmToken: plan.confirmToken });
+  const apply = await guardianHygiene({ repoRoot: repo, config: DEFAULT_CONFIG, mode: "apply", cleanupPaths: ["librarian-stale"], confirmToken: plan.confirmToken });
 
   assert.equal(apply.ok, false);
   assert.equal(apply.status, "blocked");
@@ -277,7 +278,7 @@ test("hygiene cleanup blocks unsafe selected cleanup roots", async () => {
   await fs.symlink("README.md", path.join(repo, "librarian-link"));
   await writeArtifact(repo, "node_modules/librarian-protected/file.txt");
 
-  const plan = await guardianHygieneCleanup({
+  const plan = await guardianHygiene({
     repoRoot: repo,
     config: DEFAULT_CONFIG,
     mode: "plan",
@@ -315,7 +316,7 @@ test("hygiene cleanup blocks dirty nested git repositories even when category is
   await git(nested, ["commit", "-m", "nested initial"]);
   await fs.writeFile(path.join(nested, "dirty.txt"), "dirty\n");
 
-  const plan = await guardianHygieneCleanup({ repoRoot: repo, config: DEFAULT_CONFIG, mode: "plan", cleanupPaths: ["research-clone"], allowCategories: ["nested-git"] });
+  const plan = await guardianHygiene({ repoRoot: repo, config: DEFAULT_CONFIG, mode: "plan", cleanupPaths: ["research-clone"], allowCategories: ["nested-git"] });
 
   assert.equal(plan.ok, false);
   assert.equal(plan.status, "blocked");
@@ -336,7 +337,7 @@ test("hygiene cleanup can explicitly plan dirty nested git repositories", async 
   await git(nested, ["commit", "-m", "nested initial"]);
   await fs.writeFile(path.join(nested, "dirty.txt"), "dirty\n");
 
-  const plan = await guardianHygieneCleanup({ repoRoot: repo, config: DEFAULT_CONFIG, mode: "plan", cleanupPaths: ["guardian-dirty-trash"], allowCategories: ["nested-git"], allowDirtyNestedGit: true });
+  const plan = await guardianHygiene({ repoRoot: repo, config: DEFAULT_CONFIG, mode: "plan", cleanupPaths: ["guardian-dirty-trash"], allowCategories: ["nested-git"], allowDirtyNestedGit: true });
 
   assert.equal(plan.ok, true);
   assert.equal(plan.status, "planned");
@@ -349,7 +350,7 @@ test("hygiene cleanup blocks configured and registered Guardian worktree roots",
   const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_hygiene_cleanup_worktree", taskName: "hygiene cleanup worktree", createWorktree: true, config: DEFAULT_CONFIG });
   const relativeWorktree = path.relative(repo, started.session.worktree_path);
 
-  const plan = await guardianHygieneCleanup({ repoRoot: repo, config: DEFAULT_CONFIG, mode: "plan", cleanupPaths: [relativeWorktree] });
+  const plan = await guardianHygiene({ repoRoot: repo, config: DEFAULT_CONFIG, mode: "plan", cleanupPaths: [relativeWorktree] });
 
   assert.equal(plan.ok, false);
   assert.equal(plan.status, "blocked");
@@ -361,7 +362,7 @@ test("hygiene cleanup blocks invalid modes without removing anything", async () 
   const repo = await createRepo();
   await writeArtifact(repo, "librarian-mode/file.txt");
 
-  const result = await guardianHygieneCleanup({ repoRoot: repo, config: DEFAULT_CONFIG, mode: "delete" });
+  const result = await guardianHygiene({ repoRoot: repo, config: DEFAULT_CONFIG, mode: "delete" });
 
   assert.equal(result.ok, false);
   assert.equal(result.status, "blocked");
@@ -374,7 +375,7 @@ test("hygiene cleanup rejects unsupported allowCategories entries as fatal block
   const repo = await createRepo();
   await writeArtifact(repo, "librarian-categories/file.txt");
 
-  const plan = await guardianHygieneCleanup({ repoRoot: repo, config: DEFAULT_CONFIG, mode: "plan", allowCategories: ["known-cleanable", "everything"] });
+  const plan = await guardianHygiene({ repoRoot: repo, config: DEFAULT_CONFIG, mode: "plan", allowCategories: ["known-cleanable", "everything"] });
 
   assert.equal(plan.ok, false);
   assert.equal(plan.status, "blocked");
@@ -388,7 +389,7 @@ test("hygiene cleanup blocks overlapping cleanup targets", async () => {
   await writeArtifact(repo, "guardian-overlap/root-file.txt");
   await writeArtifact(repo, "guardian-overlap/librarian-x/file.txt");
 
-  const plan = await guardianHygieneCleanup({ repoRoot: repo, config: DEFAULT_CONFIG, mode: "plan", allowCategories: ["known-cleanable", "suspicious"] });
+  const plan = await guardianHygiene({ repoRoot: repo, config: DEFAULT_CONFIG, mode: "plan", allowCategories: ["known-cleanable", "suspicious"] });
 
   assert.equal(plan.ok, false);
   assert.equal(plan.status, "blocked");
@@ -409,10 +410,10 @@ test("hygiene cleanup applies dirty nested git repositories with the explicit ov
   await git(nested, ["commit", "-m", "nested initial"]);
   await fs.writeFile(path.join(nested, "dirty.txt"), "dirty\n");
 
-  const plan = await guardianHygieneCleanup({ repoRoot: repo, config: DEFAULT_CONFIG, mode: "plan", cleanupPaths: ["guardian-dirty-apply"], allowCategories: ["nested-git"], allowDirtyNestedGit: true });
+  const plan = await guardianHygiene({ repoRoot: repo, config: DEFAULT_CONFIG, mode: "plan", cleanupPaths: ["guardian-dirty-apply"], allowCategories: ["nested-git"], allowDirtyNestedGit: true });
   assert.equal(plan.status, "planned");
 
-  const apply = await guardianHygieneCleanup({ repoRoot: repo, config: DEFAULT_CONFIG, mode: "apply", cleanupPaths: ["guardian-dirty-apply"], allowCategories: ["nested-git"], allowDirtyNestedGit: true, confirmToken: plan.confirmToken });
+  const apply = await guardianHygiene({ repoRoot: repo, config: DEFAULT_CONFIG, mode: "apply", cleanupPaths: ["guardian-dirty-apply"], allowCategories: ["nested-git"], allowDirtyNestedGit: true, confirmToken: plan.confirmToken });
 
   assert.equal(apply.ok, true);
   assert.equal(apply.status, "cleaned");
@@ -426,7 +427,7 @@ test("hygiene cleanup removes file targets and fingerprints symlinked contents",
   await writeArtifact(repo, "librarian-linked/file.txt");
   await fs.symlink("file.txt", path.join(repo, "librarian-linked", "link"));
 
-  const plan = await guardianHygieneCleanup({ repoRoot: repo, config: DEFAULT_CONFIG, mode: "plan" });
+  const plan = await guardianHygiene({ repoRoot: repo, config: DEFAULT_CONFIG, mode: "plan" });
 
   assert.equal(plan.status, "planned");
   const targets = plan.targets as Array<Record<string, unknown>>;
@@ -434,7 +435,7 @@ test("hygiene cleanup removes file targets and fingerprints symlinked contents",
   const linkedFingerprint = targets[0].fingerprint as Array<Record<string, unknown>>;
   assert.equal(linkedFingerprint.some((entry) => entry.kind === "symlink" && entry.target === "file.txt"), true);
 
-  const apply = await guardianHygieneCleanup({ repoRoot: repo, config: DEFAULT_CONFIG, mode: "apply", confirmToken: plan.confirmToken });
+  const apply = await guardianHygiene({ repoRoot: repo, config: DEFAULT_CONFIG, mode: "apply", confirmToken: plan.confirmToken });
 
   assert.equal(apply.status, "cleaned");
   assert.equal(await pathExists(path.join(repo, "node-compile-cache")), false);

@@ -6,11 +6,15 @@
   "main": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
+    "./codex": "./codex/hooks/guardian-hook.ts",
     "./server": "./src/index.ts",
     "./tui": "./src/tui.ts"
   },
   "files": [
+    "CHANGELOG.md",
+    "codex",
     "commands",
+    "docs",
     "src",
     "scripts",
     "skills",
@@ -35,12 +39,14 @@
     "opencode": ">=1.14.48"
   },
   "dependencies": {
-    "@opencode-ai/plugin": "^1.14.48"
+    "@opencode-ai/plugin": "^1.14.48",
+    "tsx": "^4.21.0",
+    "zod": "^4.4.3"
   },
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/nashgao/opencode-worktree-guardian.git"
+    "url": "git+https://github.com/nashgao/opencode-worktree-guardian.git"
   },
   "homepage": "https://github.com/nashgao/opencode-worktree-guardian#readme",
   "bugs": {
@@ -56,8 +62,11 @@
   ],
   "devDependencies": {
     "@types/node": "^25.7.0",
-    "tsx": "^4.21.0",
     "typescript": "^6.0.3"
   },
-  "types": "./src/index.ts"
+  "types": "./src/index.ts",
+  "directories": {
+    "test": "test"
+  },
+  "author": ""
 }

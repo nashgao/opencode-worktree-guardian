@@ -9,4 +9,4 @@ Run `mode: "plan"` first with the exact `paths` to delete. Inspect every approve
 
 Tracked source deletion requires `allowTracked: true`. Directory deletion requires `allowRecursive: true`. Worktree deletion must use `guardian_delete_worktree`.
 
-Do not run raw filesystem deletion, forced cleanup, worktree removal, branch deletion, hard reset, forced clean, or stash mutation from this command.
+Do not run raw filesystem deletion, forced cleanup, worktree removal, branch deletion, hard reset, forced clean, stash mutation, or protected-branch bypasses from this command. Full policy: `docs/adr/0001-guardian-safety-policy.md`.

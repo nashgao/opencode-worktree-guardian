@@ -1,127 +1,26 @@
 import path from "node:path";
-import { expandWorktreeRoot, loadConfig } from "./config.ts";
+import { loadConfig, normalizeConfig } from "./config.ts";
+import { classifyDirtyFiles, splitPrimaryDirtyFiles } from "./finish-dirty-files.ts";
+import { blocked, errorMessage, isFinishStateInput, withFinishReport } from "./finish-report.ts";
+import type { FinishPreflight, GuardianFinishResult, LooseRecord } from "./finish-report.ts";
 import { createSafetyRef, fetchRemote, getCurrentBranch, getDirtyFiles, getHeadCommit, getRepoRoot, isAncestor, listStashes, pushBranch, runGit } from "./git.ts";
 import { isTerminalSession } from "./lifecycle.ts";
 import { getGuardianPaths, readState, recordSession } from "./state.ts";
-
-function snapshotPreflight(preflight: Record<string, any>): Record<string, any> {
-  return { ...preflight, blockers: [...(preflight.blockers ?? [])] };
-}
-
-function withFinishReport(result: Record<string, any>, preflight: Record<string, any>, reportDetails: Record<string, any> = {}) {
-  const preflightSnapshot = snapshotPreflight(preflight);
-  return {
-    ...result,
-    preflight: preflightSnapshot,
-    report: {
-      action: reportDetails.action ?? result.status,
-      sessionId: preflightSnapshot.sessionId,
-      sessionRecorded: preflightSnapshot.sessionRecorded,
-      sessionOwnedWorktree: preflightSnapshot.sessionOwnedWorktree,
-      currentWorktree: preflightSnapshot.currentWorktree,
-      sessionWorktree: preflightSnapshot.sessionWorktree,
-      currentBranch: preflightSnapshot.currentBranch,
-      sessionBranch: preflightSnapshot.sessionBranch,
-      branchProtected: preflightSnapshot.branchProtected,
-      dirtyFileCount: preflightSnapshot.dirtyFileCount,
-      allowedDirtyFileCount: preflightSnapshot.allowedDirtyFileCount,
-      blockingDirtyFileCount: preflightSnapshot.blockingDirtyFileCount,
-      stashCount: preflightSnapshot.stashCount,
-      baseWorktree: preflightSnapshot.baseWorktree,
-      baseWorktreeBranch: preflightSnapshot.baseWorktreeBranch,
-      baseWorktreeDirtyFileCount: preflightSnapshot.baseWorktreeDirtyFileCount,
-      baseWorktreeIgnoredDirtyFileCount: preflightSnapshot.baseWorktreeIgnoredDirtyFileCount,
-      safetyRef: preflightSnapshot.safetyRef ?? result.safetyRef ?? null,
-      remote: preflightSnapshot.remote,
-      baseBranch: preflightSnapshot.baseBranch,
-      mode: preflightSnapshot.mode,
-      blockers: preflightSnapshot.blockers,
-      suggestedCommand: result.suggestedCommand,
-      ...reportDetails,
-    },
-  };
-}
-
-function blocked(reason: string, details: Record<string, any> = {}, preflight?: Record<string, any>, reportDetails: Record<string, any> = {}) {
-  const result = { ok: false, status: "blocked", reason, ...details };
-  if (!preflight) return result;
-  preflight.blockers = [...(preflight.blockers ?? []), reason];
-  return withFinishReport(result, preflight, { action: "blocked", ...reportDetails });
-}
+import { isRecordLike } from "./types.ts";
 
 function samePath(a: string, b: string) {
   return path.resolve(a) === path.resolve(b);
 }
 
-function errorMessage(error: unknown) {
-  if (typeof error === "object" && error !== null) {
-    const details = error as Record<string, unknown>;
-    if (typeof details.gitStderr === "string" && details.gitStderr.length > 0) return details.gitStderr;
-    if (typeof details.message === "string" && details.message.length > 0) return details.message;
-  }
-  return String(error);
-}
+export type { GuardianFinishResult } from "./finish-report.ts";
 
-function normalizeDirtyPath(value: string) {
-  return value.replace(/\\/g, "/").replace(/^\.\//, "");
-}
-
-function escapeRegExp(value: string) {
-  return value.replace(/[|\\{}()[\]^$+?.]/g, "\\$&");
-}
-
-function globToRegExp(pattern: string) {
-  let source = "^";
-  for (let index = 0; index < pattern.length; index += 1) {
-    const char = pattern[index];
-    if (char === "*") {
-      if (pattern[index + 1] === "*") {
-        source += ".*";
-        index += 1;
-      } else {
-        source += "[^/]*";
-      }
-    } else {
-      source += escapeRegExp(char);
-    }
-  }
-  return new RegExp(`${source}$`);
-}
-
-function matchesAllowedDirtyPath(filePath: string, pattern: string) {
-  const file = normalizeDirtyPath(filePath);
-  const allowed = normalizeDirtyPath(pattern);
-  if (!allowed) return false;
-  if (allowed.endsWith("/**")) {
-    const prefix = allowed.slice(0, -3).replace(/\/$/, "");
-    return file === prefix || file.startsWith(`${prefix}/`);
-  }
-  if (!allowed.includes("*")) return file === allowed;
-  return globToRegExp(allowed).test(file);
-}
-
-function classifyDirtyFiles(dirtyFiles: string[], allowDirtyPaths: unknown) {
-  const patterns = Array.isArray(allowDirtyPaths) ? allowDirtyPaths.filter((value): value is string => typeof value === "string" && value.length > 0) : [];
-  const allowedDirtyFiles = dirtyFiles.filter((file) => patterns.some((pattern) => matchesAllowedDirtyPath(file, pattern)));
-  const blockingDirtyFiles = dirtyFiles.filter((file) => !allowedDirtyFiles.includes(file));
-  return { allowedDirtyFiles, blockingDirtyFiles };
-}
-
-function splitPrimaryDirtyFiles(dirtyFiles: string[], repoRoot: string, config: Record<string, any>) {
-  const guardianRoot = normalizeDirtyPath(expandWorktreeRoot(config.worktreeRoot, repoRoot)).replace(/\/$/, "");
-  const guardianRootPrefix = `${guardianRoot}/`;
-  const ignoredDirtyFiles = dirtyFiles.filter((file) => normalizeDirtyPath(file).startsWith(guardianRootPrefix));
-  const blockingDirtyFiles = dirtyFiles.filter((file) => !ignoredDirtyFiles.includes(file));
-  return { ignoredDirtyFiles, blockingDirtyFiles };
-}
-
-export async function guardianFinish(input: Record<string, any> = {}): Promise<Record<string, any>> {
-  const cwd = input.cwd ?? input.repoRoot ?? process.cwd();
-  const repoRoot = input.repoRoot ?? await getRepoRoot(cwd);
-  const { config } = input.config ? { config: input.config } : await loadConfig(repoRoot);
-  const mode = input.finishMode ?? config.finishMode;
-  const sessionId = input.sessionId;
-  const preflight: Record<string, any> = {
+export async function guardianFinish(input: LooseRecord = {}): Promise<GuardianFinishResult> {
+  const cwd = typeof input.cwd === "string" ? input.cwd : typeof input.repoRoot === "string" ? input.repoRoot : process.cwd();
+  const repoRoot = typeof input.repoRoot === "string" ? input.repoRoot : await getRepoRoot(cwd);
+  const { config } = isRecordLike(input.config) ? { config: normalizeConfig(input.config) } : await loadConfig(repoRoot);
+  const mode = typeof input.finishMode === "string" ? input.finishMode : config.finishMode;
+  const sessionId = typeof input.sessionId === "string" ? input.sessionId : null;
+  const preflight: FinishPreflight = {
     sessionId: sessionId ?? null,
     sessionRecorded: false,
     sessionOwnedWorktree: false,
@@ -154,10 +53,13 @@ export async function guardianFinish(input: Record<string, any> = {}): Promise<R
   if (!sessionId) return blocked("sessionId is required", {}, preflight);
 
   const paths = await getGuardianPaths(repoRoot);
-  const state = input.state ?? await readState(paths, { repoRoot, config });
+  const state = isFinishStateInput(input.state) ? input.state : await readState(paths, { repoRoot, config });
   const session = state.sessions?.[sessionId];
   preflight.sessionRecorded = Boolean(session);
   if (!session) return blocked("current session is not recorded in guardian state", { sessionId }, preflight);
+  if (typeof session.worktree_path !== "string" || session.worktree_path.length === 0) {
+    return blocked("recorded session is missing a worktree path", { sessionId }, preflight);
+  }
   preflight.sessionWorktree = session.worktree_path;
   preflight.sessionBranch = session.branch;
   if (isTerminalSession(session)) {
@@ -232,7 +134,7 @@ export async function guardianFinish(input: Record<string, any> = {}): Promise<R
       head_commit: commit,
       safety_refs: [...(session.safety_refs ?? []), safetyRef],
     }, { event: { type: "guardian_finish", session_id: sessionId, ref: safetyRef } });
-    const result: Record<string, any> = { ok: true, status: mode === "push-branch" ? "pushed" : "pr-suggested", mode, branch, safetyRef };
+    const result: LooseRecord = { ok: true, status: mode === "push-branch" ? "pushed" : "pr-suggested", mode, branch, safetyRef };
     if (mode === "create-pr") {
       result.suggestedCommand = `gh pr create --base ${config.baseBranch} --head ${branch}`;
       result.note = "No native GitHub integration is wired; branch was pushed and a PR command is suggested.";

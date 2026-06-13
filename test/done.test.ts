@@ -8,9 +8,21 @@ import { guardianStatus } from "../src/recover.ts";
 import { guardianStart } from "../src/tools.ts";
 import { createRepoWithOrigin, git } from "./helpers.ts";
 
-type DoneResult = Record<string, any>;
+type LooseRecord = Record<string, unknown>;
+type DoneResult = LooseRecord & {
+  readonly candidates: readonly { readonly branch?: string }[];
+  readonly cleanupPlan: { readonly status?: unknown; readonly candidates: readonly { readonly branch?: string }[] };
+  readonly commit: string;
+  readonly confirmToken: string;
+  readonly dirtyFiles?: readonly string[];
+  readonly dirtySnapshot: { readonly paths: readonly string[] };
+  readonly nextAction: string;
+  readonly preflight: Record<string, unknown>;
+  readonly reason: string;
+  readonly safetyRef: string;
+};
 
-function asDone(result: Record<string, unknown>): DoneResult {
+function asDone(result: LooseRecord): DoneResult {
   return result as DoneResult;
 }
 
@@ -215,8 +227,8 @@ test("guardian_done reattaches a new session inside an existing Guardian worktre
   assert.equal(result.preflight.sessionId, "ses_done_new_session");
   assert.equal(result.preflight.currentWorktree, started.session.worktree_path);
   const status = await guardianStatus({ repoRoot: repo, config: DEFAULT_CONFIG });
-  assert.equal(status.terminalSessions.some((session: Record<string, unknown>) => session.session_id === "ses_done_new_session" && session.status === "preserved"), true);
-  assert.equal(status.terminalSessions.some((session: Record<string, unknown>) => session.session_id === "ses_done_lost_original" && session.status === "superseded"), true);
+  assert.equal(status.terminalSessions.some((session: LooseRecord) => session.session_id === "ses_done_new_session" && session.status === "preserved"), true);
+  assert.equal(status.terminalSessions.some((session: LooseRecord) => session.session_id === "ses_done_lost_original" && session.status === "superseded"), true);
 });
 
 test("guardian_done blocks protected primary rescue scenarios outside base branch", async (t) => {

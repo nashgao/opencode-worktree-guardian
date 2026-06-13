@@ -1,9 +1,13 @@
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { expandWorktreeRoot, loadConfig } from "./config.ts";
+import { expandWorktreeRoot, loadConfig, normalizeConfig } from "./config.ts";
 import { createSafetyRef, getCurrentBranch, getHeadCommit, getRepoRoot, listWorktrees, runGit } from "./git.ts";
 import { getGuardianPaths, readState, recordSession } from "./state.ts";
+import type { GuardianSession, MutableRecord, WorktreeEntry } from "./types.ts";
+import { isRecordLike } from "./types.ts";
+
+type LooseRecord = MutableRecord;
 
 type StatusEntry = {
   index: string;
@@ -20,6 +24,25 @@ type ResolvedTarget = {
   branch: string | null;
   targetSource: "state" | "branch" | "worktreePath";
 };
+type UnblockStateInput = {
+  readonly sessions?: Record<string, GuardianSession>;
+};
+export type GuardianUnblockFinishResult = MutableRecord & {
+  readonly action?: string;
+  readonly committedPaths?: readonly string[];
+  readonly confirmToken?: string;
+  readonly otherDirtyPaths?: readonly string[];
+  readonly preflight: MutableRecord & {
+    readonly branch?: string | null;
+    readonly otherDirtyPaths?: readonly string[];
+    readonly reviewArtifactPaths?: readonly string[];
+    readonly sessionRecorded?: boolean;
+    readonly targetSource?: string | null;
+    readonly worktreePath?: string | null;
+  };
+  readonly reason?: string;
+  readonly safetyRef?: string;
+};
 
 const REVIEW_ARTIFACT_PATTERN = /^\.milestones\/reviews\/[^/]*impl-rating-\d{8}\.(md|txt)$/;
 
@@ -27,9 +50,11 @@ function sha256(value: string | Buffer) {
   return crypto.createHash("sha256").update(value).digest("hex");
 }
 
-function blocked(reason: string, details: Record<string, unknown>, preflight: Record<string, unknown>) {
-  preflight.blockers = [...((preflight.blockers as string[] | undefined) ?? []), reason];
-  return { ok: false, status: "blocked", reason, ...details, preflight: { ...preflight, blockers: [...(preflight.blockers as string[])] } };
+function blocked(reason: string, details: LooseRecord, preflight: LooseRecord) {
+  const previousBlockers = Array.isArray(preflight.blockers) ? preflight.blockers.filter((blocker): blocker is string => typeof blocker === "string") : [];
+  const blockers = [...previousBlockers, reason];
+  preflight.blockers = blockers;
+  return { ok: false, status: "blocked", reason, ...details, preflight: { ...preflight, blockers } };
 }
 
 function relativeGitPath(value: string) {
@@ -87,7 +112,7 @@ async function statusEntries(worktreePath: string): Promise<StatusEntry[]> {
   return entries;
 }
 
-function createConfirmToken(preflight: Record<string, unknown>) {
+function createConfirmToken(preflight: LooseRecord) {
   const material = {
     repoRoot: preflight.repoRoot,
     sessionId: preflight.sessionId,
@@ -110,7 +135,15 @@ function defaultCommitMessage(entries: StatusEntry[]) {
   return "docs: add implementation review artifacts";
 }
 
-async function resolveListedWorktree(repoRoot: string, predicate: (worktree: any) => boolean, targetSource: ResolvedTarget["targetSource"], missingReason: string, multipleReason: string, expectedBranch?: string | null): Promise<{ target: ResolvedTarget | null; reason: string | null }> {
+function preflightBlockers(preflight: LooseRecord): string[] {
+  return Array.isArray(preflight.blockers) ? preflight.blockers.filter((blocker): blocker is string => typeof blocker === "string") : [];
+}
+
+function isUnblockStateInput(value: unknown): value is UnblockStateInput {
+  return isRecordLike(value) && (value.sessions === undefined || isRecordLike(value.sessions));
+}
+
+async function resolveListedWorktree(repoRoot: string, predicate: (worktree: WorktreeEntry) => boolean, targetSource: ResolvedTarget["targetSource"], missingReason: string, multipleReason: string, expectedBranch?: string | null): Promise<{ target: ResolvedTarget | null; reason: string | null }> {
   const matches = (await listWorktrees(repoRoot)).filter(predicate);
   if (matches.length !== 1) return { target: null, reason: matches.length > 1 ? multipleReason : missingReason };
   const match = matches[0];
@@ -119,20 +152,20 @@ async function resolveListedWorktree(repoRoot: string, predicate: (worktree: any
   return { target: { worktreePath: match.path, branch: match.branch, targetSource }, reason: null };
 }
 
-async function resolveExplicitTarget(repoRoot: string, input: Record<string, unknown>): Promise<{ target: ResolvedTarget | null; reason: string | null }> {
+async function resolveExplicitTarget(repoRoot: string, input: LooseRecord): Promise<{ target: ResolvedTarget | null; reason: string | null }> {
   const explicitWorktreePath = typeof input.worktreePath === "string" && input.worktreePath.length > 0 ? input.worktreePath : null;
   const explicitBranch = typeof input.branch === "string" && input.branch.length > 0 ? input.branch : null;
   if (!explicitWorktreePath && !explicitBranch) return { target: null, reason: "current session is not recorded in guardian state" };
 
   if (explicitWorktreePath) {
     const resolved = path.resolve(repoRoot, explicitWorktreePath);
-    return resolveListedWorktree(repoRoot, (worktree: any) => samePath(worktree.path, resolved), "worktreePath", "worktreePath is not checked out in git worktree list", "worktreePath matches multiple git worktrees", explicitBranch);
+    return resolveListedWorktree(repoRoot, (worktree) => samePath(worktree.path, resolved), "worktreePath", "worktreePath is not checked out in git worktree list", "worktreePath matches multiple git worktrees", explicitBranch);
   }
 
-  return resolveListedWorktree(repoRoot, (worktree: any) => worktree.branch === explicitBranch, "branch", "branch is not checked out in git worktree list", "branch matches multiple git worktrees");
+  return resolveListedWorktree(repoRoot, (worktree) => worktree.branch === explicitBranch, "branch", "branch is not checked out in git worktree list", "branch matches multiple git worktrees");
 }
 
-function validateResolvedTarget(repoRoot: string, config: Record<string, unknown>, target: ResolvedTarget) {
+function validateResolvedTarget(repoRoot: string, config: LooseRecord, target: ResolvedTarget) {
   if (samePath(target.worktreePath, repoRoot)) return "target worktree is the primary repository worktree";
   if (!target.branch) return "target worktree is detached";
   const protectedBranches = Array.isArray(config.protectedBranches) ? config.protectedBranches : [];
@@ -145,12 +178,12 @@ function validateResolvedTarget(repoRoot: string, config: Record<string, unknown
   return null;
 }
 
-async function preflightFor(input: Record<string, unknown>) {
+async function preflightFor(input: LooseRecord) {
   const cwd = typeof input.cwd === "string" ? input.cwd : typeof input.repoRoot === "string" ? input.repoRoot : process.cwd();
   const repoRoot = typeof input.repoRoot === "string" ? input.repoRoot : await getRepoRoot(cwd);
-  const { config } = input.config && typeof input.config === "object" ? { config: input.config as Record<string, unknown> } : await loadConfig(repoRoot);
+  const { config } = isRecordLike(input.config) ? { config: normalizeConfig(input.config) } : await loadConfig(repoRoot);
   const sessionId = typeof input.sessionId === "string" ? input.sessionId : null;
-  const preflight: Record<string, unknown> = {
+  const preflight: LooseRecord = {
     repoRoot: path.resolve(repoRoot),
     mode: input.mode,
     action: typeof input.action === "string" ? input.action : "commit-review-artifacts",
@@ -167,14 +200,14 @@ async function preflightFor(input: Record<string, unknown>) {
   };
   if (!sessionId) return { preflight, config, session: null, entries: [], reviewEntries: [], otherEntries: [], reason: "sessionId is required" };
 
-  const state = input.state && typeof input.state === "object" ? input.state as { sessions?: Record<string, any> } : await readState(await getGuardianPaths(repoRoot), { repoRoot, config });
+  const state = isUnblockStateInput(input.state) ? input.state : await readState(await getGuardianPaths(repoRoot), { repoRoot, config });
   const session = state.sessions?.[sessionId] ?? null;
   preflight.sessionRecorded = Boolean(session);
   let target: ResolvedTarget | null = null;
   if (session?.worktree_path) {
     const resolved = await resolveListedWorktree(
       repoRoot,
-      (worktree: any) => samePath(worktree.path, session.worktree_path),
+      (worktree) => typeof session.worktree_path === "string" && samePath(worktree.path, session.worktree_path),
       "state",
       "recorded worktree is not checked out in git worktree list",
       "recorded worktree path matches multiple git worktrees",
@@ -207,7 +240,7 @@ async function preflightFor(input: Record<string, unknown>) {
   return { preflight, config, session, entries, reviewEntries, otherEntries, reason: null };
 }
 
-export async function guardianUnblockFinish(input: Record<string, unknown> = {}) {
+export async function guardianUnblockFinish(input: LooseRecord = {}): Promise<GuardianUnblockFinishResult> {
   const mode = input.mode;
   const action = typeof input.action === "string" ? input.action : "commit-review-artifacts";
   const { preflight, config, session, entries, reviewEntries, otherEntries, reason } = await preflightFor({ ...input, action });
@@ -226,7 +259,7 @@ export async function guardianUnblockFinish(input: Record<string, unknown> = {})
       action,
       confirmToken,
       commitMessage: defaultCommitMessage(reviewEntries),
-      preflight: { ...preflight, blockers: [...(preflight.blockers as string[])] },
+      preflight: { ...preflight, blockers: preflightBlockers(preflight) },
       suggestedCommand: "guardian_unblock_finish mode=apply action=commit-review-artifacts confirmToken=<token>",
     };
   }
@@ -260,6 +293,6 @@ export async function guardianUnblockFinish(input: Record<string, unknown> = {})
     commit: newHead,
     commitMessage,
     safetyRef,
-    preflight: { ...preflight, blockers: [...(preflight.blockers as string[])] },
+    preflight: { ...preflight, blockers: preflightBlockers(preflight) },
   };
 }

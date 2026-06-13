@@ -1,10 +1,63 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { expandWorktreeRoot, loadConfig } from "./config.ts";
+import { expandWorktreeRoot, loadConfig, normalizeConfig } from "./config.ts";
 import { getCommonGitDir, getDirtyFiles, getRepoRoot, listBranches, listRecoveryCandidates, listRefs, listStashes, listWorktrees } from "./git.ts";
+import type { GitBranchEntry, GitRefEntry, GitStashEntry } from "./git.ts";
 import { scanWorkspaceHygiene } from "./hygiene.ts";
 import { isActiveSession, isTerminalSession } from "./lifecycle.ts";
 import { getGuardianPaths, readState } from "./state.ts";
+import type { GuardianConfig, GuardianSession, GuardianToolInput, GuardianToolResult, WorktreeEntry } from "./types.ts";
+import { errorMessage, isRecordLike } from "./types.ts";
+
+type WorktreeAnnotationMetadata = {
+  readonly guardianRoot: string;
+  readonly commonGitDir?: string;
+  readonly commonGitDirError?: string;
+};
+
+type AnnotatedWorktreeEntry = WorktreeEntry & {
+  readonly category?: "external-temp-worktree" | "external-worktree";
+  readonly severity?: "fail";
+  readonly reason?: string;
+  readonly metadata?: WorktreeAnnotationMetadata;
+};
+
+type PoisonedSession = GuardianSession & {
+  readonly severity: "fail";
+  readonly reason: string;
+  readonly suggestedCommand: string;
+};
+
+type HygieneStatus = Record<string, unknown> & {
+  readonly ok?: unknown;
+  readonly summary?: Record<string, unknown> & { readonly findingCount?: unknown };
+  readonly findings: readonly (Record<string, unknown> & { readonly path?: unknown })[];
+};
+
+type GuardianStatusResult = Omit<GuardianToolResult, "activeSessions" | "terminalSessions" | "worktrees" | "safetyRefs" | "sessions"> & {
+  readonly repoRoot: string;
+  readonly config: GuardianConfig;
+  readonly stateVersion: number | undefined;
+  readonly sessions: readonly GuardianSession[];
+  readonly activeSessions: readonly GuardianSession[];
+  readonly terminalSessions: readonly GuardianSession[];
+  readonly orphanedSessions: readonly GuardianSession[];
+  readonly poisonedSessions: readonly PoisonedSession[];
+  readonly worktrees: readonly WorktreeEntry[];
+  readonly branchesWithoutWorktrees: readonly GitBranchEntry[];
+  readonly worktreesWithoutState: readonly AnnotatedWorktreeEntry[];
+  readonly stateBranchesWithoutWorktrees: readonly string[];
+  readonly safetyRefs: readonly GitRefEntry[];
+  readonly preservedRefs: readonly GitRefEntry[];
+  readonly stashes: readonly GitStashEntry[];
+  readonly dirtyFiles: readonly string[];
+  readonly hygiene: HygieneStatus;
+  readonly suggestedCommands: readonly string[];
+};
+
+type GuardianRecoverResult = GuardianStatusResult & {
+  readonly recoveryCandidates: Awaited<ReturnType<typeof listRecoveryCandidates>>;
+};
 
 async function pathExists(candidate: string) {
   try {
@@ -25,16 +78,16 @@ function isTempPath(candidate: string) {
   return path.basename(normalized).startsWith("opencode-") || normalized.includes(path.sep + "opencode" + path.sep) || normalized.includes(path.sep + "var" + path.sep + "folders" + path.sep) || normalized.startsWith(path.resolve("/private/tmp")) || normalized.startsWith(path.resolve("/tmp"));
 }
 
-async function annotateWorktreeWithoutState(worktree: Record<string, any>, repoRoot: string, config: Record<string, any>) {
+async function annotateWorktreeWithoutState(worktree: WorktreeEntry, repoRoot: string, config: GuardianConfig): Promise<AnnotatedWorktreeEntry> {
   const worktreePath = path.resolve(worktree.path);
   const guardianRoot = path.resolve(repoRoot, expandWorktreeRoot(config.worktreeRoot, repoRoot));
   if (isInside(worktreePath, guardianRoot)) return worktree;
 
-  const metadata: Record<string, any> = { guardianRoot };
+  let metadata: WorktreeAnnotationMetadata = { guardianRoot };
   try {
-    metadata.commonGitDir = await getCommonGitDir(worktreePath);
-  } catch (error: any) {
-    metadata.commonGitDirError = error.message;
+    metadata = { ...metadata, commonGitDir: await getCommonGitDir(worktreePath) };
+  } catch (error) {
+    metadata = { ...metadata, commonGitDirError: errorMessage(error) };
   }
 
   return {
@@ -46,8 +99,8 @@ async function annotateWorktreeWithoutState(worktree: Record<string, any>, repoR
   };
 }
 
-function poisonedSessionReason(session: Record<string, any>, repoRoot: string, config: Record<string, any>) {
-  const reasons = [];
+function poisonedSessionReason(session: GuardianSession, repoRoot: string, config: GuardianConfig) {
+  const reasons: string[] = [];
   if (typeof session.worktree_path === "string" && path.resolve(session.worktree_path) === path.resolve(repoRoot)) {
     reasons.push("active session is recorded on the primary repository worktree");
   }
@@ -57,7 +110,7 @@ function poisonedSessionReason(session: Record<string, any>, repoRoot: string, c
   return reasons.join("; ");
 }
 
-function annotatePoisonedSession(session: Record<string, any>, repoRoot: string, config: Record<string, any>) {
+function annotatePoisonedSession(session: GuardianSession, repoRoot: string, config: GuardianConfig): PoisonedSession | null {
   const reason = poisonedSessionReason(session, repoRoot, config);
   if (!reason) return null;
   return {
@@ -68,18 +121,25 @@ function annotatePoisonedSession(session: Record<string, any>, repoRoot: string,
   };
 }
 
-export async function guardianStatus(input: Record<string, any> = {}): Promise<Record<string, any>> {
-  const repoRoot = input.repoRoot ?? await getRepoRoot(input.cwd ?? process.cwd());
-  const { config } = input.config ? { config: input.config } : await loadConfig(repoRoot);
+async function configFromInput(input: GuardianToolInput, repoRoot: string): Promise<GuardianConfig> {
+  if (input.config === undefined || input.config === null) return (await loadConfig(repoRoot)).config;
+  if (!isRecordLike(input.config)) throw new Error("config must be an object");
+  return normalizeConfig(input.config);
+}
+
+export async function guardianStatus(input: GuardianToolInput = {}): Promise<GuardianStatusResult> {
+  const cwd = typeof input.cwd === "string" ? input.cwd : process.cwd();
+  const repoRoot = typeof input.repoRoot === "string" ? input.repoRoot : await getRepoRoot(cwd);
+  const config = await configFromInput(input, repoRoot);
   const paths = await getGuardianPaths(repoRoot);
   const state = await readState(paths, { repoRoot, config });
   const worktrees = await listWorktrees(repoRoot);
   const worktreePaths = new Set(worktrees.map((entry) => path.resolve(entry.path)));
-  const sessions = Object.values(state.sessions ?? {}) as Record<string, any>[];
+  const sessions = Object.values(state.sessions ?? {});
   const activeSessions = sessions.filter(isActiveSession);
   const terminalSessions = sessions.filter(isTerminalSession);
-  const sessionWorktreePaths = new Set(activeSessions.map((session) => session.worktree_path).filter(Boolean).map((entry) => path.resolve(entry)));
-  const sessionBranches = new Set(activeSessions.map((session) => session.branch).filter(Boolean));
+  const sessionWorktreePaths = new Set(activeSessions.map((session) => session.worktree_path).filter((entry): entry is string => typeof entry === "string").map((entry) => path.resolve(entry)));
+  const sessionBranches = new Set(activeSessions.map((session) => session.branch).filter((entry): entry is string => typeof entry === "string"));
   const orphanedSessions = [];
   const poisonedSessions = [];
 
@@ -92,7 +152,7 @@ export async function guardianStatus(input: Record<string, any> = {}): Promise<R
   }
 
   const branches = await listBranches(repoRoot);
-  const branchesWithoutWorktrees = branches.filter((branch: Record<string, any>) => !worktrees.some((worktree) => worktree.branch === branch.name));
+  const branchesWithoutWorktrees = branches.filter((branch) => !worktrees.some((worktree) => worktree.branch === branch.name));
   const worktreesWithoutState = await Promise.all(worktrees
     .filter((worktree) => !sessionWorktreePaths.has(path.resolve(worktree.path)))
     .map((worktree) => annotateWorktreeWithoutState(worktree, repoRoot, config)));
@@ -120,7 +180,7 @@ export async function guardianStatus(input: Record<string, any> = {}): Promise<R
   };
 }
 
-export async function guardianRecover(input: Record<string, any> = {}): Promise<Record<string, any>> {
+export async function guardianRecover(input: GuardianToolInput = {}): Promise<GuardianRecoverResult> {
   const status = await guardianStatus(input);
   const candidates = await listRecoveryCandidates(status.repoRoot);
   return {
@@ -128,8 +188,8 @@ export async function guardianRecover(input: Record<string, any> = {}): Promise<
     recoveryCandidates: candidates,
     suggestedCommands: [
       ...status.suggestedCommands,
-      ...status.safetyRefs.map((ref: Record<string, any>) => `git branch recovery/<name> ${ref.commit}`),
-      ...status.stashes.map((stash: Record<string, any>) => `git stash show -p ${stash.name}`),
+      ...status.safetyRefs.map((ref) => `git branch recovery/<name> ${ref.commit}`),
+      ...status.stashes.map((stash) => `git stash show -p ${stash.name}`),
     ],
   };
 }

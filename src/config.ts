@@ -1,11 +1,13 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import type { GuardianConfig, GuardianFinishMode, LoadedGuardianConfig, LoadConfigOptions, RecordLike } from "./types.ts";
+import { errorCode, isRecordLike } from "./types.ts";
 
 export const CONFIG_PATH = path.join(".opencode", "worktree-guardian.json");
 
 export const FINISH_MODES = new Set(["preserve-only", "push-branch", "create-pr", "merge-to-base"]);
 
-export const DEFAULT_CONFIG: Record<string, any> = Object.freeze({
+export const DEFAULT_CONFIG: GuardianConfig = Object.freeze({
   remote: "origin",
   baseBranch: "main",
   worktreeRoot: ".worktrees/$REPO",
@@ -21,14 +23,25 @@ export const DEFAULT_CONFIG: Record<string, any> = Object.freeze({
   lockTimeoutMs: 5_000,
 });
 
-function uniqueStrings(values: unknown[]) {
-  return [...new Set(values.filter((value) => typeof value === "string" && value.length > 0))];
+export type ConfigErrorKind = "unsupported_finish_mode";
+export type ConfigBoundaryError = Error & { readonly configErrorKind: ConfigErrorKind };
+
+function configError(kind: ConfigErrorKind, message: string): ConfigBoundaryError {
+  return Object.assign(new Error(message), { configErrorKind: kind });
 }
 
-export function normalizeConfig(input: Record<string, any> = {}): Record<string, any> {
-  const config: Record<string, any> = { ...DEFAULT_CONFIG, ...input };
-  if (!FINISH_MODES.has(config.finishMode)) {
-    throw new Error(`Unsupported worktree guardian finishMode: ${config.finishMode}`);
+function uniqueStrings(values: readonly unknown[]): string[] {
+  return [...new Set(values.filter((value): value is string => typeof value === "string" && value.length > 0))];
+}
+
+function isGuardianFinishMode(value: unknown): value is GuardianFinishMode {
+  return typeof value === "string" && FINISH_MODES.has(value);
+}
+
+export function normalizeConfig(input: RecordLike = {}): GuardianConfig {
+  const config = { ...DEFAULT_CONFIG, ...input };
+  if (!isGuardianFinishMode(config.finishMode)) {
+    throw configError("unsupported_finish_mode", `Unsupported worktree guardian finishMode: ${String(config.finishMode)}`);
   }
 
   const protectedBranches = uniqueStrings([
@@ -44,20 +57,21 @@ export function normalizeConfig(input: Record<string, any> = {}): Record<string,
     allowStashIfUnrelated: config.allowStashIfUnrelated === true,
     allowDirtyPaths: uniqueStrings(Array.isArray(input.allowDirtyPaths) ? input.allowDirtyPaths : []),
     protectedBranches,
-    lockTimeoutMs: Number.isFinite(config.lockTimeoutMs) ? config.lockTimeoutMs : DEFAULT_CONFIG.lockTimeoutMs,
+    lockTimeoutMs: typeof config.lockTimeoutMs === "number" && Number.isFinite(config.lockTimeoutMs) ? config.lockTimeoutMs : DEFAULT_CONFIG.lockTimeoutMs,
   };
 }
 
-export async function loadConfig(repoRoot: string, options: Record<string, any> = {}): Promise<Record<string, any>> {
+export async function loadConfig(repoRoot: string, options: LoadConfigOptions = {}): Promise<LoadedGuardianConfig> {
   const fileSystem = options.fs ?? fs;
   const configPath = options.configPath ?? path.join(repoRoot, CONFIG_PATH);
-  let parsed = {};
+  let parsed: RecordLike = {};
 
   try {
     const raw = await fileSystem.readFile(configPath, "utf8");
-    parsed = JSON.parse(raw);
+    const value: unknown = JSON.parse(raw);
+    parsed = isRecordLike(value) ? value : {};
   } catch (error) {
-    if (error.code !== "ENOENT") throw error;
+    if (errorCode(error) !== "ENOENT") throw error;
   }
 
   return {

@@ -11,4 +11,4 @@ If the lane is `primary-main-publish`, apply only after explicit user confirmati
 
 If the lane is `cleanup-only`, apply only after explicit confirmation with `confirm: true`; cleanup still uses the internal workflow token from the matching plan. Cleanup still runs through `guardian_finish_workflow` and `guardian_delete_worktree`.
 
-Never force-push, mutate stashes, delete remote branches, run raw worktree removal, run raw branch deletion, or bypass Guardian preflights.
+Never force-push, mutate stashes, delete remote branches, run raw worktree removal, run raw branch deletion, or bypass Guardian preflights. Full policy: `docs/adr/0001-guardian-safety-policy.md`.

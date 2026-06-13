@@ -7,9 +7,32 @@ import { guardianFinish } from "../src/finish.ts";
 import { guardianRecover, guardianStatus } from "../src/recover.ts";
 import { collectKnownWorktreePaths, guardianPreserve, guardianStart, injectInvisiblePolicy, recordLastSafeState, runGuardianTool } from "../src/tools.ts";
 import { recordSession } from "../src/state.ts";
+import type { GuardianSession } from "../src/types.ts";
 import { createRepo, createRepoWithOrigin, git, makeBranchCommit } from "./helpers.ts";
 
-async function recordCurrentSession(repo: string, sessionId: string, branch: string, config: Record<string, any> = DEFAULT_CONFIG) {
+type LooseRecord = Record<string, unknown>;
+
+function requireString(value: unknown): string {
+  if (typeof value !== "string") throw new TypeError("expected string");
+  return value;
+}
+
+function requireStringArray(value: unknown): string[] {
+  assert.ok(Array.isArray(value));
+  assert.equal(value.every((entry) => typeof entry === "string"), true);
+  return value;
+}
+
+function requireSession(session: GuardianSession | undefined): GuardianSession {
+  assert.ok(session);
+  return session;
+}
+
+function findSession(sessions: readonly GuardianSession[], sessionId: string): GuardianSession {
+  return requireSession(sessions.find((session) => session.session_id === sessionId));
+}
+
+async function recordCurrentSession(repo: string, sessionId: string, branch: string, config: LooseRecord = DEFAULT_CONFIG) {
   const { stdout: commit } = await git(repo, ["rev-parse", "HEAD"]);
   await recordSession(repo, config, {
     session_id: sessionId,
@@ -62,7 +85,7 @@ test("guardian_start repairs active primary protected ownership when creating a 
   assert.notEqual(result.session.worktree_path, repo);
   assert.equal((await git(repo, ["branch", "--show-current"])).stdout, "main");
   const status = await guardianStatus({ repoRoot: repo, config: DEFAULT_CONFIG });
-  const session = status.sessions.find((candidate: Record<string, any>) => candidate.session_id === "ses_poisoned_start");
+  const session = findSession(status.sessions, "ses_poisoned_start");
   assert.equal(session.branch, result.session.branch);
   assert.equal(session.worktree_path, result.session.worktree_path);
 });
@@ -87,14 +110,15 @@ test("guardian_start refuses poisoned primary protected ownership without worktr
   assert.equal(result.status, "blocked");
   assert.match(result.reason, /createWorktree=true/);
   const status = await guardianStatus({ repoRoot: repo, config: DEFAULT_CONFIG });
-  const session = status.sessions.find((candidate: Record<string, any>) => candidate.session_id === "ses_poisoned_attach");
+  const session = findSession(status.sessions, "ses_poisoned_attach");
   assert.equal(session.branch, "main");
   assert.equal(session.worktree_path, repo);
-  const poisonedSession = status.poisonedSessions.find((candidate: Record<string, any>) => candidate.session_id === "ses_poisoned_attach");
+  const poisonedSession = status.poisonedSessions.find((candidate) => candidate.session_id === "ses_poisoned_attach");
+  assert.ok(poisonedSession);
   assert.match(poisonedSession.reason, /primary repository worktree|protected/);
   assert.equal(poisonedSession.suggestedCommand, "guardian_start createWorktree=true");
   const recover = await guardianRecover({ repoRoot: repo, config: DEFAULT_CONFIG });
-  assert.equal(recover.poisonedSessions.some((candidate: Record<string, any>) => candidate.session_id === "ses_poisoned_attach"), true);
+  assert.equal(recover.poisonedSessions.some((candidate: LooseRecord) => candidate.session_id === "ses_poisoned_attach"), true);
 });
 
 test("recording and preserving refuse protected primary ownership", async () => {
@@ -103,15 +127,15 @@ test("recording and preserving refuse protected primary ownership", async () => 
 
   const recorded = await recordLastSafeState({ repoRoot: repo, cwd: repo, sessionID: "ses_protected_after", tool: "bash", config: DEFAULT_CONFIG });
   assert.equal(recorded.ok, false);
-  assert.match(recorded.reason, /protected branches/);
+  assert.match(String(recorded.reason), /protected branches/);
 
   const preserved = await guardianPreserve({ repoRoot: repo, cwd: repo, sessionId: "ses_protected_preserve", config: DEFAULT_CONFIG });
   assert.equal(preserved.ok, false);
-  assert.match(preserved.reason, /protected branches/);
+  assert.match(String(preserved.reason), /protected branches/);
 
   const status = await guardianStatus({ repoRoot: repo, config: DEFAULT_CONFIG });
-  assert.equal(status.sessions.some((candidate: Record<string, any>) => candidate.session_id === "ses_protected_after"), false);
-  assert.equal(status.sessions.some((candidate: Record<string, any>) => candidate.session_id === "ses_protected_preserve"), false);
+  assert.equal(status.sessions.some((candidate: LooseRecord) => candidate.session_id === "ses_protected_after"), false);
+  assert.equal(status.sessions.some((candidate: LooseRecord) => candidate.session_id === "ses_protected_preserve"), false);
 });
 
 test("guardian_start refuses explicit protected branch worktree creation", async () => {
@@ -125,7 +149,7 @@ test("guardian_start refuses explicit protected branch worktree creation", async
   assert.equal(result.branch, "main");
   assert.match(result.reason, /protected branches/);
   const status = await guardianStatus({ repoRoot: repo, config: DEFAULT_CONFIG });
-  assert.equal(status.sessions.some((candidate: Record<string, any>) => candidate.session_id === "ses_protected_create"), false);
+  assert.equal(status.sessions.some((candidate: LooseRecord) => candidate.session_id === "ses_protected_create"), false);
   assert.deepEqual((await worktreePaths(repo)).filter((candidate) => candidate !== repo), []);
 });
 
@@ -147,14 +171,14 @@ test("guardian_start rejects custom worktree paths outside configured root", asy
 
 test("preserve-only finish gates ownership and creates a safety ref without cleanup", async () => {
   const repo = await createRepo();
-  const config: Record<string, any> = { ...DEFAULT_CONFIG, finishMode: "preserve-only" };
+  const config: LooseRecord = { ...DEFAULT_CONFIG, finishMode: "preserve-only" };
   const { branch } = await makeBranchCommit(repo, "guardian/preserve");
   await recordCurrentSession(repo, "ses_preserve", branch, config);
 
   const result = await guardianFinish({ repoRoot: repo, cwd: repo, sessionId: "ses_preserve", config, timestamp: "20260513T120000" });
   assert.equal(result.ok, true);
   assert.equal(result.status, "preserved");
-  assert.match(result.safetyRef, /^refs\/opencode-guardian\/ses_preserve\/guardian\/preserve\//);
+  assert.match(requireString(result.safetyRef), /^refs\/opencode-guardian\/ses_preserve\/guardian\/preserve\//);
   assert.equal(result.preflight.sessionRecorded, true);
   assert.equal(result.preflight.sessionOwnedWorktree, true);
   assert.equal(result.preflight.branchProtected, false);
@@ -166,14 +190,14 @@ test("preserve-only finish gates ownership and creates a safety ref without clea
   assert.equal(result.report.baseBranch, config.baseBranch);
 
   const status = await guardianStatus({ repoRoot: repo, config });
-  assert.equal(status.sessions.find((session: Record<string, any>) => session.session_id === "ses_preserve").status, "preserved");
+  assert.equal(findSession(status.sessions, "ses_preserve").status, "preserved");
   assert.equal(status.safetyRefs.length, 1);
-  assert.equal(status.worktrees.some((worktree: Record<string, any>) => worktree.path === repo), true);
+  assert.equal(status.worktrees.some((worktree: LooseRecord) => worktree.path === repo), true);
 });
 
 test("preserve-only finish blocks already preserved terminal sessions", async () => {
   const repo = await createRepo();
-  const config: Record<string, any> = { ...DEFAULT_CONFIG, finishMode: "preserve-only" };
+  const config: LooseRecord = { ...DEFAULT_CONFIG, finishMode: "preserve-only" };
   const { branch } = await makeBranchCommit(repo, "guardian/preserve-repeat");
   await recordCurrentSession(repo, "ses_preserve_repeat", branch, config);
 
@@ -181,11 +205,11 @@ test("preserve-only finish blocks already preserved terminal sessions", async ()
   const second = await guardianFinish({ repoRoot: repo, cwd: repo, sessionId: "ses_preserve_repeat", config, timestamp: "20260513T140100" });
   assert.equal(second.ok, false);
   assert.equal(second.status, "blocked");
-  assert.match(second.reason, /terminal/);
+  assert.match(requireString(second.reason), /terminal/);
   assert.equal(second.sessionStatus, "preserved");
 
   const status = await guardianStatus({ repoRoot: repo, config });
-  const session = status.sessions.find((candidate: Record<string, any>) => candidate.session_id === "ses_preserve_repeat");
+  const session = findSession(status.sessions, "ses_preserve_repeat");
   assert.deepEqual(session.safety_refs, [first.safetyRef]);
   assert.equal(status.safetyRefs.length, 1);
 });
@@ -208,7 +232,7 @@ test("active session records clear stale deletion lifecycle fields", async () =>
   await recordCurrentSession(repo, "ses_clear_deleted_fields", branch);
 
   const status = await guardianStatus({ repoRoot: repo, config: DEFAULT_CONFIG });
-  const session = status.sessions.find((candidate: Record<string, any>) => candidate.session_id === "ses_clear_deleted_fields");
+  const session = findSession(status.sessions, "ses_clear_deleted_fields");
   assert.equal(session.status, "active");
   assert.equal(session.deleted_worktree_path, undefined);
   assert.equal(session.deleted_branch, undefined);
@@ -217,16 +241,16 @@ test("active session records clear stale deletion lifecycle fields", async () =>
 
 test("preserved sessions are terminal cleanup candidates, not active work", async () => {
   const repo = await createRepo();
-  const config: Record<string, any> = { ...DEFAULT_CONFIG, finishMode: "preserve-only" };
+  const config: LooseRecord = { ...DEFAULT_CONFIG, finishMode: "preserve-only" };
   const { branch } = await makeBranchCommit(repo, "guardian/preserved-terminal");
   await recordCurrentSession(repo, "ses_preserved_terminal", branch, config);
 
   await guardianFinish({ repoRoot: repo, cwd: repo, sessionId: "ses_preserved_terminal", config, timestamp: "20260513T141000" });
 
   const status = await guardianStatus({ repoRoot: repo, config });
-  assert.equal(status.activeSessions.some((session: Record<string, any>) => session.session_id === "ses_preserved_terminal"), false);
-  assert.equal(status.terminalSessions.some((session: Record<string, any>) => session.session_id === "ses_preserved_terminal"), true);
-  assert.equal(status.orphanedSessions.some((session: Record<string, any>) => session.session_id === "ses_preserved_terminal"), false);
+  assert.equal(status.activeSessions.some((session: LooseRecord) => session.session_id === "ses_preserved_terminal"), false);
+  assert.equal(status.terminalSessions.some((session: LooseRecord) => session.session_id === "ses_preserved_terminal"), true);
+  assert.equal(status.orphanedSessions.some((session: LooseRecord) => session.session_id === "ses_preserved_terminal"), false);
 });
 
 test("guardian_finish blocks terminal sessions without creating new safety refs", async () => {
@@ -249,7 +273,7 @@ test("guardian_finish blocks terminal sessions without creating new safety refs"
 
     assert.equal(result.ok, false, status);
     assert.equal(result.status, "blocked", status);
-    assert.match(result.reason, /terminal/, status);
+    assert.match(String(result.reason), /terminal/, status);
     assert.equal(result.sessionStatus, status);
   }
 
@@ -277,12 +301,12 @@ test("recordLastSafeState skips every terminal session status", async () => {
 
     assert.equal(result.ok, true, status);
     assert.equal(result.status, "skipped", status);
-    assert.match(result.reason, /terminal/, status);
+    assert.match(String(result.reason), /terminal/, status);
   }
 
   const status = await guardianStatus({ repoRoot: repo, config: DEFAULT_CONFIG });
   for (const terminalStatus of ["deleted", "abandoned", "finished", "preserved"]) {
-    const session = status.sessions.find((candidate: Record<string, any>) => candidate.session_id === `ses_last_safe_terminal_${terminalStatus}`);
+    const session = findSession(status.sessions, `ses_last_safe_terminal_${terminalStatus}`);
     assert.equal(session.status, terminalStatus);
   }
 });
@@ -295,7 +319,7 @@ test("finish refuses dirty worktrees before creating risk", async () => {
 
   const result = await guardianFinish({ repoRoot: repo, cwd: repo, sessionId: "ses_dirty", config: DEFAULT_CONFIG });
   assert.equal(result.ok, false);
-  assert.match(result.reason, /uncommitted/);
+  assert.match(requireString(result.reason), /uncommitted/);
   assert.equal(result.preflight.dirtyFileCount, 1);
   assert.deepEqual(result.report.blockers, ["worktree has uncommitted changes"]);
   assert.equal(result.report.action, "blocked");
@@ -310,7 +334,7 @@ test("finish tolerates configured runtime dirty paths without cleaning them", as
   await fs.writeFile(path.join(repo, ".claude", "stats", "commits.json"), "{\"commits\":[]}\n");
   await git(repo, ["add", ".claude/stats/commits.json"]);
   await git(repo, ["commit", "-m", "track runtime stats"]);
-  const config: Record<string, any> = { ...DEFAULT_CONFIG, finishMode: "preserve-only", allowDirtyPaths: [".claude/stats/**", ".omx/**"] };
+  const config: LooseRecord = { ...DEFAULT_CONFIG, finishMode: "preserve-only", allowDirtyPaths: [".claude/stats/**", ".omx/**"] };
   await recordCurrentSession(repo, "ses_allowed_dirty", branch, config);
   await fs.writeFile(path.join(repo, ".claude", "stats", "commits.json"), "{\"commits\":[\"local\"]}\n");
   await fs.mkdir(path.join(repo, ".omx"), { recursive: true });
@@ -345,7 +369,7 @@ test("finish still blocks mixed dirty files outside configured runtime paths", a
   const result = await guardianFinish({ repoRoot: repo, cwd: repo, sessionId: "ses_mixed_dirty", config });
 
   assert.equal(result.ok, false);
-  assert.match(result.reason, /uncommitted/);
+  assert.match(requireString(result.reason), /uncommitted/);
   assert.equal(result.preflight.allowedDirtyFileCount, 1);
   assert.deepEqual(result.preflight.allowedDirtyFiles, [".claude/logs/hooks.log"]);
   assert.equal(result.preflight.blockingDirtyFileCount, 1);
@@ -381,8 +405,8 @@ test("finish matches file-specific allowDirtyPaths inside untracked runtime dire
   const result = await guardianFinish({ repoRoot: repo, cwd: repo, sessionId: "ses_file_runtime_dirty", config });
 
   assert.equal(result.ok, false);
-  assert.match(result.reason, /uncommitted/);
-  assert.deepEqual(result.preflight.allowedDirtyFiles.sort(), [
+  assert.match(requireString(result.reason), /uncommitted/);
+  assert.deepEqual(requireStringArray(result.preflight.allowedDirtyFiles).sort(), [
     ".claude/logs/hooks.log",
     ".claude/stats/commits.json",
     ".omx/state.json",
@@ -410,7 +434,7 @@ test("finish blocks renames from allowed runtime paths into source paths", async
   const result = await guardianFinish({ repoRoot: repo, cwd: repo, sessionId: "ses_rename_dirty", config });
 
   assert.equal(result.ok, false);
-  assert.match(result.reason, /uncommitted/);
+  assert.match(requireString(result.reason), /uncommitted/);
   assert.equal(result.preflight.allowedDirtyFileCount, 1);
   assert.deepEqual(result.preflight.allowedDirtyFiles, [".claude/logs/hooks.log"]);
   assert.equal(result.preflight.blockingDirtyFileCount, 1);
@@ -440,7 +464,7 @@ test("merge-to-base skips cleanup when allowed dirty files are present", async (
   assert.equal(result.report.cleanupSkippedReason, "allowed dirty files are present");
   assert.equal((await worktreePaths(repo)).includes(start.session.worktree_path), true);
   assert.equal(await fs.readFile(path.join(start.session.worktree_path, ".omx", "state.json"), "utf8"), "{\"local\":true}\n");
-  await git(repo, ["merge-base", "--is-ancestor", result.commit, "origin/main"]);
+  await git(repo, ["merge-base", "--is-ancestor", requireString(result.commit), "origin/main"]);
 });
 
 test("push-branch finish reports push failures without cleanup", async () => {
@@ -452,18 +476,18 @@ test("push-branch finish reports push failures without cleanup", async () => {
   const result = await guardianFinish({ repoRoot: repo, cwd: repo, sessionId: "ses_push_failure", config, timestamp: "20260513T130000" });
   assert.equal(result.ok, false);
   assert.equal(result.status, "blocked");
-  assert.match(result.reason, /push failed/i);
-  assert.match(result.safetyRef, /^refs\/opencode-guardian\/ses_push_failure\/guardian\/push-failure\//);
+  assert.match(requireString(result.reason), /push failed/i);
+  assert.match(requireString(result.safetyRef), /^refs\/opencode-guardian\/ses_push_failure\/guardian\/push-failure\//);
   assert.equal(result.preflight.safetyRef, result.safetyRef);
   assert.equal(result.report.safetyRef, result.safetyRef);
   assert.equal(result.report.action, "blocked");
 
   const status = await guardianStatus({ repoRoot: repo, config });
-  const session = status.sessions.find((candidate: Record<string, any>) => candidate.session_id === "ses_push_failure");
+  const session = findSession(status.sessions, "ses_push_failure");
   assert.equal(session.status, "active");
   assert.deepEqual(session.safety_refs, [result.safetyRef]);
   assert.equal(status.safetyRefs.length, 1);
-  assert.equal(status.worktrees.some((worktree: Record<string, any>) => worktree.path === repo), true);
+  assert.equal(status.worktrees.some((worktree: LooseRecord) => worktree.path === repo), true);
 });
 
 test("default finish mode pushes branch and returns a PR suggestion", async () => {
@@ -475,13 +499,13 @@ test("default finish mode pushes branch and returns a PR suggestion", async () =
   const result = await guardianFinish({ repoRoot: repo, cwd: repo, sessionId: "ses_pr", config });
   assert.equal(result.ok, true);
   assert.equal(result.status, "pr-suggested");
-  assert.match(result.suggestedCommand, /gh pr create/);
+  assert.match(requireString(result.suggestedCommand), /gh pr create/);
   assert.equal(result.report.action, "pushed-and-suggested-pr");
   assert.equal(result.report.suggestedCommand, result.suggestedCommand);
   const refs = await git(remote, ["show-ref", "refs/heads/guardian/pr"]);
   assert.match(refs.stdout, /refs\/heads\/guardian\/pr/);
   const status = await guardianStatus({ repoRoot: repo, config });
-  const session = status.sessions.find((candidate: Record<string, any>) => candidate.session_id === "ses_pr");
+  const session = findSession(status.sessions, "ses_pr");
   assert.equal(session.status, "preserved");
 });
 
@@ -496,7 +520,7 @@ test("merge-to-base requires explicit mode and ancestry proof", async () => {
 
   const refused = await guardianFinish({ repoRoot: repo, cwd: start.session.worktree_path, sessionId: "ses_merge", config });
   assert.equal(refused.ok, false);
-  assert.match(refused.reason, /allowMergeToBase/);
+  assert.match(requireString(refused.reason), /allowMergeToBase/);
   assert.equal(refused.preflight.safetyRef, refused.safetyRef);
   assert.equal(refused.report.action, "requires-explicit-merge-approval");
 
@@ -504,7 +528,7 @@ test("merge-to-base requires explicit mode and ancestry proof", async () => {
   assert.equal(result.ok, true);
   assert.equal(result.status, "merged");
   const status = await guardianStatus({ repoRoot: repo, config });
-  const session = status.sessions.find((candidate: Record<string, any>) => candidate.session_id === "ses_merge");
+  const session = findSession(status.sessions, "ses_merge");
   assert.equal(session.status, "finished");
   const ancestry = await git(repo, ["merge-base", "--is-ancestor", commit, "origin/main"]).then(() => true, () => false);
   assert.equal(ancestry, true);
@@ -523,7 +547,7 @@ test("merge-to-base refuses when primary repo worktree is not on base branch", a
   const result = await guardianFinish({ repoRoot: repo, cwd: start.session.worktree_path, sessionId: "ses_merge_primary_branch", config, allowMergeToBase: true });
 
   assert.equal(result.ok, false);
-  assert.match(result.reason, /primary repo worktree.*base branch/);
+  assert.match(requireString(result.reason), /primary repo worktree.*base branch/);
   assert.equal(result.preflight.baseWorktreeBranch, "local-primary");
   assert.equal((await git(repo, ["branch", "--show-current"])).stdout, "local-primary");
 });
@@ -541,14 +565,14 @@ test("merge-to-base refuses when primary repo worktree is dirty", async () => {
   const result = await guardianFinish({ repoRoot: repo, cwd: start.session.worktree_path, sessionId: "ses_merge_primary_dirty", config, allowMergeToBase: true });
 
   assert.equal(result.ok, false);
-  assert.match(result.reason, /primary repo worktree.*clean/);
+  assert.match(requireString(result.reason), /primary repo worktree.*clean/);
   assert.deepEqual(result.preflight.baseWorktreeDirtyFiles, ["primary-dirty.txt"]);
   assert.equal((await git(repo, ["branch", "--show-current"])).stdout, "main");
 });
 
 test("recover/status are read-only inventories with suggestions", async () => {
   const repo = await createRepo();
-  const config: Record<string, any> = { ...DEFAULT_CONFIG, finishMode: "preserve-only" };
+  const config: LooseRecord = { ...DEFAULT_CONFIG, finishMode: "preserve-only" };
   const { branch } = await makeBranchCommit(repo, "guardian/recover");
   await recordCurrentSession(repo, "ses_recover", branch, config);
 
@@ -570,8 +594,8 @@ test("recover/status are read-only inventories with suggestions", async () => {
   const recovery = await guardianRecover({ repoRoot: repo, config: DEFAULT_CONFIG });
   const after = await git(repo, ["rev-parse", "HEAD"]);
   assert.equal(before.stdout, after.stdout);
-  assert.equal(recovery.orphanedSessions.some((session: Record<string, any>) => session.session_id === "ses_orphan"), true);
-  assert.equal(recovery.branchesWithoutWorktrees.some((branch: Record<string, any>) => branch.name === "guardian/branch-only"), true);
+  assert.equal(recovery.orphanedSessions.some((session: LooseRecord) => session.session_id === "ses_orphan"), true);
+  assert.equal(recovery.branchesWithoutWorktrees.some((branch: LooseRecord) => branch.name === "guardian/branch-only"), true);
   assert.equal(recovery.worktreesWithoutState.length >= 1, true);
   assert.equal(recovery.stateBranchesWithoutWorktrees.includes("guardian/orphan"), true);
   assert.equal(recovery.safetyRefs.length >= 1, true);
@@ -585,10 +609,10 @@ test("guardian_status classifies external temp worktrees without Guardian state"
   await git(repo, ["worktree", "add", "-b", "deploy/compaction-full-day-20260522T140221Z", externalWorktree, "HEAD"]);
 
   const status = await guardianStatus({ repoRoot: repo, config: DEFAULT_CONFIG });
-  const finding = status.worktreesWithoutState.find((worktree: Record<string, any>) => worktree.path === externalWorktree);
+  const finding = status.worktreesWithoutState.find((worktree: LooseRecord) => worktree.path === externalWorktree);
   assert.equal(finding?.category, "external-temp-worktree");
   assert.equal(finding?.severity, "fail");
-  assert.match(finding?.reason, /outside Guardian/);
+  assert.match(String(finding?.reason), /outside Guardian/);
   assert.equal(finding?.metadata?.commonGitDir, path.join(repo, ".git"));
 });
 
@@ -614,6 +638,7 @@ test("tool-after recording updates last safe session state", async () => {
   const { branch } = await makeBranchCommit(repo, "guardian/after");
   const result = await recordLastSafeState({ repoRoot: repo, cwd: repo, sessionID: "ses_after", tool: "bash", config: DEFAULT_CONFIG });
   assert.equal(result.ok, true);
+  assert.ok(result.session);
   assert.equal(result.session.branch, branch);
   assert.equal(result.session.status, "active");
 });

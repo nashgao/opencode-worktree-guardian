@@ -91,7 +91,7 @@ test("blocks Guardian protected branch bypasses when branch context is available
   ]) {
     const result = classifyGuardCommand(command, protectedBranchOptions);
     assert.equal(result.blocked, true, command);
-    assert.match(result.reason, /guardian_finish/);
+    assert.match(String(result.reason), /guardian_finish/);
   }
 });
 
@@ -109,7 +109,7 @@ test("blocks recorded descriptive Guardian branches from protected branch bypass
   ]) {
     const result = classifyGuardCommand(command, options);
     assert.equal(result.blocked, true, command);
-    assert.match(result.reason, /guardian_finish/);
+    assert.match(String(result.reason), /guardian_finish/);
   }
 });
 
@@ -126,7 +126,7 @@ test("blocks git -C merges into protected worktree paths", () => {
   const result = classifyGuardCommand("git -C /repo merge feature/source-facts-hardening", options);
 
   assert.equal(result.blocked, true);
-  assert.match(result.reason, /guardian_finish/);
+  assert.match(String(result.reason), /guardian_finish/);
 });
 
 test("blocks git -C merges inside protected worktree paths", () => {
@@ -146,7 +146,7 @@ test("blocks git -C merges inside protected worktree paths", () => {
   ]) {
     const result = classifyGuardCommand(command, options);
     assert.equal(result.blocked, true, command);
-    assert.match(result.reason, /guardian_finish/);
+    assert.match(String(result.reason), /guardian_finish/);
   }
 });
 
@@ -172,7 +172,7 @@ test("blocks git -C symlinks to protected worktree paths", async (t) => {
   ]) {
     const result = classifyGuardCommand(command, options);
     assert.equal(result.blocked, true, command);
-    assert.match(result.reason, /guardian_finish/);
+    assert.match(String(result.reason), /guardian_finish/);
   }
 });
 
@@ -196,7 +196,7 @@ test("blocks shell cd merges into protected worktree paths", async (t) => {
   ]) {
     const result = classifyGuardCommand(command, options);
     assert.equal(result.blocked, true, command);
-    assert.match(result.reason, /guardian_finish/);
+    assert.match(String(result.reason), /guardian_finish/);
   }
 });
 
@@ -218,7 +218,7 @@ test("does not let failed shell cd leave a protected worktree context", () => {
   ]) {
     const result = classifyGuardCommand(command, options);
     assert.equal(result.blocked, true, command);
-    assert.match(result.reason, /guardian_finish/);
+    assert.match(String(result.reason), /guardian_finish/);
   }
 });
 
@@ -242,7 +242,7 @@ test("blocks shell pushd merges into protected worktree paths", async (t) => {
   ]) {
     const result = classifyGuardCommand(command, options);
     assert.equal(result.blocked, true, command);
-    assert.match(result.reason, /guardian_finish/);
+    assert.match(String(result.reason), /guardian_finish/);
   }
 });
 
@@ -271,7 +271,7 @@ test("blocks git work-tree merges into protected worktree paths", async (t) => {
   ]) {
     const result = classifyGuardCommand(command, options);
     assert.equal(result.blocked, true, command);
-    assert.match(result.reason, /guardian_finish/);
+    assert.match(String(result.reason), /guardian_finish/);
   }
 });
 
@@ -313,7 +313,7 @@ test("blocks runtime git aliases in protected worktree paths", async (t) => {
   ]) {
     const result = classifyGuardCommand(command, options);
     assert.equal(result.blocked, true, command);
-    assert.match(result.reason, /runtime git alias-capable config/);
+    assert.match(String(result.reason), /runtime git alias-capable config/);
   }
 });
 
@@ -324,7 +324,7 @@ test("blocks protected branch deletion push refspecs when branch context is avai
   ]) {
     const result = classifyGuardCommand(command, protectedBranchOptions);
     assert.equal(result.blocked, true, command);
-    assert.match(result.reason, /protected branch/);
+    assert.match(String(result.reason), /protected branch/);
   }
 });
 
@@ -338,7 +338,7 @@ test("blocks raw local branch and branch-ref deletion", () => {
   ]) {
     const result = classifyGuardCommand(command);
     assert.equal(result.blocked, true, command);
-    assert.match(result.reason, /guardian_delete_worktree/);
+    assert.match(String(result.reason), /guardian_delete_worktree/);
   }
 
   for (const command of [
@@ -355,7 +355,7 @@ test("blocks raw local branch and branch-ref deletion", () => {
   ]) {
     const result = classifyGuardCommand(command);
     assert.equal(result.blocked, true, command);
-    assert.match(result.reason, /guardian_delete_worktree/);
+    assert.match(String(result.reason), /guardian_delete_worktree/);
   }
 });
 
@@ -374,7 +374,7 @@ test("does not block protected branch bypass patterns without required context",
   }).blocked, false);
 });
 
-test("blocks rm -rf only for known worktree paths", () => {
+test("blocks rm -rf for known worktree paths and repo-managed paths", () => {
   assert.equal(classifyGuardCommand("rm -rf ../repo/.worktrees/a", {
     cwd: "/tmp/repo",
     knownWorktreePaths: ["/tmp/repo/.worktrees/a"],
@@ -390,9 +390,29 @@ test("blocks rm -rf only for known worktree paths", () => {
     knownWorktreePaths: ["/tmp/repo/.worktrees"],
   }).blocked, true);
 
+  for (const command of [
+    "rm -rf src",
+    "rm -rf ./src",
+    "rm -Rf /tmp/repo/src",
+    "bash -lc 'rm -rf src'",
+    'bash -lc \\"rm -rf src\\"',
+  ]) {
+    const result = classifyGuardCommand(command, {
+      cwd: "/tmp/repo",
+      repoRoot: "/tmp/repo",
+    });
+    assert.equal(result.blocked, true, command);
+    assert.match(String(result.reason), /guardian_delete_paths|guardian_hygiene/);
+  }
+
   assert.equal(classifyGuardCommand("rm -rf /tmp/not-a-worktree", {
     cwd: "/tmp/repo",
     knownWorktreePaths: ["/tmp/repo/.worktrees/a"],
+  }).blocked, false);
+
+  assert.equal(classifyGuardCommand("rm -rf /tmp/src", {
+    cwd: "/tmp",
+    repoRoot: "/tmp/repo",
   }).blocked, false);
 });
 
@@ -436,7 +456,17 @@ test("classifies normal non-destructive agent git passthrough", () => {
 test("finds dangerous commands inside shell command chains", () => {
   const result = classifyGuardCommand("printf ok && git reset --hard");
   assert.equal(result.blocked, true);
-  assert.match(result.reason, /reset/);
+  assert.match(String(result.reason), /reset/);
+});
+
+test("classifies nested shell payloads with scoped cwd from prior cd", () => {
+  const repoRoot = process.cwd();
+  const result = classifyGuardCommand(`cd ${JSON.stringify(repoRoot)} && bash -lc "rm -rf src"`, {
+    cwd: path.dirname(repoRoot),
+    repoRoot,
+  });
+  assert.equal(result.blocked, true);
+  assert.match(String(result.reason), /shell -c payload is blocked/);
 });
 
 test("tokenizes quoted worktree paths and extracts hook command text", () => {

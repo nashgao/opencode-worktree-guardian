@@ -1,0 +1,30 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^(Bash|exec_command|functions\\.exec_command)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node --import tsx \"${PLUGIN_ROOT}/hooks/guardian-hook.ts\" hook pre-tool-use",
+            "timeout": 10,
+            "statusMessage": "WorktreeGuardian: Checking shell command"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "^(Bash|exec_command|functions\\.exec_command)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node --import tsx \"${PLUGIN_ROOT}/hooks/guardian-hook.ts\" hook post-tool-use",
+            "timeout": 10,
+            "statusMessage": "WorktreeGuardian: Recording safe state"
+          }
+        ]
+      }
+    ]
+  }
+}

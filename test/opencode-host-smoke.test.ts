@@ -8,11 +8,20 @@ import { DEFAULT_CONFIG } from "../src/config.ts";
 import { guardianStart } from "../src/tools.ts";
 import { createRepoWithOrigin, git } from "./helpers.ts";
 
-function createClient(records: any[]) {
+type HostLogRecord = Record<string, unknown>;
+type HostToolResult = {
+  readonly metadata: {
+    readonly repoRoot?: unknown;
+    readonly safetyRefs?: unknown;
+    readonly worktrees?: unknown;
+  };
+  readonly output: string;
+};
+function createClient(records: HostLogRecord[]) {
   return {
     app: {
       _client: { records },
-      async log(event: any) {
+      async log(event: { readonly body: HostLogRecord }) {
         this._client.records.push(event.body);
       },
     },
@@ -30,6 +39,23 @@ function createToolContext(repo: string) {
     async ask() { return undefined; },
     metadata() {},
   };
+}
+
+function isHostToolResult(value: unknown): value is HostToolResult {
+  return value !== null
+    && typeof value === "object"
+    && "metadata" in value
+    && "output" in value
+    && typeof value.output === "string"
+    && value.metadata !== null
+    && typeof value.metadata === "object";
+}
+
+async function runHostTool(execute: unknown, input: Record<string, unknown>, context: ReturnType<typeof createToolContext>): Promise<HostToolResult> {
+  if (typeof execute !== "function") throw new TypeError("expected tool execute function");
+  const result: unknown = await Reflect.apply(execute, undefined, [input, context]);
+  if (!isHostToolResult(result)) throw new TypeError("expected host tool result");
+  return result;
 }
 
 test("project-local plugin shim exports only the guardian server function", async (t) => {
@@ -52,8 +78,7 @@ test("host-like guardian_status smoke runs in a disposable repo", async (t) => {
   const { repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(path.dirname(repo), { recursive: true, force: true }));
   const hooks = await plugin.server({ directory: repo, worktree: repo, client: createClient([]) });
-  const execute: any = hooks.tool.guardian_status.execute;
-  const result: any = await execute({ repoRoot: repo }, createToolContext(repo));
+  const result = await runHostTool(hooks.tool.guardian_status.execute, { repoRoot: repo }, createToolContext(repo));
   assert.equal(result.metadata.repoRoot, repo);
   assert.equal(Array.isArray(result.metadata.worktrees), true);
   assert.equal(Array.isArray(result.metadata.safetyRefs), true);
@@ -64,7 +89,7 @@ test("host-like guardian_status smoke runs in a disposable repo", async (t) => {
 test("host-like chat transform preserves OpenCode client method binding", async (t) => {
   const { repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(path.dirname(repo), { recursive: true, force: true }));
-  const records: any[] = [];
+  const records: HostLogRecord[] = [];
   const hooks = await plugin.server({ directory: repo, worktree: repo, client: createClient(records) });
 
   await hooks["experimental.chat.system.transform"](

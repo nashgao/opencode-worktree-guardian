@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import fs, { readFile } from "node:fs/promises";
 import test from "node:test";
 import plugin from "../src/index.ts";
+import type { GuardianNativeToolReturn, GuardianToolInput, GuardianToolName, RecordLike } from "../src/types.ts";
+import { isMutableRecord, isRecordLike } from "../src/types.ts";
 import { createRepo, createTempDir } from "./helpers.ts";
 
 const expectedToolNames = [
@@ -11,14 +13,13 @@ const expectedToolNames = [
   "guardian_finish",
   "guardian_finish_workflow",
   "guardian_hygiene",
-  "guardian_hygiene_cleanup",
   "guardian_preserve",
   "guardian_recover",
   "guardian_report_html",
   "guardian_start",
   "guardian_status",
   "guardian_unblock_finish",
-];
+] as const satisfies readonly GuardianToolName[];
 
 const expectedHookNames = [
   "command.execute.before",
@@ -35,7 +36,6 @@ const expectedPackagedCommands = new Map([
   ["finish", "guardian_finish"],
   ["finish-workflow", "guardian_finish_workflow"],
   ["hygiene", "guardian_hygiene"],
-  ["hygiene-cleanup", "guardian_hygiene_cleanup"],
   ["preserve", "guardian_preserve"],
   ["recover", "guardian_recover"],
   ["report", "guardian_report_html"],
@@ -44,8 +44,58 @@ const expectedPackagedCommands = new Map([
   ["unblock-finish", "guardian_unblock_finish"],
 ]);
 
+const removedLegacyRootExportName = ["guardian", "Hygiene", "Cleanup"].join("");
+
+type TestToolContext = {
+  sessionID?: string;
+  sessionId?: string;
+  messageID: string;
+  agent: string;
+  directory: string;
+  worktree: string;
+  abort: AbortSignal;
+  ask: () => Promise<undefined>;
+  metadata: (input: { readonly title?: string; readonly metadata?: RecordLike }) => void;
+};
+
+type TestToolExecute = (...args: never[]) => unknown;
+type TestNativeToolReturn = GuardianNativeToolReturn & {
+  readonly metadata: GuardianNativeToolReturn["metadata"] & {
+    readonly preflight: RecordLike;
+  };
+};
+
+function isGuardianNativeToolReturn(value: unknown): value is TestNativeToolReturn {
+  return isRecordLike(value)
+    && typeof value.title === "string"
+    && typeof value.output === "string"
+    && isMutableRecord(value.metadata);
+}
+
+async function runTool(execute: TestToolExecute, args: GuardianToolInput, context: TestToolContext): Promise<TestNativeToolReturn> {
+  const result: unknown = await Reflect.apply(execute, undefined, [args, context]);
+  if (!isGuardianNativeToolReturn(result)) throw new Error("guardian tool returned an unexpected result shape");
+  return result;
+}
+
+function targetPaths(metadata: RecordLike): string[] {
+  const targets = Array.isArray(metadata.targets) ? metadata.targets : [];
+  return targets.map((target) => {
+    const targetRecord = isRecordLike(target) ? target : {};
+    return typeof targetRecord.path === "string" ? targetRecord.path : "";
+  });
+}
+
+function metadataRecord(metadata: RecordLike, key: string): RecordLike {
+  return isRecordLike(metadata[key]) ? metadata[key] : {};
+}
+
+function metadataArray(metadata: RecordLike, key: string): readonly unknown[] {
+  return Array.isArray(metadata[key]) ? metadata[key] : [];
+}
+
 function createToolContext() {
-  const metadataCalls: any[] = [];
+  const metadataCalls: { readonly title?: string; readonly metadata?: RecordLike }[] = [];
   return {
     context: {
       sessionID: "ses_contract",
@@ -55,7 +105,7 @@ function createToolContext() {
       worktree: "/repo",
       abort: new AbortController().signal,
       async ask() { return undefined; },
-      metadata(input: any) {
+      metadata(input: { readonly title?: string; readonly metadata?: RecordLike }) {
         metadataCalls.push(input);
       },
     },
@@ -65,6 +115,7 @@ function createToolContext() {
 
 test("public plugin export matches OpenCode PluginModule contract", async () => {
   const module = await import("../src/index.ts");
+  assert.equal(Object.hasOwn(module, removedLegacyRootExportName), false);
   assert.equal(module.default, plugin);
   assert.equal(plugin.id, "opencode-worktree-guardian");
   assert.equal(typeof plugin.server, "function");
@@ -93,9 +144,9 @@ test("guardian native tools expose OpenCode tool definitions", async () => {
   assert.equal(typeof hooks.tool.guardian_delete_paths.args.allowTracked.safeParse, "function");
   assert.equal(typeof hooks.tool.guardian_delete_paths.args.allowRecursive.safeParse, "function");
   assert.equal(typeof hooks.tool.guardian_delete_paths.args.confirmDelete.safeParse, "function");
-  assert.equal(typeof hooks.tool.guardian_hygiene_cleanup.args.cleanupPaths.safeParse, "function");
-  assert.equal(typeof hooks.tool.guardian_hygiene_cleanup.args.allowCategories.safeParse, "function");
-  assert.equal(typeof hooks.tool.guardian_hygiene_cleanup.args.confirmDelete.safeParse, "function");
+  assert.equal(typeof hooks.tool.guardian_hygiene.args.cleanupPaths.safeParse, "function");
+  assert.equal(typeof hooks.tool.guardian_hygiene.args.allowCategories.safeParse, "function");
+  assert.equal(typeof hooks.tool.guardian_hygiene.args.confirmDelete.safeParse, "function");
 });
 
 test("guardian_status tool execute returns readable output with raw metadata", async () => {
@@ -126,8 +177,8 @@ test("guardian_status tool execute returns readable output with raw metadata", a
   const { context, metadataCalls } = createToolContext();
   context.directory = repo;
   context.worktree = repo;
-  const execute: any = hooks.tool.guardian_status.execute;
-  const result: any = await execute({ repoRoot: repo }, context);
+  const execute = hooks.tool.guardian_status.execute;
+  const result = await runTool(execute, { repoRoot: repo }, context);
   assert.equal(typeof result.output, "string");
   assert.equal(typeof result.metadata, "object");
   assert.deepEqual(metadataCalls, [{ title: "guardian_status" }]);
@@ -146,8 +197,8 @@ test("guardian_recover tool execute returns readable output with raw metadata", 
   const { context } = createToolContext();
   context.directory = repo;
   context.worktree = repo;
-  const execute: any = hooks.tool.guardian_recover.execute;
-  const result: any = await execute({ repoRoot: repo }, context);
+  const execute = hooks.tool.guardian_recover.execute;
+  const result = await runTool(execute, { repoRoot: repo }, context);
   assert.equal(typeof result.output, "string");
   assert.equal(typeof result.metadata, "object");
   assert.equal(result.metadata.repoRoot, repo);
@@ -162,12 +213,12 @@ test("guardian_report_html tool execute writes report and returns readable outpu
   const { context } = createToolContext();
   context.directory = repo;
   context.worktree = repo;
-  const execute: any = hooks.tool.guardian_report_html.execute;
-  const result: any = await execute({ repoRoot: repo }, context);
+  const execute = hooks.tool.guardian_report_html.execute;
+  const result = await runTool(execute, { repoRoot: repo }, context);
   assert.equal(typeof result.output, "string");
   assert.equal(typeof result.metadata, "object");
   assert.equal(result.metadata.ok, true);
-  assert.match(result.metadata.reportPath, /\.git\/opencode-guardian\/report\.html$/);
+  assert.match(String(result.metadata.reportPath), /\.git\/opencode-guardian\/report\.html$/);
   assert.equal(typeof result.metadata.status, "object");
   assert.equal(typeof result.metadata.recover, "object");
   assert.match(result.output, /\[GOOD\] guardian_report_html wrote offline report/);
@@ -180,8 +231,8 @@ test("guardian_hygiene tool execute returns readable output with raw metadata", 
   const { context, metadataCalls } = createToolContext();
   context.directory = repo;
   context.worktree = repo;
-  const execute: any = hooks.tool.guardian_hygiene.execute;
-  const result = await execute({ repoRoot: repo }, context);
+  const execute = hooks.tool.guardian_hygiene.execute;
+  const result = await runTool(execute, { repoRoot: repo }, context);
   assert.equal(typeof result.output, "string");
   assert.equal(typeof result.metadata, "object");
   assert.deepEqual(metadataCalls, [{ title: "guardian_hygiene" }]);
@@ -198,9 +249,9 @@ test("guardian_hygiene readable output marks failed scans as incomplete", async 
   const { context } = createToolContext();
   context.directory = dir;
   context.worktree = dir;
-  const execute: any = hooks.tool.guardian_hygiene.execute;
+  const execute = hooks.tool.guardian_hygiene.execute;
 
-  const result = await execute({ repoRoot: dir }, context);
+  const result = await Reflect.apply(execute, undefined, [{ repoRoot: dir }, context]);
 
   assert.equal(result.metadata.ok, false);
   assert.equal(result.metadata.status, "failed");
@@ -219,10 +270,10 @@ test("guardian_hygiene tool execute plans and applies cleanup with confirmDelete
   const { context } = createToolContext();
   context.directory = repo;
   context.worktree = repo;
-  const execute: any = hooks.tool.guardian_hygiene.execute;
+  const execute = hooks.tool.guardian_hygiene.execute;
 
-  const plan = await execute({ repoRoot: repo, mode: "plan", cleanupPaths: ["librarian-hygiene-contract"] }, context);
-  const apply = await execute({ repoRoot: repo, mode: "apply", cleanupPaths: ["librarian-hygiene-contract"], confirmDelete: true }, context);
+  const plan = await Reflect.apply(execute, undefined, [{ repoRoot: repo, mode: "plan", cleanupPaths: ["librarian-hygiene-contract"] }, context]);
+  const apply = await Reflect.apply(execute, undefined, [{ repoRoot: repo, mode: "apply", cleanupPaths: ["librarian-hygiene-contract"], confirmDelete: true }, context]);
 
   assert.equal(plan.metadata.status, "planned");
   assert.match(plan.output, /guardian_hygiene planned/);
@@ -232,35 +283,7 @@ test("guardian_hygiene tool execute plans and applies cleanup with confirmDelete
   assert.equal(await fs.access(path.join(repo, "librarian-hygiene-contract")).then(() => true, () => false), false);
 });
 
-test("guardian_hygiene and cleanup alias share cached confirmDelete plans", async () => {
-  const path = await import("node:path");
-  const repo = await createRepo();
-  await fs.mkdir(path.join(repo, "librarian-cross-canonical"), { recursive: true });
-  await fs.writeFile(path.join(repo, "librarian-cross-canonical", "file.txt"), "artifact\n");
-  await fs.mkdir(path.join(repo, "librarian-cross-alias"), { recursive: true });
-  await fs.writeFile(path.join(repo, "librarian-cross-alias", "file.txt"), "artifact\n");
-  const hooks = await plugin.server({ directory: repo, worktree: repo });
-  const { context } = createToolContext();
-  context.directory = repo;
-  context.worktree = repo;
-  const hygieneExecute: any = hooks.tool.guardian_hygiene.execute;
-  const cleanupExecute: any = hooks.tool.guardian_hygiene_cleanup.execute;
-
-  const canonicalPlan = await hygieneExecute({ repoRoot: repo, mode: "plan", cleanupPaths: ["librarian-cross-canonical"] }, context);
-  const aliasApply = await cleanupExecute({ repoRoot: repo, mode: "apply", cleanupPaths: ["librarian-cross-canonical"], confirmDelete: true }, context);
-  const aliasPlan = await cleanupExecute({ repoRoot: repo, mode: "plan", cleanupPaths: ["librarian-cross-alias"] }, context);
-  const canonicalApply = await hygieneExecute({ repoRoot: repo, mode: "apply", cleanupPaths: ["librarian-cross-alias"], confirmDelete: true }, context);
-
-  assert.equal(canonicalPlan.metadata.status, "planned");
-  assert.equal(aliasApply.metadata.status, "cleaned");
-  assert.equal(aliasPlan.metadata.status, "planned");
-  assert.equal(canonicalApply.metadata.status, "cleaned");
-  assert.equal(await fs.access(path.join(repo, "librarian-cross-canonical")).then(() => true, () => false), false);
-  assert.equal(await fs.access(path.join(repo, "librarian-cross-alias")).then(() => true, () => false), false);
-});
-
-
-test("guardian_hygiene_cleanup tool execute returns readable plan output with raw metadata", async () => {
+test("guardian_hygiene tool execute returns readable cleanup plan output with raw metadata", async () => {
   const path = await import("node:path");
   const repo = await createRepo();
   await fs.mkdir(path.join(repo, "librarian-contract"), { recursive: true });
@@ -269,22 +292,22 @@ test("guardian_hygiene_cleanup tool execute returns readable plan output with ra
   const { context, metadataCalls } = createToolContext();
   context.directory = repo;
   context.worktree = repo;
-  const execute: any = hooks.tool.guardian_hygiene_cleanup.execute;
+  const execute = hooks.tool.guardian_hygiene.execute;
 
-  const result = await execute({ repoRoot: repo, mode: "plan", cleanupPaths: ["librarian-contract"] }, context);
+  const result = await Reflect.apply(execute, undefined, [{ repoRoot: repo, mode: "plan", cleanupPaths: ["librarian-contract"] }, context]);
 
   assert.equal(typeof result.output, "string");
   assert.equal(typeof result.metadata, "object");
-  assert.deepEqual(metadataCalls, [{ title: "guardian_hygiene_cleanup" }]);
+  assert.deepEqual(metadataCalls, [{ title: "guardian_hygiene" }]);
   assert.equal(result.metadata.status, "planned");
   assert.equal(typeof result.metadata.confirmToken, "string");
   assert.deepEqual(result.metadata.targets.map((target: Record<string, unknown>) => target.path), ["librarian-contract"]);
-  assert.match(result.output, /guardian_hygiene_cleanup planned/);
+  assert.match(result.output, /guardian_hygiene planned/);
   assert.match(result.output, /approvedTargets: 1/);
   assert.doesNotMatch(result.output, /confirmToken:/);
 });
 
-test("guardian_hygiene_cleanup plugin confirmDelete reuses matching plan token and preserves stale safety", async () => {
+test("guardian_hygiene plugin confirmDelete reuses matching plan token and preserves stale safety", async () => {
   const path = await import("node:path");
   const repo = await createRepo();
   await fs.mkdir(path.join(repo, "librarian-contract-delete"), { recursive: true });
@@ -293,10 +316,10 @@ test("guardian_hygiene_cleanup plugin confirmDelete reuses matching plan token a
   const { context } = createToolContext();
   context.directory = repo;
   context.worktree = repo;
-  const execute: any = hooks.tool.guardian_hygiene_cleanup.execute;
+  const execute = hooks.tool.guardian_hygiene.execute;
 
-  const plan = await execute({ repoRoot: repo, mode: "plan", cleanupPaths: ["librarian-contract-delete"] }, context);
-  const apply = await execute({ repoRoot: repo, mode: "apply", cleanupPaths: ["librarian-contract-delete"], confirmDelete: true }, context);
+  const plan = await Reflect.apply(execute, undefined, [{ repoRoot: repo, mode: "plan", cleanupPaths: ["librarian-contract-delete"] }, context]);
+  const apply = await Reflect.apply(execute, undefined, [{ repoRoot: repo, mode: "apply", cleanupPaths: ["librarian-contract-delete"], confirmDelete: true }, context]);
 
   assert.equal(plan.metadata.status, "planned");
   assert.equal(apply.metadata.status, "cleaned");
@@ -304,8 +327,8 @@ test("guardian_hygiene_cleanup plugin confirmDelete reuses matching plan token a
 
   await fs.mkdir(path.join(repo, "librarian-contract-blank-token"), { recursive: true });
   await fs.writeFile(path.join(repo, "librarian-contract-blank-token", "file.txt"), "artifact\n");
-  const blankTokenPlan = await execute({ repoRoot: repo, mode: "plan", cleanupPaths: ["librarian-contract-blank-token"] }, context);
-  const blankTokenApply = await execute({ repoRoot: repo, mode: "apply", cleanupPaths: ["librarian-contract-blank-token"], confirmDelete: true, confirmToken: "" }, context);
+  const blankTokenPlan = await Reflect.apply(execute, undefined, [{ repoRoot: repo, mode: "plan", cleanupPaths: ["librarian-contract-blank-token"] }, context]);
+  const blankTokenApply = await Reflect.apply(execute, undefined, [{ repoRoot: repo, mode: "apply", cleanupPaths: ["librarian-contract-blank-token"], confirmDelete: true, confirmToken: "" }, context]);
 
   assert.equal(blankTokenPlan.metadata.status, "planned");
   assert.equal(blankTokenApply.metadata.status, "cleaned");
@@ -313,8 +336,8 @@ test("guardian_hygiene_cleanup plugin confirmDelete reuses matching plan token a
 
   await fs.mkdir(path.join(repo, "librarian-contract-placeholder-token"), { recursive: true });
   await fs.writeFile(path.join(repo, "librarian-contract-placeholder-token", "file.txt"), "artifact\n");
-  const placeholderTokenPlan = await execute({ repoRoot: repo, mode: "plan", cleanupPaths: ["librarian-contract-placeholder-token"] }, context);
-  const placeholderTokenApply = await execute({ repoRoot: repo, mode: "apply", cleanupPaths: ["librarian-contract-placeholder-token"], confirmDelete: true, confirmToken: "CONFIRM_DELETE" }, context);
+  const placeholderTokenPlan = await Reflect.apply(execute, undefined, [{ repoRoot: repo, mode: "plan", cleanupPaths: ["librarian-contract-placeholder-token"] }, context]);
+  const placeholderTokenApply = await Reflect.apply(execute, undefined, [{ repoRoot: repo, mode: "apply", cleanupPaths: ["librarian-contract-placeholder-token"], confirmDelete: true, confirmToken: "CONFIRM_DELETE" }, context]);
 
   assert.equal(placeholderTokenPlan.metadata.status, "planned");
   assert.equal(placeholderTokenApply.metadata.status, "cleaned");
@@ -322,9 +345,9 @@ test("guardian_hygiene_cleanup plugin confirmDelete reuses matching plan token a
 
   await fs.mkdir(path.join(repo, "librarian-contract-stale"), { recursive: true });
   await fs.writeFile(path.join(repo, "librarian-contract-stale", "file.txt"), "original\n");
-  const stalePlan = await execute({ repoRoot: repo, mode: "plan", cleanupPaths: ["librarian-contract-stale"] }, context);
+  const stalePlan = await Reflect.apply(execute, undefined, [{ repoRoot: repo, mode: "plan", cleanupPaths: ["librarian-contract-stale"] }, context]);
   await fs.writeFile(path.join(repo, "librarian-contract-stale", "file.txt"), "changed\n");
-  const staleApply = await execute({ repoRoot: repo, mode: "apply", cleanupPaths: ["librarian-contract-stale"], confirmDelete: true }, context);
+  const staleApply = await Reflect.apply(execute, undefined, [{ repoRoot: repo, mode: "apply", cleanupPaths: ["librarian-contract-stale"], confirmDelete: true }, context]);
 
   assert.equal(stalePlan.metadata.status, "planned");
   assert.equal(staleApply.metadata.status, "blocked");
@@ -332,7 +355,7 @@ test("guardian_hygiene_cleanup plugin confirmDelete reuses matching plan token a
   assert.equal(await fs.access(path.join(repo, "librarian-contract-stale")).then(() => true, () => false), true);
 });
 
-test("guardian_hygiene_cleanup plugin does not reuse cached token when apply options differ", async () => {
+test("guardian_hygiene plugin does not reuse cached token when apply options differ", async () => {
   const path = await import("node:path");
   const repo = await createRepo();
   await fs.mkdir(path.join(repo, "librarian-contract-options"), { recursive: true });
@@ -341,10 +364,10 @@ test("guardian_hygiene_cleanup plugin does not reuse cached token when apply opt
   const { context } = createToolContext();
   context.directory = repo;
   context.worktree = repo;
-  const execute: any = hooks.tool.guardian_hygiene_cleanup.execute;
+  const execute = hooks.tool.guardian_hygiene.execute;
 
-  const plan = await execute({ repoRoot: repo, mode: "plan", cleanupPaths: ["librarian-contract-options"] }, context);
-  const apply = await execute({ repoRoot: repo, mode: "apply", confirmDelete: true }, context);
+  const plan = await Reflect.apply(execute, undefined, [{ repoRoot: repo, mode: "plan", cleanupPaths: ["librarian-contract-options"] }, context]);
+  const apply = await Reflect.apply(execute, undefined, [{ repoRoot: repo, mode: "apply", confirmDelete: true }, context]);
 
   assert.equal(plan.metadata.status, "planned");
   assert.equal(apply.metadata.status, "blocked");
@@ -360,16 +383,16 @@ test("guardian_delete_paths tool execute returns readable plan output with raw m
   const { context, metadataCalls } = createToolContext();
   context.directory = repo;
   context.worktree = repo;
-  const execute: any = hooks.tool.guardian_delete_paths.execute;
+  const execute = hooks.tool.guardian_delete_paths.execute;
 
-  const result = await execute({ repoRoot: repo, mode: "plan", paths: ["scratch-delete.txt"] }, context);
+  const result = await runTool(execute, { repoRoot: repo, mode: "plan", paths: ["scratch-delete.txt"] }, context);
 
   assert.equal(typeof result.output, "string");
   assert.equal(typeof result.metadata, "object");
   assert.deepEqual(metadataCalls, [{ title: "guardian_delete_paths" }]);
   assert.equal(result.metadata.status, "planned");
   assert.equal(typeof result.metadata.confirmToken, "string");
-  assert.deepEqual(result.metadata.targets.map((target: Record<string, unknown>) => target.path), ["scratch-delete.txt"]);
+  assert.deepEqual(targetPaths(result.metadata), ["scratch-delete.txt"]);
   assert.match(result.output, /guardian_delete_paths planned/);
   assert.match(result.output, /approvedTargets: 1/);
   assert.doesNotMatch(result.output, /confirmToken:/);
@@ -383,19 +406,19 @@ test("guardian_delete_paths plugin confirmDelete reuses matching plan token and 
   const { context } = createToolContext();
   context.directory = repo;
   context.worktree = repo;
-  const execute: any = hooks.tool.guardian_delete_paths.execute;
+  const execute = hooks.tool.guardian_delete_paths.execute;
 
-  const plan = await execute({ repoRoot: repo, mode: "plan", paths: ["scratch-cached.txt"] }, context);
-  const apply = await execute({ repoRoot: repo, mode: "apply", paths: ["scratch-cached.txt"], confirmDelete: true }, context);
+  const plan = await runTool(execute, { repoRoot: repo, mode: "plan", paths: ["scratch-cached.txt"] }, context);
+  const apply = await runTool(execute, { repoRoot: repo, mode: "apply", paths: ["scratch-cached.txt"], confirmDelete: true }, context);
 
   assert.equal(plan.metadata.status, "planned");
   assert.equal(apply.metadata.status, "deleted");
   assert.equal(await fs.access(path.join(repo, "scratch-cached.txt")).then(() => true, () => false), false);
 
   await fs.writeFile(path.join(repo, "scratch-stale.txt"), "original\n");
-  const stalePlan = await execute({ repoRoot: repo, mode: "plan", paths: ["scratch-stale.txt"] }, context);
+  const stalePlan = await runTool(execute, { repoRoot: repo, mode: "plan", paths: ["scratch-stale.txt"] }, context);
   await fs.writeFile(path.join(repo, "scratch-stale.txt"), "changed\n");
-  const staleApply = await execute({ repoRoot: repo, mode: "apply", paths: ["scratch-stale.txt"], confirmDelete: true }, context);
+  const staleApply = await runTool(execute, { repoRoot: repo, mode: "apply", paths: ["scratch-stale.txt"], confirmDelete: true }, context);
 
   assert.equal(stalePlan.metadata.status, "planned");
   assert.equal(staleApply.metadata.status, "blocked");
@@ -414,8 +437,8 @@ test("guardian_delete_worktree tool execute returns readable plan output with ra
   const { context } = createToolContext();
   context.directory = repo;
   context.worktree = repo;
-  const execute: any = hooks.tool.guardian_delete_worktree.execute;
-  const result = await execute({ repoRoot: repo, cwd: repo, mode: "plan", targetPath: start.session.worktree_path }, context);
+  const execute = hooks.tool.guardian_delete_worktree.execute;
+  const result = await runTool(execute, { repoRoot: repo, cwd: repo, mode: "plan", targetPath: start.session.worktree_path }, context);
   assert.equal(typeof result.output, "string");
   assert.equal(typeof result.metadata, "object");
   assert.equal(result.metadata.status, "planned");
@@ -440,9 +463,9 @@ test("guardian_delete_worktree tool execute exposes abandon plan evidence in rea
   const { context } = createToolContext();
   context.directory = repo;
   context.worktree = repo;
-  const execute: any = hooks.tool.guardian_delete_worktree.execute;
+  const execute = hooks.tool.guardian_delete_worktree.execute;
 
-  const result = await execute({ repoRoot: repo, cwd: repo, mode: "plan", sessionId: "ses_contract_abandon", deleteBranch: true, abandonUnmerged: true }, context);
+  const result = await runTool(execute, { repoRoot: repo, cwd: repo, mode: "plan", sessionId: "ses_contract_abandon", deleteBranch: true, abandonUnmerged: true }, context);
 
   assert.equal(result.metadata.status, "planned");
   assert.equal(result.metadata.preflight.abandonUnmerged, true);
@@ -464,9 +487,9 @@ test("guardian_delete_worktree tool execute defaults repoRoot and cwd from nativ
   const { context } = createToolContext();
   context.directory = repo;
   context.worktree = repo;
-  const execute: any = hooks.tool.guardian_delete_worktree.execute;
+  const execute = hooks.tool.guardian_delete_worktree.execute;
 
-  const result = await execute({ mode: "plan", targetPath: start.session.worktree_path }, context);
+  const result = await runTool(execute, { mode: "plan", targetPath: start.session.worktree_path }, context);
 
   assert.equal(result.metadata.status, "planned");
   assert.equal(result.metadata.preflight.repoRoot, repo);
@@ -484,12 +507,12 @@ test("guardian_delete_worktree tool execute blocks current worktree from native 
   const { context } = createToolContext();
   context.directory = repo;
   context.worktree = start.session.worktree_path;
-  const execute: any = hooks.tool.guardian_delete_worktree.execute;
+  const execute = hooks.tool.guardian_delete_worktree.execute;
 
-  const result = await execute({ mode: "plan", sessionId: "ses_context_current" }, context);
+  const result = await runTool(execute, { mode: "plan", sessionId: "ses_context_current" }, context);
 
   assert.equal(result.metadata.status, "blocked");
-  assert.match(result.metadata.reason, /current execution worktree/);
+  assert.match(String(result.metadata.reason), /current execution worktree/);
 });
 
 test("guardian_done tool execute returns readable primary-main plan output with raw metadata", async () => {
@@ -502,9 +525,9 @@ test("guardian_done tool execute returns readable primary-main plan output with 
   const { context, metadataCalls } = createToolContext();
   context.directory = repo;
   context.worktree = repo;
-  const execute: any = hooks.tool.guardian_done.execute;
+  const execute = hooks.tool.guardian_done.execute;
 
-  const result = await execute({ repoRoot: repo, cwd: repo, mode: "plan", commitMessage: "feat: contract done" }, context);
+  const result = await runTool(execute, { repoRoot: repo, cwd: repo, mode: "plan", commitMessage: "feat: contract done" }, context);
 
   assert.equal(typeof result.output, "string");
   assert.equal(typeof result.metadata, "object");
@@ -532,10 +555,10 @@ test("guardian_done plugin confirm reuses matching plan token for primary publis
   const { context } = createToolContext();
   context.directory = repo;
   context.worktree = repo;
-  const execute: any = hooks.tool.guardian_done.execute;
+  const execute = hooks.tool.guardian_done.execute;
 
-  const plan = await execute({ repoRoot: repo, cwd: repo, mode: "plan", commitMessage: "feat: contract confirm done" }, context);
-  const apply = await execute({ repoRoot: repo, cwd: repo, mode: "apply", commitMessage: "feat: contract confirm done", confirm: true, confirmToken: "" }, context);
+  const plan = await runTool(execute, { repoRoot: repo, cwd: repo, mode: "plan", commitMessage: "feat: contract confirm done" }, context);
+  const apply = await runTool(execute, { repoRoot: repo, cwd: repo, mode: "apply", commitMessage: "feat: contract confirm done", confirm: true, confirmToken: "" }, context);
 
   assert.equal(plan.metadata.status, "planned");
   assert.equal(apply.metadata.status, "published");
@@ -557,9 +580,9 @@ test("guardian_done tool execute treats empty optional strings as absent", async
   context.directory = repo;
   context.worktree = repo;
   context.sessionID = "ses_empty_optional";
-  const execute: any = hooks.tool.guardian_done.execute;
+  const execute = hooks.tool.guardian_done.execute;
 
-  const result = await execute({
+  const result = await runTool(execute, {
     repoRoot: "",
     cwd: "",
     sessionId: "",
@@ -599,15 +622,16 @@ test("guardian_finish_workflow tool execute returns readable plan output with ra
   const { context, metadataCalls } = createToolContext();
   context.directory = repo;
   context.worktree = repo;
-  const execute: any = hooks.tool.guardian_finish_workflow.execute;
+  const execute = hooks.tool.guardian_finish_workflow.execute;
 
-  const result = await execute({ repoRoot: repo, cwd: repo, mode: "plan" }, context);
+  const result = await runTool(execute, { repoRoot: repo, cwd: repo, mode: "plan" }, context);
 
   assert.equal(result.metadata.status, "planned");
-  assert.equal(result.metadata.preflight.baseRef, "origin/main");
-  assert.equal(typeof result.metadata.preflight.baseRefOid, "string");
-  assert.equal(result.metadata.candidates.length, 1);
-  assert.equal(result.metadata.blockers.length, 0);
+  const preflight = metadataRecord(result.metadata, "preflight");
+  assert.equal(preflight.baseRef, "origin/main");
+  assert.equal(typeof preflight.baseRefOid, "string");
+  assert.equal(metadataArray(result.metadata, "candidates").length, 1);
+  assert.equal(metadataArray(result.metadata, "blockers").length, 0);
   assert.deepEqual(metadataCalls, [{ title: "guardian_finish_workflow" }]);
   assert.match(result.output, /guardian_finish_workflow planned/);
   assert.match(result.output, /baseRef: origin\/main/);
@@ -627,12 +651,12 @@ test("guardian_finish_workflow tool execute returns readable blocked output with
   const { context } = createToolContext();
   context.directory = repo;
   context.worktree = repo;
-  const execute: any = hooks.tool.guardian_finish_workflow.execute;
+  const execute = hooks.tool.guardian_finish_workflow.execute;
 
-  const result = await execute({ repoRoot: repo, cwd: repo, mode: "plan" }, context);
+  const result = await runTool(execute, { repoRoot: repo, cwd: repo, mode: "plan" }, context);
 
   assert.equal(result.metadata.status, "blocked");
-  assert.match(result.metadata.reason, /primary worktree/);
+  assert.match(String(result.metadata.reason), /primary worktree/);
   assert.match(result.output, /\[FAIL\] guardian_finish_workflow blocked/);
   assert.match(result.output, /primary worktree has uncommitted changes/);
 });
@@ -649,14 +673,15 @@ test("guardian_finish tool execute defaults cwd to recorded session worktree", a
   context.directory = repo;
   context.worktree = repo;
   context.sessionID = "ses_context_finish";
-  const execute: any = hooks.tool.guardian_finish.execute;
+  const execute = hooks.tool.guardian_finish.execute;
 
-  const result = await execute({ repoRoot: repo, timestamp: "20260602T010101" }, context);
+  const result = await runTool(execute, { repoRoot: repo, timestamp: "20260602T010101" }, context);
 
   assert.equal(result.metadata.status, "pr-suggested");
-  assert.match(result.metadata.suggestedCommand, /gh pr create/);
-  assert.equal(result.metadata.preflight.currentWorktree, started.session.worktree_path);
-  assert.equal(result.metadata.preflight.sessionOwnedWorktree, true);
+  const preflight = metadataRecord(result.metadata, "preflight");
+  assert.match(String(result.metadata.suggestedCommand), /gh pr create/);
+  assert.equal(preflight.currentWorktree, started.session.worktree_path);
+  assert.equal(preflight.sessionOwnedWorktree, true);
 });
 
 test("guardian_preserve tool execute defaults cwd to recorded session worktree", async () => {
@@ -671,13 +696,13 @@ test("guardian_preserve tool execute defaults cwd to recorded session worktree",
   context.directory = repo;
   context.worktree = repo;
   context.sessionID = "ses_context_preserve";
-  const execute: any = hooks.tool.guardian_preserve.execute;
+  const execute = hooks.tool.guardian_preserve.execute;
 
-  const result = await execute({ repoRoot: repo, timestamp: "20260602T020202" }, context);
+  const result = await runTool(execute, { repoRoot: repo, timestamp: "20260602T020202" }, context);
 
   assert.equal(result.metadata.status, "preserved");
-  assert.equal(result.metadata.session.worktree_path, started.session.worktree_path);
-  assert.match(result.metadata.preservedRef, /ses_context_preserve/);
+  assert.equal(metadataRecord(result.metadata, "session").worktree_path, started.session.worktree_path);
+  assert.match(String(result.metadata.preservedRef), /ses_context_preserve/);
 });
 
 test("guardian_unblock_finish tool execute injects context session id with explicit branch", async () => {
@@ -701,9 +726,9 @@ test("guardian_unblock_finish tool execute injects context session id with expli
   context.directory = repo;
   context.worktree = repo;
   context.sessionID = "ses_context_unblock";
-  const execute: any = hooks.tool.guardian_unblock_finish.execute;
+  const execute = hooks.tool.guardian_unblock_finish.execute;
 
-  const result = await execute({ repoRoot: repo, branch: started.session.branch, mode: "plan" }, context);
+  const result = await runTool(execute, { repoRoot: repo, branch: started.session.branch, mode: "plan" }, context);
 
   assert.equal(result.metadata.status, "planned");
   assert.equal(result.metadata.preflight.sessionId, "ses_context_unblock");
@@ -723,7 +748,7 @@ test("README documents local shim and readiness command names", async () => {
   assert.match(readme, /test:smoke:host/);
   assert.match(readme, /test:readiness/);
   assert.match(readme, /guardian_report_html/);
-  assert.match(readme, /raw `git worktree add` outside Guardian-owned roots/);
+  assert.match(readme, /docs\/adr\/0001-guardian-safety-policy\.md/);
   assert.match(readme, /external-temp-worktree/);
   assert.match(readme, /\.git\/opencode-guardian\/report\.html/);
 });

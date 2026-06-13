@@ -38,6 +38,26 @@ test("repo-local config overrides defaults but keeps protected branch baseline",
   assert.deepEqual(config.protectedBranches, ["main", "master", "develop", "production", "release"]);
 });
 
+test("missing config loads defaults without pretending a file was read", async () => {
+  const repo = await createTempDir();
+
+  const { config, loaded } = await loadConfig(repo);
+
+  assert.equal(loaded, false);
+  assert.deepEqual(config, DEFAULT_CONFIG);
+});
+
+test("non-object config payload is ignored at the boundary", async () => {
+  const repo = await createTempDir();
+  await fs.mkdir(path.join(repo, ".opencode"));
+  await fs.writeFile(path.join(repo, ".opencode", "worktree-guardian.json"), JSON.stringify(["create-pr"]));
+
+  const { config, loaded } = await loadConfig(repo);
+
+  assert.equal(loaded, false);
+  assert.deepEqual(config, DEFAULT_CONFIG);
+});
+
 test("invalid finish modes fail closed", () => {
   assert.throws(() => normalizeConfig({ finishMode: "delete-everything" }), /Unsupported/);
 });

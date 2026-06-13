@@ -56,12 +56,6 @@ const COMMANDS = [
     prompt: "Use the guardian_hygiene native tool. With no mode it scans only. For cleanup, run mode=plan first, inspect exact approved targets and blockers, get explicit user confirmation, then apply with confirmDelete=true. Never run raw cleanup commands.",
   },
   {
-    name: "guardian-hygiene-cleanup",
-    title: "Guardian: Hygiene Cleanup",
-    description: "Compatibility alias for token-gated hygiene cleanup.",
-    prompt: "Prefer guardian_hygiene mode=plan|apply. guardian_hygiene_cleanup is a compatibility alias for the same token-gated cleanup path. Run mode=plan first, inspect exact approved targets and blockers, get explicit user confirmation, then apply with confirmDelete=true. Never run raw cleanup commands.",
-  },
-  {
     name: "guardian-delete-worktree",
     title: "Guardian: Delete Worktree",
     description: "Plan or apply safe Guardian-mediated worktree, orphan branch, stale branch, or explicit unmerged abandon deletion.",
@@ -83,7 +77,10 @@ const COMMANDS = [
 
 async function submitPrompt(api: TuiPluginApi, prompt: string) {
   const route = api.route.current;
-  const sessionID = route.name === "session" && typeof route.params.sessionID === "string" ? route.params.sessionID : undefined;
+  let sessionID: string | undefined;
+  if (route.name === "session" && route.params && typeof route.params.sessionID === "string") {
+    sessionID = route.params.sessionID;
+  }
   if (!sessionID) {
     api.ui.toast({ variant: "warning", title: "Guardian", message: "Open a session before running Guardian commands." });
     return;
