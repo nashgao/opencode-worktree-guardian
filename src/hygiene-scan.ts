@@ -117,9 +117,10 @@ function reviewablePath(relative: string, blockedRoots: Set<string>) {
   if (parts.length <= 1) return relative;
   for (let index = 1; index <= parts.length; index += 1) {
     const candidate = parts.slice(0, index).join("/");
-    if (!blockedRoots.has(candidate)) return candidate;
+    const overlapsBlockedRoot = [...blockedRoots].some((blockedRoot) => candidate === blockedRoot || candidate.startsWith(`${blockedRoot}/`) || blockedRoot.startsWith(`${candidate}/`));
+    if (!overlapsBlockedRoot) return candidate;
   }
-  return relative;
+  return null;
 }
 
 function mergeReviewableStatus(current: HygieneCandidateStatus | undefined, next: HygieneCandidateStatus) {
@@ -130,6 +131,7 @@ async function buildReviewableCandidates(repoRoot: string, candidates: readonly 
   const collapsedByPath = new Map<string, HygieneCandidateStatus>();
   for (const candidate of candidates) {
     const collapsedPath = reviewablePath(candidate.path, blockedRoots);
+    if (collapsedPath === null) continue;
     collapsedByPath.set(collapsedPath, mergeReviewableStatus(collapsedByPath.get(collapsedPath), candidate.status));
   }
   const collapsed = [...collapsedByPath.entries()]

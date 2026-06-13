@@ -197,6 +197,20 @@ test("hygiene scanner exposes reviewable scan inventory separately from cleanup 
   );
 });
 
+test("hygiene scanner keeps reviewable delete suggestions narrow when siblings include hygiene findings", async () => {
+  const repo = await createRepo();
+  await writeArtifact(repo, "foo/node-compile-cache/cache.blob");
+  await writeArtifact(repo, "foo/ordinary.txt");
+
+  const result = await scanWorkspaceHygiene({ repoRoot: repo, config: DEFAULT_CONFIG });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(findingPaths(result), ["foo/node-compile-cache"]);
+  assert.deepEqual(recordField(result, "reviewableCandidates"), [
+    { path: "foo/ordinary.txt", status: "untracked", reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["foo/ordinary.txt"]' },
+  ]);
+});
+
 test("hygiene scanner collapses known residue names to cleanup roots", async () => {
   const repo = await createRepo();
   await writeArtifact(repo, "guardian-residue/.opencode/worktree-guardian.json");
