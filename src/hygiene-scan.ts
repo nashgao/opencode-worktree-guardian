@@ -6,6 +6,16 @@ import { isEnoent, isSameOrInside, normalizeRelativePath, relativePath } from ".
 
 export type HygieneSeverity = "warn" | "fail";
 export type HygieneCategory = "known-cleanable" | "nested-git" | "suspicious";
+type HygieneCandidateStatus = "ignored" | "untracked";
+type ReviewableCandidateInput = { readonly path: string; readonly status: HygieneCandidateStatus };
+
+type ReviewableCandidate = {
+  readonly path: string;
+  readonly status: HygieneCandidateStatus;
+  readonly reason: "not matched by Guardian hygiene cleanup rules";
+  readonly source: "git ls-files --others/--ignored";
+  readonly suggestedDeletePathCommand: string;
+};
 
 const PROTECTED_DIR_NAMES = new Set([
   "node_modules",
@@ -36,9 +46,16 @@ function errorMessage(error: unknown) {
 async function listCandidatePaths(repoRoot: string) {
   const untracked = await runGitNullSeparated(repoRoot, ["ls-files", "--others", "--exclude-standard", "-z"]);
   const ignored = await runGitNullSeparated(repoRoot, ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"]);
-  return [...new Set([...untracked, ...ignored])]
-    .map((entry) => normalizeRelativePath(entry))
-    .sort((left, right) => left.localeCompare(right));
+  const candidatesByPath = new Map<string, HygieneCandidateStatus>();
+  for (const entry of untracked) {
+    candidatesByPath.set(normalizeRelativePath(entry), "untracked");
+  }
+  for (const entry of ignored) {
+    candidatesByPath.set(normalizeRelativePath(entry), "ignored");
+  }
+  return [...candidatesByPath.entries()]
+    .map(([candidatePath, status]) => ({ path: candidatePath, status }))
+    .sort((left, right) => left.path.localeCompare(right.path));
 }
 
 export function protectedDirReason(relative: string) {
@@ -95,6 +112,47 @@ async function pathKind(candidate: string) {
   }
 }
 
+function reviewablePath(relative: string, blockedRoots: Set<string>) {
+  const parts = relative.split("/").filter(Boolean);
+  if (parts.length <= 1) return relative;
+  for (let index = 1; index <= parts.length; index += 1) {
+    const candidate = parts.slice(0, index).join("/");
+    if (!blockedRoots.has(candidate)) return candidate;
+  }
+  return relative;
+}
+
+function mergeReviewableStatus(current: HygieneCandidateStatus | undefined, next: HygieneCandidateStatus) {
+  return current === "ignored" || next === "ignored" ? "ignored" : "untracked";
+}
+
+async function buildReviewableCandidates(repoRoot: string, candidates: readonly ReviewableCandidateInput[], blockedRoots: Set<string>) {
+  const collapsedByPath = new Map<string, HygieneCandidateStatus>();
+  for (const candidate of candidates) {
+    const collapsedPath = reviewablePath(candidate.path, blockedRoots);
+    collapsedByPath.set(collapsedPath, mergeReviewableStatus(collapsedByPath.get(collapsedPath), candidate.status));
+  }
+  const collapsed = [...collapsedByPath.entries()]
+    .map(([candidatePath, status]) => ({ path: candidatePath, status }))
+    .sort((left, right) => left.path.localeCompare(right.path));
+  const visible = collapsed.slice(0, 12);
+  const reviewableCandidates: ReviewableCandidate[] = [];
+  for (const candidate of visible) {
+    const kind = await pathKind(path.resolve(repoRoot, candidate.path));
+    const recursiveFlag = kind === "directory" ? " allowRecursive=true" : "";
+    reviewableCandidates.push({
+      path: candidate.path,
+      status: candidate.status,
+      reason: "not matched by Guardian hygiene cleanup rules",
+      source: "git ls-files --others/--ignored",
+      suggestedDeletePathCommand: `guardian_delete_paths mode=plan paths=${JSON.stringify([candidate.path])}${recursiveFlag}`,
+    });
+  }
+  const reviewableCandidateCount = collapsed.length;
+  const reviewableShownCount = reviewableCandidates.length;
+  return { reviewableCandidates, reviewableCandidateCount, reviewableShownCount, reviewableOmittedCount: reviewableCandidateCount - reviewableShownCount, reviewableTruncated: reviewableCandidateCount > reviewableShownCount };
+}
+
 async function findNestedGitRoot(repoRoot: string, candidatePath: string) {
   let current = await pathKind(candidatePath) === "directory" ? candidatePath : path.dirname(candidatePath);
   const root = path.resolve(repoRoot);
@@ -132,10 +190,11 @@ export async function scanWorkspaceHygiene(input: Record<string, unknown> = {}) 
     protectedRoots.push(configuredWorktreeRoot);
     const findings: Array<Record<string, unknown>> = [];
     const exclusionsByPath = new Map<string, Record<string, unknown>>();
+    const reviewableCandidateInputs: ReviewableCandidateInput[] = [];
     const seenFindings = new Set<string>();
     const candidates = await listCandidatePaths(repoRoot);
     for (const candidate of candidates) {
-      const absolutePath = path.resolve(repoRoot, candidate);
+      const absolutePath = path.resolve(repoRoot, candidate.path);
       const relative = relativePath(repoRoot, absolutePath);
       const protectedReason = protectedDirReason(relative);
       const protectedRoot = protectedRoots.find((root) => isSameOrInside(absolutePath, root));
@@ -181,11 +240,15 @@ export async function scanWorkspaceHygiene(input: Record<string, unknown> = {}) 
           findings.push({ path: findingPath, category: "suspicious" satisfies HygieneCategory, severity: "warn" satisfies HygieneSeverity, reason: "untracked path resembles a clone, research dump, or scratch workspace", source: "git ls-files --others/--ignored" });
           seenFindings.add(key);
         }
+        continue;
       }
+      reviewableCandidateInputs.push({ path: relative, status: candidate.status });
     }
     findings.sort((left, right) => String(left.path).localeCompare(String(right.path)) || String(left.category).localeCompare(String(right.category)));
     const exclusions = [...exclusionsByPath.values()].sort((left, right) => String(left.path).localeCompare(String(right.path)));
-    const summary = { candidateCount: candidates.length, findingCount: findings.length, exclusionCount: exclusions.length, bySeverity: { warn: 0, fail: 0 } as Record<string, number>, byCategory: { "known-cleanable": 0, "nested-git": 0, suspicious: 0 } as Record<string, number> };
+    const blockedReviewableRoots = new Set([...findings.map((finding) => String(finding.path)), ...exclusions.map((exclusion) => String(exclusion.path))]);
+    const reviewableSummary = await buildReviewableCandidates(repoRoot, reviewableCandidateInputs, blockedReviewableRoots);
+    const summary = { candidateCount: candidates.length, findingCount: findings.length, exclusionCount: exclusions.length, reviewableCandidateCount: reviewableSummary.reviewableCandidateCount, reviewableShownCount: reviewableSummary.reviewableShownCount, reviewableOmittedCount: reviewableSummary.reviewableOmittedCount, reviewableTruncated: reviewableSummary.reviewableTruncated, bySeverity: { warn: 0, fail: 0 } as Record<string, number>, byCategory: { "known-cleanable": 0, "nested-git": 0, suspicious: 0 } as Record<string, number> };
     for (const finding of findings) {
       const severity = String(finding.severity);
       const category = String(finding.category);
@@ -193,8 +256,8 @@ export async function scanWorkspaceHygiene(input: Record<string, unknown> = {}) 
       summary.byCategory[category] = (summary.byCategory[category] ?? 0) + 1;
     }
     const nestedCommands = findings.filter((finding) => finding.category === "nested-git").map((finding) => `git -C ${shellQuote(String(finding.path))} status --short`);
-    return { ok: true, repoRoot, summary, findings, exclusions, scannedAt, suggestedCommands: ["guardian_hygiene", "guardian_status", "git status --short --ignored", ...nestedCommands] };
+    return { ok: true, repoRoot, summary, findings, exclusions, reviewableCandidates: reviewableSummary.reviewableCandidates, scannedAt, suggestedCommands: ["guardian_hygiene", "guardian_status", "git status --short --ignored", ...nestedCommands] };
   } catch (error) {
-    return { ok: false, status: "failed", reason: errorMessage(error), failureReason: errorMessage(error), summary: { scanFailed: true, candidateCount: 0, findingCount: 0, exclusionCount: 0, bySeverity: { warn: 0, fail: 0 }, byCategory: { "known-cleanable": 0, "nested-git": 0, suspicious: 0 } }, findings: [], exclusions: [], scannedAt, suggestedCommands: ["guardian_hygiene", "guardian_status"] };
+    return { ok: false, status: "failed", reason: errorMessage(error), failureReason: errorMessage(error), summary: { scanFailed: true, candidateCount: 0, findingCount: 0, exclusionCount: 0, reviewableCandidateCount: 0, reviewableShownCount: 0, reviewableOmittedCount: 0, reviewableTruncated: false, bySeverity: { warn: 0, fail: 0 }, byCategory: { "known-cleanable": 0, "nested-git": 0, suspicious: 0 } }, findings: [], exclusions: [], reviewableCandidates: [], scannedAt, suggestedCommands: ["guardian_hygiene", "guardian_status"] };
   }
 }

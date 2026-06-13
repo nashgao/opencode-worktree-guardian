@@ -19,6 +19,26 @@ function findingPaths(result: Record<string, unknown>) {
   return (result.findings as Array<Record<string, unknown>>).map((finding) => finding.path).sort();
 }
 
+function recordField(record: Record<string, unknown>, key: string) {
+  return record[key];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function pathsFromRecords(records: unknown) {
+  if (!Array.isArray(records)) {
+    throw new TypeError("expected records array");
+  }
+  return records.map((entry) => {
+    if (!isRecord(entry)) {
+      throw new TypeError("expected record entry");
+    }
+    return entry.path;
+  }).sort();
+}
+
 test("hygiene scanner detects known scratch artifact patterns", async () => {
   const repo = await createRepo();
   await writeArtifact(repo, ".omo/run-continuation/session.json");
@@ -103,6 +123,78 @@ test("hygiene scanner excludes protected dependency and build directories", asyn
   const result = await scanWorkspaceHygiene({ repoRoot: repo, config: DEFAULT_CONFIG });
   assert.equal(result.summary.findingCount, 0);
   assert.deepEqual((result.exclusions as Array<Record<string, unknown>>).map((entry) => entry.path).sort(), ["node_modules", "target", "vendor"]);
+});
+
+test("hygiene scanner exposes reviewable scan inventory separately from cleanup findings", async () => {
+  const repo = await createRepo();
+  await fs.writeFile(path.join(repo, ".gitignore"), "*.log\nlogs/\nnode_modules/\n");
+  await git(repo, ["add", ".gitignore"]);
+  await git(repo, ["commit", "-m", "add hygiene fixture ignores"]);
+  await writeArtifact(repo, ".omo/run-continuation/session.json");
+  await writeArtifact(repo, "node_modules/pkg/index.js");
+  await writeArtifact(repo, "logs/run.log");
+  await writeArtifact(repo, "plain.log");
+  for (const relative of [
+    "aaa.txt",
+    "bbb.txt",
+    "ccc.txt",
+    "ddd.txt",
+    "eee.txt",
+    "fff.txt",
+    "ggg.txt",
+    "hhh.txt",
+    "iii.txt",
+    "jjj.txt",
+    "yyy.txt",
+    "zzz.txt",
+  ]) {
+    await writeArtifact(repo, relative);
+  }
+
+  const result = await scanWorkspaceHygiene({ repoRoot: repo, config: DEFAULT_CONFIG });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(findingPaths(result), [".omo"]);
+  assert.deepEqual(pathsFromRecords(result.exclusions), ["node_modules"]);
+  assert.deepEqual(
+    {
+      summary: {
+        candidateCount: result.summary.candidateCount,
+        findingCount: result.summary.findingCount,
+        exclusionCount: result.summary.exclusionCount,
+        reviewableCandidateCount: recordField(result.summary, "reviewableCandidateCount"),
+        reviewableShownCount: recordField(result.summary, "reviewableShownCount"),
+        reviewableOmittedCount: recordField(result.summary, "reviewableOmittedCount"),
+        reviewableTruncated: recordField(result.summary, "reviewableTruncated"),
+      },
+      reviewableCandidates: recordField(result, "reviewableCandidates"),
+    },
+    {
+      summary: {
+        candidateCount: 16,
+        findingCount: 1,
+        exclusionCount: 1,
+        reviewableCandidateCount: 14,
+        reviewableShownCount: 12,
+        reviewableOmittedCount: 2,
+        reviewableTruncated: true,
+      },
+      reviewableCandidates: [
+        { path: "aaa.txt", status: "untracked", reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["aaa.txt"]' },
+        { path: "bbb.txt", status: "untracked", reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["bbb.txt"]' },
+        { path: "ccc.txt", status: "untracked", reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["ccc.txt"]' },
+        { path: "ddd.txt", status: "untracked", reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["ddd.txt"]' },
+        { path: "eee.txt", status: "untracked", reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["eee.txt"]' },
+        { path: "fff.txt", status: "untracked", reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["fff.txt"]' },
+        { path: "ggg.txt", status: "untracked", reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["ggg.txt"]' },
+        { path: "hhh.txt", status: "untracked", reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["hhh.txt"]' },
+        { path: "iii.txt", status: "untracked", reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["iii.txt"]' },
+        { path: "jjj.txt", status: "untracked", reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["jjj.txt"]' },
+        { path: "logs", status: "ignored", reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["logs"] allowRecursive=true' },
+        { path: "plain.log", status: "ignored", reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["plain.log"]' },
+      ],
+    },
+  );
 });
 
 test("hygiene scanner collapses known residue names to cleanup roots", async () => {
