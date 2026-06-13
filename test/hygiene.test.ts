@@ -223,6 +223,23 @@ test("hygiene scanner keeps reviewable delete suggestions narrow when siblings i
   ]);
 });
 
+test("hygiene scanner keeps reviewable files exact under tracked source directories", async () => {
+  const repo = await createRepo();
+  await fs.writeFile(path.join(repo, ".gitignore"), "*.txt\n");
+  await fs.mkdir(path.join(repo, "src"), { recursive: true });
+  await fs.writeFile(path.join(repo, "src", "index.ts"), "export const tracked = true;\n");
+  await git(repo, ["add", ".gitignore", "src/index.ts"]);
+  await git(repo, ["commit", "-m", "track source directory"]);
+  await fs.writeFile(path.join(repo, "src", "ordinary.txt"), "reviewable\n");
+
+  const result = await scanWorkspaceHygiene({ repoRoot: repo, config: DEFAULT_CONFIG });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(recordField(result, "reviewableCandidates"), [
+    { path: "src/ordinary.txt", status: "ignored", reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["src/ordinary.txt"]' },
+  ]);
+});
+
 test("hygiene scanner keeps nested protected exclusions from suppressing reviewable siblings", async () => {
   const repo = await createRepo();
   await writeArtifact(repo, "foo/node_modules/pkg/index.js");

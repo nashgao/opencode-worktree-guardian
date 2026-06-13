@@ -1,5 +1,15 @@
 import { arrayValue, recordValue, shortCommit, textValue } from "./readable-output-values.ts";
 
+function reviewableTextValue(value: unknown, fallback = "-") {
+  return textValue(value, fallback)
+    .replace(/\r\n|\n|\r/g, "\\n")
+    .replace(/\t/g, "\\t")
+    .replace(/\bmode\s*=\s*apply\b/gi, "mode=<redacted>")
+    .replace(/\bconfirmDelete\s*=\s*true\b/gi, "confirmDelete=<redacted>")
+    .replace(/(^|[^A-Za-z0-9_]|\\n)rm\s+-rf\b/gi, "$1rm <redacted>")
+    .replace(/(^|[^A-Za-z0-9_]|\\n)git\s+clean\b/gi, "$1git <redacted>");
+}
+
 export function formatGuardianHygieneOutput(rawResult: unknown) {
   const result = recordValue(rawResult);
   if (["planned", "cleaned", "blocked"].includes(textValue(result.status, ""))) return formatGuardianHygienePlanOutput(rawResult);
@@ -8,8 +18,8 @@ export function formatGuardianHygieneOutput(rawResult: unknown) {
   const exclusions = arrayValue(result.exclusions);
   const reviewableCandidates = arrayValue(result.reviewableCandidates);
   const reviewableCount = Number(summary.reviewableCandidateCount ?? reviewableCandidates.length);
-  const visibleReviewableCandidates = reviewableCandidates.slice(0, 8);
-  const reviewableOmittedCount = Math.max(0, reviewableCount - visibleReviewableCandidates.length);
+  const visibleReviewableCandidates = reviewableCandidates;
+  const reviewableOmittedCount = Number(summary.reviewableOmittedCount ?? Math.max(0, reviewableCount - visibleReviewableCandidates.length));
   const failCount = Number(recordValue(summary.bySeverity).fail ?? 0);
   const warnCount = Number(recordValue(summary.bySeverity).warn ?? 0);
   const scanFailed = result.ok === false || summary.scanFailed === true;
@@ -30,8 +40,8 @@ export function formatGuardianHygieneOutput(rawResult: unknown) {
     lines.push("[INFO] reviewable entries require exact-path guardian_delete_paths planning if cleanup is intended");
     for (const entry of visibleReviewableCandidates) {
       const candidate = recordValue(entry);
-      lines.push(`  - ${textValue(candidate.status)} ${textValue(candidate.path)}: ${textValue(candidate.reason)}`);
-      lines.push(`    ${textValue(candidate.suggestedDeletePathCommand)}`);
+      lines.push(`  - ${reviewableTextValue(candidate.status)} ${reviewableTextValue(candidate.path)}: ${reviewableTextValue(candidate.reason)}`);
+      lines.push(`    ${reviewableTextValue(candidate.suggestedDeletePathCommand)}`);
     }
   }
   const suggestions = arrayValue(result.suggestedCommands);

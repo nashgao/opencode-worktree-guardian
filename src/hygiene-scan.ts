@@ -115,13 +115,18 @@ async function pathKind(candidate: string) {
   }
 }
 
-function reviewablePath(relative: string, blockedRoots: Set<string>) {
+async function hasTrackedEntriesUnder(repoRoot: string, relative: string) {
+  const result = await tryGit(repoRoot, ["ls-files", "--", `${relative.replace(/\/$/, "")}/`]);
+  return result.ok && result.stdout.trim().length > 0;
+}
+
+async function reviewablePath(repoRoot: string, relative: string, blockedRoots: Set<string>) {
   const parts = relative.split("/").filter(Boolean);
   if (parts.length <= 1) return relative;
   for (let index = 1; index <= parts.length; index += 1) {
     const candidate = parts.slice(0, index).join("/");
     const overlapsBlockedRoot = [...blockedRoots].some((blockedRoot) => candidate === blockedRoot || candidate.startsWith(`${blockedRoot}/`) || blockedRoot.startsWith(`${candidate}/`));
-    if (!overlapsBlockedRoot) return candidate;
+    if (!overlapsBlockedRoot && (index === parts.length || !await hasTrackedEntriesUnder(repoRoot, candidate))) return candidate;
   }
   return null;
 }
@@ -133,7 +138,7 @@ function mergeReviewableStatus(current: HygieneCandidateStatus | undefined, next
 async function buildReviewableCandidates(repoRoot: string, candidates: readonly ReviewableCandidateInput[], blockedRoots: Set<string>) {
   const collapsedByPath = new Map<string, HygieneCandidateStatus>();
   for (const candidate of candidates) {
-    const collapsedPath = reviewablePath(candidate.path, blockedRoots);
+    const collapsedPath = await reviewablePath(repoRoot, candidate.path, blockedRoots);
     if (collapsedPath === null) continue;
     collapsedByPath.set(collapsedPath, mergeReviewableStatus(collapsedByPath.get(collapsedPath), candidate.status));
   }
