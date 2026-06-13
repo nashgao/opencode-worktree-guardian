@@ -6,6 +6,8 @@ function reviewableTextValue(value: unknown, fallback = "-") {
     .replace(/\t/g, "\\t")
     .replace(/\bmode\s*=\s*apply\b/gi, "mode=<redacted>")
     .replace(/\bconfirmDelete\s*=\s*true\b/gi, "confirmDelete=<redacted>")
+    .replace(/\bconfirmToken\s*[:=]\s*[^\\\s]+/gi, "confirmation=<redacted>")
+    .replace(/\bconfirmToken\b/gi, "confirmation")
     .replace(/(^|[^A-Za-z0-9_]|\\n)rm\s+-rf\b/gi, "$1rm <redacted>")
     .replace(/(^|[^A-Za-z0-9_]|\\n)git\s+clean\b/gi, "$1git <redacted>");
 }
