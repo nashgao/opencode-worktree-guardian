@@ -26,11 +26,13 @@ Inspect `npm pack --dry-run --json` output and confirm the package includes the 
 
 - `README.md`
 - `LICENSE`
+- `CHANGELOG.md`
 - `commands/`
 - `skills/`
 - `src/`
 - `scripts/`
 - `codex/`
+- `docs/`
 
 Confirm the output does not include local evidence files, worktree state, test logs, untracked scratch directories, or generated caches.
 

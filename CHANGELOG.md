@@ -2,9 +2,11 @@
 
 All notable public-surface changes are tracked here.
 
-This repository's package metadata currently declares version `0.1.0`, but this changelog does not record `0.1.0` as published. Move entries from `Unreleased` into a dated version section only as part of the release process in `docs/publishing.md`.
-
 ## Unreleased
+
+No changes.
+
+## 0.1.0 - 2026-06-13
 
 ### Added
 
