@@ -81,7 +81,8 @@ Defaults are delivery-first, lifecycle-managed, and cleanup-conservative. `guard
 - `guardian_preserve`: mark the session terminal/preserved and create a preserved ref. Preserved worktrees are cleanup-eligible through `guardian_delete_worktree`; preservation is not a long-term retention instruction.
 - `guardian_recover`: read-only recovery refs, reflog/unreachable candidates, and suggested commands. Its native tool output renders a terminal-readable summary, while `metadata` keeps the full structured result for automation.
 - `guardian_report_html`: write a self-contained offline control-room report to `.git/opencode-guardian/report.html` with sessions, worktrees, branch coverage, risks, recovery commands, and raw status/recover metadata.
-- `guardian_hygiene`: scan, plan, or apply cleanup for workspace hygiene findings. With no `mode`, it classifies known scratch artifacts, nested Git repositories, suspicious research dumps, and protected exclusions without deleting or cleaning anything. With `mode: "plan"` or `mode: "apply"`, it uses the token-gated cleanup preflight and removes only internally token-bound approved paths with internal Node filesystem APIs after explicit confirmation.
+- `guardian_hygiene`: scan, plan, or apply cleanup for workspace hygiene findings. With no `mode`, it classifies known scratch artifacts, nested Git repositories, suspicious research dumps, and protected exclusions without deleting or cleaning anything. With `mode: "plan"` or `mode: "apply"`, it uses the token-gated cleanup preflight and removes only internally token-bound approved hygiene findings with internal Node filesystem APIs after explicit confirmation.
+  Scan output also includes scan-only `reviewableCandidates`; those entries are inventory, not cleanup findings.
 
 ## Slash Commands
 
@@ -130,7 +131,8 @@ The canonical Guardian safety policy is [ADR 0001: Guardian Safety Policy](docs/
 - Guardian blocks raw destructive Git and shell cleanup. Use native Guardian tools instead of hard reset, forced clean, raw worktree removal/prune, raw branch deletion, stash mutation, force push, protected-branch bypasses, or broad filesystem deletion.
 - Use `guardian_start` for session worktree ownership and repair. Safe mutating Git commands can be routed into the owned worktree after Guardian records ownership; missing or invalid ownership fails closed for guarded operations.
 - Use `guardian_done` for normal implementation completion. It plans first and delegates to `guardian_finish`, `guardian_finish_workflow`, or the confirmed primary-main publish lane according to repository state.
-- Use `guardian_hygiene` for hygiene scan/plan/apply cleanup. Scan output is evidence only; cleanup requires `mode: "plan"`, exact-target review, explicit confirmation, then `mode: "apply"` with `confirmDelete: true`.
+- Use `guardian_hygiene` for hygiene scan/plan/apply cleanup. Scan output is evidence only. Cleanup requires `mode: "plan"`, exact-target review, explicit confirmation, then `mode: "apply"` with `confirmDelete: true`.
+  `reviewableCandidates` are scan-only inventory and are not accepted by the hygiene cleanup preflight.
 - Use `guardian_delete_paths` for intentional exact file or directory deletion, including tracked source only when explicitly allowed. Worktree deletion is separate and must use `guardian_delete_worktree`.
 - Use `guardian_delete_worktree` for Guardian worktree, orphan-branch, stale-branch, or explicit unmerged-abandon cleanup. Run plan first, inspect blockers and safety evidence, then apply only through the native tool.
 - Use `guardian_status`, `guardian_recover`, and `guardian_report_html` as read-only evidence/report surfaces. Their output can identify candidates but never authorizes deletion by itself.
@@ -225,16 +227,24 @@ Warning-heavy `guardian_recover` lists recovery facts without mutating state:
 
 ```text
 [WARN] guardian_hygiene scan
-[INFO] candidates: 8 | findings: 3 | exclusions: 1
-[WARN] known-cleanable: 1 | suspicious: 1 | nested-git: 1
-  - severity=warn category=known-cleanable path=librarian-react reason=known librarian scratch artifact
-  - severity=fail category=nested-git path=test-hyperf-kafka reason=nested Git repository has uncommitted changes
-  - severity=warn category=suspicious path=research-dump reason=untracked path resembles a clone, research dump, or scratch workspace
+[INFO] repoRoot: /repo
+[INFO] findings: 3 | warn: 2 | fail: 1 | exclusions: 1 | candidates: 8 | reviewable: 4
+[WARN] top findings:
+  - warn known-cleanable librarian-react: known librarian scratch artifact
+  - fail nested-git test-hyperf-kafka: nested Git repository has uncommitted changes
+  - warn suspicious research-dump: untracked path resembles a clone, research dump, or scratch workspace
+[WARN] reviewable candidates: 4
+[INFO] reviewable entries require exact-path guardian_delete_paths planning if cleanup is intended
+  - ignored logs: not matched by Guardian hygiene cleanup rules
+    guardian_delete_paths mode=plan paths=["logs"] allowRecursive=true
+  - ignored plain.log: not matched by Guardian hygiene cleanup rules
+    guardian_delete_paths mode=plan paths=["plain.log"]
 [INFO] suggested commands:
   - guardian_hygiene
   - guardian_status
-  - git status --short --ignored
 ```
+
+The structured scan result exposes the same split as `summary.candidateCount`, `summary.findingCount`, `summary.exclusionCount`, `summary.reviewableCandidateCount`, `summary.reviewableShownCount`, `summary.reviewableOmittedCount`, `summary.reviewableTruncated`, and `reviewableCandidates`. Reviewable entries are not cleanup findings, are not included in hygiene plan targets, and are not accepted by `guardian_hygiene` cleanup preflight. If a reviewable file should be deleted intentionally, plan exact-path deletion with `guardian_delete_paths mode=plan paths=["..."]`; for a reviewable directory, add `allowRecursive=true`.
 
 `guardian_hygiene mode=plan|apply` uses a two-step confirmed cleanup flow for approved hygiene findings:
 
@@ -299,7 +309,9 @@ Blocked `guardian_finish` exposes `preflight` and `report` for automation:
 - Intentional finish or preserve: use `guardian_finish` or `guardian_preserve`; `autoFinish` remains opt-in. Preservation creates a safety ref and terminal state, not a permanent worktree retention promise.
 - Dirty worktree: commit real source/config/doc changes or intentionally preserve. If the only dirt is runtime/local state, configure narrow `allowDirtyPaths`; file-specific patterns can match untracked runtime files. Guardian reports those files as `allowedDirtyFiles`, leaves them untouched, and still blocks any non-matching dirty path.
 - Dirty review artifact blocks finish: run `guardian_unblock_finish` with `mode: "plan"`, inspect the listed artifacts and confirm token, then apply only if the plan contains no source changes. If the session is unrecorded, include the explicit `branch` or `worktreePath` shown by `guardian_status`.
-- Workspace residue: run `guardian_hygiene`; with no `mode`, known artifacts, nested repos, and suspicious paths are reported only. If the user explicitly approves cleanup, run `guardian_hygiene` with `mode: "plan"`, inspect exact targets/blockers, get explicit delete confirmation, then apply through the plugin with `mode: "apply"` and `confirmDelete: true` for approved targets. The internal token/fingerprint gate remains enforced.
+- Workspace residue: run `guardian_hygiene`; with no `mode`, known artifacts, nested repos, suspicious paths, protected exclusions, and reviewable inventory are reported only.
+  If the user explicitly approves cleanup of hygiene findings, run `guardian_hygiene` with `mode: "plan"`, inspect exact targets/blockers, get explicit delete confirmation, then apply through the plugin with `mode: "apply"` and `confirmDelete: true` for approved targets. The internal token/fingerprint gate remains enforced.
+- Reviewable clutter: use the `suggestedDeletePathCommand` shown on a `reviewableCandidates` entry only as an exact-path planning handoff. Files use `guardian_delete_paths mode=plan paths=["..."]`; directories use `guardian_delete_paths mode=plan paths=["..."] allowRecursive=true`. Do not pass reviewable paths back to `guardian_hygiene` cleanup.
 - Intentional file or source deletion: use `guardian_delete_paths` with exact `paths`. Add `allowTracked: true` only for intended tracked-source deletion and `allowRecursive: true` only for intended directory deletion, then apply through the plugin with `confirmDelete: true` after inspecting the plan.
 - Stash exists: inspect with `git stash list` and `git stash show -p`; Guardian will not mutate stashes.
 - Orphaned worktree: run `guardian_recover` for evidence. If deletion is explicitly intended, run `guardian_delete_worktree` in `mode: "plan"`, inspect the preflight and confirm token, then re-run with `mode: "apply"` and that token.
