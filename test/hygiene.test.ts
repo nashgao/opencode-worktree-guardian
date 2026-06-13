@@ -211,6 +211,22 @@ test("hygiene scanner keeps reviewable delete suggestions narrow when siblings i
   ]);
 });
 
+test("hygiene scanner keeps nested protected exclusions from suppressing reviewable siblings", async () => {
+  const repo = await createRepo();
+  await writeArtifact(repo, "foo/node_modules/pkg/index.js");
+  await writeArtifact(repo, "foo/ordinary.txt");
+
+  const result = await scanWorkspaceHygiene({ repoRoot: repo, config: DEFAULT_CONFIG });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(pathsFromRecords(result.exclusions), ["foo/node_modules"]);
+  const protectedExclusion = (result.exclusions as Array<Record<string, unknown>>).find((entry) => entry.path === "foo/node_modules");
+  assert.equal(recordField(protectedExclusion ?? {}, "suggestedDeletePathCommand"), undefined);
+  assert.deepEqual(recordField(result, "reviewableCandidates"), [
+    { path: "foo/ordinary.txt", status: "untracked", reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["foo/ordinary.txt"]' },
+  ]);
+});
+
 test("hygiene scanner collapses known residue names to cleanup roots", async () => {
   const repo = await createRepo();
   await writeArtifact(repo, "guardian-residue/.opencode/worktree-guardian.json");

@@ -39,9 +39,7 @@ const SUSPICIOUS_NAME_PATTERN = /(^|[-_.])(clone|clones|research|dump|dumps|scra
 const RESIDUE_ROOT_PATTERN = /^(guardian-[^/]+|guardian-origin-[^/]+|opencode-temp-[^/]+|omo-research-[^/]+|opencode-research-[^/]+|git-docs-research)$/;
 const LOCAL_AGENT_STATE_DIRS = new Set([".omo", ".omc", ".omx", ".sisyphus", ".milestones"]);
 
-function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
-}
+function errorMessage(error: unknown) { return error instanceof Error ? error.message : String(error); }
 
 async function listCandidatePaths(repoRoot: string) {
   const untracked = await runGitNullSeparated(repoRoot, ["ls-files", "--others", "--exclude-standard", "-z"]);
@@ -65,6 +63,11 @@ export function protectedDirReason(relative: string) {
   }
   const protectedPart = parts.find((part) => PROTECTED_DIR_NAMES.has(part));
   return protectedPart ? `protected ${protectedPart} directory` : null;
+}
+
+function protectedDirExclusionPath(relative: string) {
+  const parts = relative.split("/").filter(Boolean);
+  return parts.slice(0, parts.findIndex((part) => PROTECTED_DIR_NAMES.has(part)) + 1).join("/") || parts[0] || relative;
 }
 
 function knownCleanableMatch(relative: string) {
@@ -201,7 +204,7 @@ export async function scanWorkspaceHygiene(input: Record<string, unknown> = {}) 
       const protectedReason = protectedDirReason(relative);
       const protectedRoot = protectedRoots.find((root) => isSameOrInside(absolutePath, root));
       if (protectedReason || protectedRoot) {
-        const exclusionPath = protectedRoot ? relativePath(repoRoot, protectedRoot) : relative.split("/")[0];
+        const exclusionPath = protectedRoot ? relativePath(repoRoot, protectedRoot) : protectedDirExclusionPath(relative);
         exclusionsByPath.set(exclusionPath, { path: exclusionPath, reason: protectedReason ?? "configured or registered Git worktree path" });
         continue;
       }
