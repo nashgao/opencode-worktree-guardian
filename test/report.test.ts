@@ -4,7 +4,7 @@ import test from "node:test";
 import { DEFAULT_CONFIG } from "../src/config.ts";
 import { guardianReportHtml, renderGuardianReportHtml } from "../src/report.ts";
 import { getGuardianPaths, recordSession } from "../src/state.ts";
-import { createRepo } from "./helpers.ts";
+import { createRepo, seedSession } from "./helpers.ts";
 
 function maliciousReportHtml() {
   return renderGuardianReportHtml({
@@ -136,7 +136,7 @@ test("guardian report HTML renders workspace hygiene summary and top findings", 
 
 test("guardian report integration writes repo-local report with session and worktree data", async () => {
   const repo = await createRepo();
-  await recordSession(repo, DEFAULT_CONFIG, {
+  await seedSession(repo, {
     session_id: "ses_report",
     status: "active",
     branch: "guardian/report",

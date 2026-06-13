@@ -3,6 +3,8 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+import { DEFAULT_CONFIG } from "../src/config.ts";
+import { getGuardianPaths, readState, writeStateAtomic } from "../src/state.ts";
 
 const execFileAsync = promisify(execFile);
 const safeTempDirectoryName = "opencode-worktree-guardian-tests";
@@ -78,4 +80,22 @@ export async function makeBranchCommit(repo: string, branch = "guardian/test") {
   await git(repo, ["commit", "-m", `add ${branch}`]);
   const { stdout } = await git(repo, ["rev-parse", "HEAD"]);
   return { branch, commit: stdout };
+}
+
+
+export async function seedSession(repo: string, session: Record<string, unknown>, config: Record<string, unknown> = DEFAULT_CONFIG): Promise<void> {
+  const paths = await getGuardianPaths(repo);
+  const state = await readState(paths, { repoRoot: repo, config });
+  const sessionId = String(session.session_id);
+  const previous = state.sessions[sessionId];
+  const previousVersion = typeof previous?.state_version === "number" ? previous.state_version : 0;
+  const now = new Date().toISOString();
+  state.sessions[sessionId] = {
+    ...previous,
+    ...session,
+    state_version: previousVersion + 1,
+    created_at: previous?.created_at ?? now,
+    updated_at: typeof session.updated_at === "string" ? session.updated_at : now,
+  };
+  await writeStateAtomic(paths, state);
 }

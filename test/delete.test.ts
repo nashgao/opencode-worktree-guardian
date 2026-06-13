@@ -8,7 +8,7 @@ import { guardianStatus } from "../src/recover.ts";
 import { recordSession } from "../src/state.ts";
 import { guardianStart } from "../src/tools.ts";
 import type { GuardianSession, GuardianToolResult } from "../src/types.ts";
-import { createRepoWithOrigin, git } from "./helpers.ts";
+import { createRepoWithOrigin, git, seedSession } from "./helpers.ts";
 
 type DeleteResult = Record<string, unknown> & {
   ok: boolean;
@@ -545,7 +545,7 @@ test("deleteBranch=true deletes only the branch when Guardian state records the 
   const sessionId = "ses_delete_poisoned_root";
   await git(repo, ["branch", branch, "main"]);
   const { stdout: head } = await git(repo, ["rev-parse", branch]);
-  await recordSession(repo, DEFAULT_CONFIG, {
+  await seedSession(repo, {
     session_id: sessionId,
     status: "active",
     branch,
@@ -588,7 +588,7 @@ test("deleteBranch=true deletes an explicit branch for poisoned primary repo sta
   const sessionId = "ses_delete_poisoned_root_by_branch";
   await git(repo, ["branch", branch, "main"]);
   const { stdout: head } = await git(repo, ["rev-parse", branch]);
-  await recordSession(repo, DEFAULT_CONFIG, {
+  await seedSession(repo, {
     session_id: sessionId,
     status: "active",
     branch,

@@ -82,6 +82,7 @@ Defaults are delivery-first, lifecycle-managed, and cleanup-conservative. `guard
 - `guardian_recover`: read-only recovery refs, reflog/unreachable candidates, and suggested commands. Its native tool output renders a terminal-readable summary, while `metadata` keeps the full structured result for automation.
 - `guardian_report_html`: write a self-contained offline control-room report to `.git/opencode-guardian/report.html` with sessions, worktrees, branch coverage, risks, recovery commands, and raw status/recover metadata.
 - `guardian_hygiene`: scan, plan, or apply cleanup for workspace hygiene findings. With no `mode`, it classifies known scratch artifacts, nested Git repositories, suspicious research dumps, and protected exclusions without deleting or cleaning anything. With `mode: "plan"` or `mode: "apply"`, it uses the token-gated cleanup preflight and removes only internally token-bound approved paths with internal Node filesystem APIs after explicit confirmation.
+- `guardian_gc`: plan or apply record-only cleanup of stale Guardian session records. Run `mode: "plan"` to inspect candidates (terminal sessions older than the safety-ref retention window, active sessions poisoned onto the primary worktree or a protected branch, and active sessions whose worktree is gone), then apply with `confirmDelete: true` and the returned `confirmToken`. It removes only JSON state records and never deletes git branches, worktrees, refs, stashes, or files.
 
 ## Slash Commands
 
@@ -96,6 +97,7 @@ When the TUI plugin entrypoint is enabled, Guardian registers these slash comman
 - `/guardian-recover`
 - `/guardian-report`
 - `/guardian-hygiene`
+- `/guardian-gc`
 - `/guardian-delete-paths`
 - `/guardian-delete-worktree`
 - `/guardian-unblock-finish`
@@ -115,6 +117,7 @@ The package also ships top-level `commands/*.md` assets for compatibility with h
 - `/opencode-worktree-guardian:recover`
 - `/opencode-worktree-guardian:report`
 - `/opencode-worktree-guardian:hygiene`
+- `/opencode-worktree-guardian:gc`
 - `/opencode-worktree-guardian:delete-paths`
 - `/opencode-worktree-guardian:delete-worktree`
 - `/opencode-worktree-guardian:unblock-finish`

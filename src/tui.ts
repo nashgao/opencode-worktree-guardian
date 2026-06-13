@@ -73,6 +73,12 @@ const COMMANDS = [
     description: "Plan or apply safe Guardian finish blocker resolution.",
     prompt: "Use the guardian_unblock_finish native tool. Run mode=plan first unless a fresh confirmToken for the exact action is provided. Do not delete files, stash, clean, or commit source changes.",
   },
+  {
+    name: "guardian-gc",
+    title: "Guardian: GC",
+    description: "Plan or apply record-only Guardian state cleanup of stale terminal, poisoned, and orphaned session records.",
+    prompt: "Use the guardian_gc native tool to prune stale Guardian session records. Run mode=plan first and inspect candidates (stale terminal, poisoned primary/protected, orphaned). Apply only after explicit user confirmation with confirmDelete=true and the returned confirmToken. It is record-only and never deletes git branches, worktrees, refs, stashes, or files.",
+  },
 ] as const;
 
 async function submitPrompt(api: TuiPluginApi, prompt: string) {

@@ -3,7 +3,7 @@ import test from "node:test";
 import { classifyGuardCommand } from "../src/guards.ts";
 import { DEFAULT_CONFIG } from "../src/config.ts";
 import { readState, recordSession, getGuardianPaths } from "../src/state.ts";
-import { createRepo } from "./helpers.ts";
+import { createRepo, seedSession } from "./helpers.ts";
 
 test("long command strings classify quickly and safely", () => {
   const command = `${"printf safe && ".repeat(250)}bash -c "git restore ."`;
@@ -16,7 +16,7 @@ test("long command strings classify quickly and safely", () => {
 test("large guardian state remains readable", async () => {
   const repo = await createRepo();
   for (let index = 0; index < 40; index += 1) {
-    await recordSession(repo, DEFAULT_CONFIG, {
+    await seedSession(repo, {
       session_id: `ses_large_${index}`,
       status: "active",
       branch: `guardian/large-${index}`,

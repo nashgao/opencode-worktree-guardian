@@ -3,7 +3,7 @@ import type { GuardianToolInput } from "../types.ts";
 export function rewriteGuardianCommand(input: GuardianToolInput = {}, output: GuardianToolInput = {}) {
   const command = input?.command;
   if (typeof command !== "string") return false;
-  const match = command.trim().match(/^\/?guardian\s+(done|status|finish-workflow|finish|preserve|recover|report|start|hygiene|delete-paths|delete-worktree|unblock-finish)(?:\s+(.*))?$/);
+  const match = command.trim().match(/^\/?guardian\s+(done|status|finish-workflow|finish|preserve|recover|report|start|hygiene|gc|delete-paths|delete-worktree|unblock-finish)(?:\s+(.*))?$/);
   if (!match) return false;
   const action = match[1];
   const rest = match[2] ?? "";
