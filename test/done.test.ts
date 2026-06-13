@@ -4,6 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { DEFAULT_CONFIG } from "../src/config.ts";
 import { guardianDone } from "../src/done.ts";
+import { guardianFinish } from "../src/finish.ts";
 import { guardianStatus } from "../src/recover.ts";
 import { guardianStart } from "../src/tools.ts";
 import { createRepoWithOrigin, git } from "./helpers.ts";
@@ -243,4 +244,65 @@ test("guardian_done blocks protected primary rescue scenarios outside base branc
   assert.equal(result.lane, "primary-rescue-recommended");
   assert.match(result.reason, /rescue it to a Guardian worktree/);
   assert.deepEqual(result.suggestedCommands, ["guardian_start createWorktree=true", "guardian_status"]);
+});
+
+test("guardian_done is a no-op after the session was already preserved", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_done_preserved", taskName: "done preserved", createWorktree: true, config: DEFAULT_CONFIG });
+  const worktree = started.session.worktree_path;
+  await fs.writeFile(path.join(worktree, "feature.txt"), "feature\n");
+  await git(worktree, ["add", "feature.txt"]);
+  await git(worktree, ["commit", "-m", "complete feature"]);
+  const finished = await guardianFinish({ repoRoot: repo, cwd: worktree, sessionId: "ses_done_preserved", finishMode: "preserve-only", config: DEFAULT_CONFIG });
+  assert.equal(finished.status, "preserved");
+  const { stdout: head } = await git(worktree, ["rev-parse", "HEAD"]);
+
+  const result = asDone(await guardianDone({ repoRoot: repo, cwd: worktree }));
+
+  assert.equal(result.ok, true);
+  assert.equal(result.status, "no-op");
+  assert.equal(result.lane, "already-preserved");
+  assert.equal(result.branch, started.session.branch);
+  assert.equal(result.commit, head);
+  assert.equal(result.safetyRef, finished.safetyRef);
+  assert.match(result.safetyRef, /^refs\/opencode-guardian\//);
+});
+
+test("guardian_done no-op keeps user-kept untracked notes without implying the preserved commit is unsafe", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_done_preserved_notes", taskName: "done preserved notes", createWorktree: true, config: DEFAULT_CONFIG });
+  const worktree = started.session.worktree_path;
+  await fs.writeFile(path.join(worktree, "feature.txt"), "feature\n");
+  await git(worktree, ["add", "feature.txt"]);
+  await git(worktree, ["commit", "-m", "complete feature"]);
+  const finished = await guardianFinish({ repoRoot: repo, cwd: worktree, sessionId: "ses_done_preserved_notes", finishMode: "preserve-only", config: DEFAULT_CONFIG });
+  assert.equal(finished.status, "preserved");
+  await fs.mkdir(path.join(worktree, ".omo"), { recursive: true });
+  await fs.writeFile(path.join(worktree, ".omo", "notepad.md"), "kept notes\n");
+  await fs.writeFile(path.join(worktree, ".omo", "plan.md"), "kept plan\n");
+
+  const result = asDone(await guardianDone({ repoRoot: repo, cwd: worktree, sessionId: "ses_done_preserved_notes" }));
+
+  assert.equal(result.ok, true);
+  assert.equal(result.status, "no-op");
+  assert.equal(result.lane, "already-preserved");
+  assert.equal(result.safetyRef, finished.safetyRef);
+  assert.equal(result.localUntrackedFileCount, 2);
+});
+
+test("guardian_done still blocks a genuinely active dirty session", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_done_active_dirty", taskName: "done active dirty", createWorktree: true, config: DEFAULT_CONFIG });
+  const worktree = started.session.worktree_path;
+  await fs.writeFile(path.join(worktree, "README.md"), "dirty tracked change\n");
+
+  const result = asDone(await guardianDone({ repoRoot: repo, cwd: worktree, sessionId: "ses_done_active_dirty" }));
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, "blocked");
+  assert.equal(result.lane, "session-finish");
+  assert.match(result.reason, /uncommitted changes/);
 });

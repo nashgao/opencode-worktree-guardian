@@ -40,6 +40,17 @@ export function formatGuardianFinishWorkflowOutput(rawResult: unknown) {
 
 export function formatGuardianDoneOutput(rawResult: unknown) {
   const result = recordValue(rawResult);
+  if (result.ok !== false && result.status === "no-op" && result.lane === "already-preserved") {
+    const lines = [
+      "[GOOD] guardian_done no-op: session already preserved",
+      `[INFO] branch: ${textValue(result.branch)}`,
+      `[INFO] commit: ${textValue(result.commit)}`,
+      `[INFO] safetyRef: ${textValue(result.safetyRef)}`,
+    ];
+    const untracked = Number(result.localUntrackedFileCount ?? 0);
+    if (untracked > 0) lines.push(`[INFO] local untracked files remain by user choice: ${untracked}`);
+    return lines.join("\n");
+  }
   const preflight = recordValue(result.preflight);
   const cleanupPlan = recordValue(result.cleanupPlan);
   const dirtySnapshot = recordValue(result.dirtySnapshot);
