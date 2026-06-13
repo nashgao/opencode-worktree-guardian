@@ -5,7 +5,7 @@ import plugin from "../src/index.ts";
 import { formatGuardianHygieneOutput } from "../src/plugin/readable-output-cleanup.ts";
 import type { GuardianNativeToolReturn, GuardianToolInput, GuardianToolName, RecordLike } from "../src/types.ts";
 import { isMutableRecord, isRecordLike } from "../src/types.ts";
-import { createRepo, createTempDir } from "./helpers.ts";
+import { createRepo, createTempDir, seedSession } from "./helpers.ts";
 
 const expectedToolNames = [
   "guardian_delete_paths",
@@ -13,6 +13,7 @@ const expectedToolNames = [
   "guardian_done",
   "guardian_finish",
   "guardian_finish_workflow",
+  "guardian_gc",
   "guardian_hygiene",
   "guardian_preserve",
   "guardian_recover",
@@ -36,6 +37,7 @@ const expectedPackagedCommands = new Map([
   ["delete-worktree", "guardian_delete_worktree"],
   ["finish", "guardian_finish"],
   ["finish-workflow", "guardian_finish_workflow"],
+  ["gc", "guardian_gc"],
   ["hygiene", "guardian_hygiene"],
   ["preserve", "guardian_preserve"],
   ["recover", "guardian_recover"],
@@ -156,7 +158,7 @@ test("guardian_status tool execute returns readable output with raw metadata", a
   const { recordSession } = await import("../src/state.ts");
   const { git } = await import("./helpers.ts");
   const { stdout: head } = await git(repo, ["rev-parse", "HEAD"]);
-  await recordSession(repo, DEFAULT_CONFIG, {
+  await seedSession(repo, {
     session_id: "ses_contract_status_active",
     status: "active",
     branch: "guardian/contract-status-active",

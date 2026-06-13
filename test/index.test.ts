@@ -5,7 +5,7 @@ import { DEFAULT_CONFIG } from "../src/config.ts";
 import plugin from "../src/index.ts";
 import { getGuardianPaths, readState, recordSession } from "../src/state.ts";
 import type { GuardianSession } from "../src/types.ts";
-import { createRepoWithOrigin, git } from "./helpers.ts";
+import { createRepoWithOrigin, git, seedSession } from "./helpers.ts";
 
 type LooseRecord = Record<string, unknown>;
 
@@ -50,6 +50,7 @@ test("exposes guardian native tools", async () => {
     "guardian_done",
     "guardian_finish",
     "guardian_finish_workflow",
+    "guardian_gc",
     "guardian_hygiene",
     "guardian_preserve",
     "guardian_recover",
@@ -288,7 +289,7 @@ test("default auto-start repairs poisoned primary ownership before routing mutat
   t.after(() => fs.rm(base, { recursive: true, force: true }));
   const sessionID = "ses_auto_start_repair_poisoned";
   const { stdout: commit } = await git(repo, ["rev-parse", "HEAD"]);
-  await recordSession(repo, DEFAULT_CONFIG, {
+  await seedSession(repo, {
     session_id: sessionID,
     status: "active",
     branch: "main",
@@ -611,7 +612,7 @@ test("session idle auto-finish blocks poisoned primary protected ownership with 
   await git(repo, ["add", ".opencode/worktree-guardian.json"]);
   await git(repo, ["commit", "-m", "enable guardian auto finish"]);
   const { stdout: commit } = await git(repo, ["rev-parse", "HEAD"]);
-  await recordSession(repo, DEFAULT_CONFIG, {
+  await seedSession(repo, {
     session_id: "ses_idle_poisoned_finish",
     status: "active",
     branch: "main",

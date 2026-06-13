@@ -5,8 +5,8 @@ import test from "node:test";
 import { DEFAULT_CONFIG } from "../src/config.ts";
 import { guardianRecover, guardianStatus } from "../src/recover.ts";
 import { guardianReportHtml, renderGuardianReportHtml } from "../src/report.ts";
-import { getGuardianPaths, recordSession } from "../src/state.ts";
-import { createRepo, git } from "./helpers.ts";
+import { getGuardianPaths } from "../src/state.ts";
+import { createRepo, git, seedSession } from "./helpers.ts";
 
 function maliciousReportHtml() {
   return renderGuardianReportHtml({
@@ -209,7 +209,7 @@ test("guardian status and recover expose reviewable hygiene metadata", async () 
 
 test("guardian report integration writes repo-local report with session and worktree data", async () => {
   const repo = await createRepo();
-  await recordSession(repo, DEFAULT_CONFIG, {
+  await seedSession(repo, {
     session_id: "ses_report",
     status: "active",
     branch: "guardian/report",

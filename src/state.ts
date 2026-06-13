@@ -1,14 +1,14 @@
 import fs from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import path from "node:path";
-import { getCommonGitDir } from "./git.ts";
+import { getCommonGitDir, getHeadCommit } from "./git.ts";
 import { clearTerminalLifecycleFields } from "./lifecycle.ts";
 import type { GuardianConfig, GuardianPaths, GuardianSession, GuardianState, GuardianStateRecord, RecordLike } from "./types.ts";
 import { errorCode, isRecordLike } from "./types.ts";
 
 export const STATE_SCHEMA_VERSION = "1.0.0";
 
-export type StateErrorKind = "invalid_shape" | "unsupported_schema" | "symlink" | "lock_timeout";
+export type StateErrorKind = "invalid_shape" | "unsupported_schema" | "symlink" | "lock_timeout" | "illegal_active_binding";
 export type StateBoundaryError = Error & { readonly stateErrorKind: StateErrorKind; readonly guardianPath?: string };
 type GuardianConfigInput = GuardianConfig | RecordLike;
 
@@ -164,6 +164,37 @@ export async function updateState(repoRoot: string, config: GuardianConfigInput,
   }
 }
 
+type SessionBindingFields = { readonly status?: unknown; readonly worktree_path?: unknown; readonly branch?: unknown; readonly session_id?: unknown };
+
+function isActivePrimaryBinding(repoRoot: string, session: SessionBindingFields | undefined): boolean {
+  return session?.status === "active" && typeof session.worktree_path === "string" && path.resolve(session.worktree_path) === path.resolve(repoRoot);
+}
+
+function isActiveProtectedBinding(protectedBranches: readonly string[], session: SessionBindingFields | undefined): boolean {
+  return session?.status === "active" && typeof session.branch === "string" && protectedBranches.includes(session.branch);
+}
+
+// Guardian's validate/status layers treat an active session bound to the primary worktree
+// or a protected branch as poisoned. Refuse to *newly* establish such a binding so no
+// write path (e.g. a tool-after checkpoint or a fresh start) can create poison. Re-recording
+// an already-poisoned active session is tolerated so finish/done/recovery can still process
+// and clean up legacy poison.
+function assertActiveSessionBoundary(
+  repoRoot: string,
+  config: GuardianConfigInput,
+  previous: SessionBindingFields | undefined,
+  next: SessionBindingFields,
+): void {
+  if (next.status !== "active") return;
+  const protectedBranches = Array.isArray(config.protectedBranches) ? config.protectedBranches : [];
+  if (isActivePrimaryBinding(repoRoot, next) && !isActivePrimaryBinding(repoRoot, previous)) {
+    throw stateError("illegal_active_binding", `Refusing to newly bind active session ${String(next.session_id)} to the primary repository worktree: ${repoRoot}`);
+  }
+  if (isActiveProtectedBinding(protectedBranches, next) && !isActiveProtectedBinding(protectedBranches, previous)) {
+    throw stateError("illegal_active_binding", `Refusing to newly bind active session ${String(next.session_id)} to a protected branch: ${String(next.branch)}`);
+  }
+}
+
 export async function recordSession(repoRoot: string, config: GuardianConfigInput, session: GuardianSession, options: { readonly paths?: GuardianPaths; readonly event?: RecordLike } = {}) {
   return updateState(repoRoot, config, (state) => {
     if (!state.sessions) state.sessions = {};
@@ -184,7 +215,7 @@ export async function recordSession(repoRoot: string, config: GuardianConfigInpu
         }
       }
     }
-    state.sessions[sessionId] = clearTerminalLifecycleFields({
+    const merged = clearTerminalLifecycleFields({
       ...previous,
       ...session,
       state_version: (typeof previous?.state_version === "number" ? previous.state_version : 0) + 1,
@@ -192,6 +223,26 @@ export async function recordSession(repoRoot: string, config: GuardianConfigInpu
       created_at: previous?.created_at ?? now,
       updated_at: now,
     });
+    assertActiveSessionBoundary(repoRoot, config, previous, merged);
+    state.sessions[sessionId] = merged;
     return state;
   }, { ...options, event: options.event ?? { type: "session_recorded", session_id: session.session_id } });
+}
+
+
+export async function checkpointSession(
+  repoRoot: string,
+  config: GuardianConfigInput,
+  sessionId: string,
+  options: { readonly expectedWorktreePath: string; readonly event?: RecordLike },
+) {
+  return updateState(repoRoot, config, async (state) => {
+    if (!state.sessions) state.sessions = {};
+    const current = isRecordLike(state.sessions[sessionId]) ? state.sessions[sessionId] : undefined;
+    if (!current || current.status !== "active" || typeof current.worktree_path !== "string") return state;
+    if (path.resolve(current.worktree_path) !== path.resolve(options.expectedWorktreePath)) return state;
+    const headCommit = await getHeadCommit(current.worktree_path);
+    state.sessions[sessionId] = { ...current, head_commit: headCommit, updated_at: new Date().toISOString() };
+    return state;
+  }, { event: options.event });
 }

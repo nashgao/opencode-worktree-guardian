@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
+import path from "node:path";
 import test from "node:test";
 import { DEFAULT_CONFIG } from "../src/config.ts";
 import { acquireStateLock, getGuardianPaths, readState, recordSession, writeReportAtomic } from "../src/state.ts";
@@ -17,7 +18,7 @@ test("state is repo-local under .git/opencode-guardian and records events", asyn
     session_id: "ses_state",
     status: "active",
     branch: "guardian/state",
-    worktree_path: repo,
+    worktree_path: path.join(repo, ".worktrees", "state"),
     base_ref: "origin/main",
     safety_refs: [],
   });
@@ -68,7 +69,7 @@ test("recordSession does not persist state when event recording is refused", asy
     session_id: "ses_atomic",
     status: "active",
     branch: "guardian/atomic",
-    worktree_path: repo,
+    worktree_path: path.join(repo, ".worktrees", "atomic"),
     base_ref: "origin/main",
     safety_refs: [],
   }), /events symlink/);
@@ -96,7 +97,7 @@ test("concurrent state updates serialize and events remain jsonl", async () => {
     session_id: `ses_concurrent_${index}`,
     status: "active",
     branch: `guardian/concurrent-${index}`,
-    worktree_path: repo,
+    worktree_path: path.join(repo, ".worktrees", `concurrent-${index}`),
     base_ref: "origin/main",
     safety_refs: [],
   })));

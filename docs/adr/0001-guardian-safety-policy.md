@@ -26,6 +26,7 @@ The public native tools are:
 - `guardian_delete_worktree`
 - `guardian_delete_paths`
 - `guardian_hygiene`
+- `guardian_gc`
 
 OpenCode slash commands and packaged `commands/*.md` wrappers are prompt surfaces only. They must instruct the agent to use the matching native tool and must not authorize raw shell cleanup, raw worktree removal, stash mutation, raw branch deletion, force-push, protected-branch bypasses, or deletion outside Guardian preflights.
 
@@ -192,6 +193,12 @@ Default cleanup includes current hygiene finding categories: known scratch artif
 The plugin tool flow caches the plan token only for matching session, repo, and options. Empty token values and `CONFIRM_DELETE` placeholders are treated as absent; the cached token may be injected only when the plan matches. Low-level direct calls to `guardianHygiene` still require the matching `confirmToken`.
 
 Apply re-runs preflight and removes only token-bound approved paths using internal Node `fs` APIs. It never suggests or shells out to broad cleanup commands. Cleanup blocks tracked files, protected directories, configured or registered Guardian worktrees, paths outside the repo root, `.git`, symlink cleanup roots, missing selected paths, stale fingerprints, and selected roots with unexpected tracked contents.
+
+## `guardian_gc` State Record Cleanup Policy
+
+`guardian_gc` prunes stale Guardian session records from state. It is record-only: it removes JSON session entries and never deletes git branches, worktrees, refs, stashes, or files. Nothing reachable becomes unreachable, so recovery refs and reflog remain available.
+
+Run `mode: "plan"` first. Candidates are terminal sessions older than `safetyRefRetentionDays`, active sessions bound to the primary worktree or a protected branch (which validate and status already treat as poisoned), and active sessions whose worktree is absent from disk and from `git worktree list`. Healthy active sessions are never candidates. Apply with `mode: "apply"`, `confirmDelete: true`, and the returned `confirmToken`; the token binds the exact candidate set, and a changed set fails closed.
 
 ## Stale Tokens, Fingerprints, And Safety Ref Posture
 

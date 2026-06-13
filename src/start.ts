@@ -139,6 +139,16 @@ export async function guardianStart(input: GuardianToolInput = {}): Promise<Guar
   }
 
   if (!branch) throw new Error("Cannot start guardian session from detached HEAD");
+  if (input.createWorktree !== true && path.resolve(worktreePath) === path.resolve(repoRoot)) {
+    return {
+      ok: false,
+      status: "blocked",
+      reason: `session ${sessionId} would be recorded on the primary repository worktree; rerun guardian_start with createWorktree=true`,
+      branch,
+      worktreePath,
+      stateVersion: state.state_version,
+    };
+  }
   const unsafeReason = input.createWorktree === true ? null : protectedBranchReason(config, branch);
   if (unsafeReason) return { ok: false, status: "blocked", reason: unsafeReason, branch, worktreePath };
   const headCommit = await getHeadCommit(worktreePath);

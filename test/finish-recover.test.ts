@@ -8,7 +8,7 @@ import { guardianRecover, guardianStatus } from "../src/recover.ts";
 import { collectKnownWorktreePaths, guardianPreserve, guardianStart, injectInvisiblePolicy, recordLastSafeState, runGuardianTool } from "../src/tools.ts";
 import { recordSession } from "../src/state.ts";
 import type { GuardianSession } from "../src/types.ts";
-import { createRepo, createRepoWithOrigin, git, makeBranchCommit } from "./helpers.ts";
+import { createRepo, createRepoWithOrigin, git, makeBranchCommit, seedSession } from "./helpers.ts";
 
 type LooseRecord = Record<string, unknown>;
 
@@ -34,7 +34,7 @@ function findSession(sessions: readonly GuardianSession[], sessionId: string): G
 
 async function recordCurrentSession(repo: string, sessionId: string, branch: string, config: LooseRecord = DEFAULT_CONFIG) {
   const { stdout: commit } = await git(repo, ["rev-parse", "HEAD"]);
-  await recordSession(repo, config, {
+  await seedSession(repo, {
     session_id: sessionId,
     status: "active",
     branch,
@@ -42,7 +42,7 @@ async function recordCurrentSession(repo: string, sessionId: string, branch: str
     base_ref: `${config.remote}/${config.baseBranch}`,
     head_commit: commit,
     safety_refs: [],
-  });
+  }, config);
 }
 
 async function worktreePaths(repo: string) {
@@ -50,20 +50,22 @@ async function worktreePaths(repo: string) {
   return result.stdout.split("\n").filter((line) => line.startsWith("worktree ")).map((line) => line.slice("worktree ".length));
 }
 
-test("guardian_start records current worktree ownership", async () => {
+test("guardian_start refuses to record the primary worktree without createWorktree", async () => {
   const repo = await createRepo();
   await makeBranchCommit(repo, "guardian/start");
   const result = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_start", config: DEFAULT_CONFIG });
-  assert.equal(result.ok, true);
-  assert.equal(result.session.branch, "guardian/start");
-  assert.equal(result.session.worktree_path, repo);
+  assert.equal(result.ok, false);
+  assert.equal(result.status, "blocked");
+  assert.match(requireString(result.reason), /createWorktree=true/);
+  const status = await guardianStatus({ repoRoot: repo, config: DEFAULT_CONFIG });
+  assert.equal(status.sessions.some((candidate: LooseRecord) => candidate.session_id === "ses_start"), false);
 });
 
 test("guardian_start repairs active primary protected ownership when creating a worktree", async () => {
   const { base, repo } = await createRepoWithOrigin();
   test.after(() => fs.rm(base, { recursive: true, force: true }));
   const { stdout: commit } = await git(repo, ["rev-parse", "HEAD"]);
-  await recordSession(repo, DEFAULT_CONFIG, {
+  await seedSession(repo, {
     session_id: "ses_poisoned_start",
     status: "active",
     branch: "main",
@@ -94,7 +96,7 @@ test("guardian_start refuses poisoned primary protected ownership without worktr
   const { base, repo } = await createRepoWithOrigin();
   test.after(() => fs.rm(base, { recursive: true, force: true }));
   const { stdout: commit } = await git(repo, ["rev-parse", "HEAD"]);
-  await recordSession(repo, DEFAULT_CONFIG, {
+  await seedSession(repo, {
     session_id: "ses_poisoned_attach",
     status: "active",
     branch: "main",
@@ -126,8 +128,8 @@ test("recording and preserving refuse protected primary ownership", async () => 
   test.after(() => fs.rm(base, { recursive: true, force: true }));
 
   const recorded = await recordLastSafeState({ repoRoot: repo, cwd: repo, sessionID: "ses_protected_after", tool: "bash", config: DEFAULT_CONFIG });
-  assert.equal(recorded.ok, false);
-  assert.match(String(recorded.reason), /protected branches/);
+  assert.equal(recorded.ok, true);
+  assert.equal(recorded.status, "skipped");
 
   const preserved = await guardianPreserve({ repoRoot: repo, cwd: repo, sessionId: "ses_protected_preserve", config: DEFAULT_CONFIG });
   assert.equal(preserved.ok, false);
@@ -229,7 +231,14 @@ test("active session records clear stale deletion lifecycle fields", async () =>
     safety_refs: [],
   });
 
-  await recordCurrentSession(repo, "ses_clear_deleted_fields", branch);
+  await recordSession(repo, DEFAULT_CONFIG, {
+    session_id: "ses_clear_deleted_fields",
+    status: "active",
+    branch,
+    worktree_path: path.join(repo, ".worktrees", "clear-deleted-fields"),
+    base_ref: "origin/main",
+    safety_refs: [],
+  });
 
   const status = await guardianStatus({ repoRoot: repo, config: DEFAULT_CONFIG });
   const session = findSession(status.sessions, "ses_clear_deleted_fields");
@@ -633,14 +642,14 @@ test("guardian tool dispatcher exposes internal functions", async () => {
 });
 
 
-test("tool-after recording updates last safe session state", async () => {
+test("tool-after recording skips sessions without an owned worktree", async () => {
   const repo = await createRepo();
-  const { branch } = await makeBranchCommit(repo, "guardian/after");
+  await makeBranchCommit(repo, "guardian/after");
   const result = await recordLastSafeState({ repoRoot: repo, cwd: repo, sessionID: "ses_after", tool: "bash", config: DEFAULT_CONFIG });
   assert.equal(result.ok, true);
-  assert.ok(result.session);
-  assert.equal(result.session.branch, branch);
-  assert.equal(result.session.status, "active");
+  assert.equal(result.status, "skipped");
+  const status = await guardianStatus({ repoRoot: repo, config: DEFAULT_CONFIG });
+  assert.equal(status.sessions.some((candidate: LooseRecord) => candidate.session_id === "ses_after"), false);
 });
 
 
@@ -663,4 +672,72 @@ test("explicit guardian start creates distinct worktrees for two sessions and is
   assert.notEqual(first.session.worktree_path, repo);
   assert.notEqual(second.session.worktree_path, repo);
   assert.notEqual(first.session.worktree_path, second.session.worktree_path);
+});
+
+test("recordSession refuses active primary and protected bindings", async () => {
+  const repo = await createRepo();
+  await assert.rejects(() => recordSession(repo, DEFAULT_CONFIG, {
+    session_id: "ses_reject_primary",
+    status: "active",
+    branch: "guardian/reject-primary",
+    worktree_path: repo,
+    base_ref: "origin/main",
+    safety_refs: [],
+  }), /primary repository worktree/);
+  await assert.rejects(() => recordSession(repo, DEFAULT_CONFIG, {
+    session_id: "ses_reject_protected",
+    status: "active",
+    branch: "main",
+    worktree_path: path.join(repo, ".worktrees", "x"),
+    base_ref: "origin/main",
+    safety_refs: [],
+  }), /protected branch/);
+  const status = await guardianStatus({ repoRoot: repo, config: DEFAULT_CONFIG });
+  assert.equal(status.sessions.length, 0);
+});
+
+test("tool.execute.after checkpoint cannot revert a guardian_start repair", async () => {
+  const { base, repo } = await createRepoWithOrigin();
+  test.after(() => fs.rm(base, { recursive: true, force: true }));
+  const { stdout: commit } = await git(repo, ["rev-parse", "HEAD"]);
+  await seedSession(repo, {
+    session_id: "ses_repair_survives",
+    status: "active",
+    branch: "main",
+    worktree_path: repo,
+    base_ref: "origin/main",
+    head_commit: commit,
+    safety_refs: [],
+  });
+  const repaired = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_repair_survives", taskName: "repair survives", createWorktree: true, config: DEFAULT_CONFIG });
+  assert.equal(repaired.ok, true);
+  assert.equal(repaired.repaired, true);
+  assert.notEqual(repaired.session.worktree_path, repo);
+  const guardianWorktree = repaired.session.worktree_path;
+
+  const afterHook = await recordLastSafeState({ repoRoot: repo, cwd: repo, sessionID: "ses_repair_survives", tool: "bash", config: DEFAULT_CONFIG });
+  assert.equal(afterHook.ok, true);
+  assert.equal(afterHook.status, "skipped");
+
+  const status = await guardianStatus({ repoRoot: repo, config: DEFAULT_CONFIG });
+  const session = findSession(status.sessions, "ses_repair_survives");
+  assert.equal(session.worktree_path, guardianWorktree);
+  assert.equal(status.poisonedSessions.some((candidate: LooseRecord) => candidate.session_id === "ses_repair_survives"), false);
+});
+
+test("last-safe-state checkpoint refreshes head_commit inside the owned worktree", async () => {
+  const { base, repo } = await createRepoWithOrigin();
+  test.after(() => fs.rm(base, { recursive: true, force: true }));
+  const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_checkpoint", taskName: "checkpoint", createWorktree: true, config: DEFAULT_CONFIG });
+  const worktree = requireString(started.session.worktree_path);
+  await fs.writeFile(path.join(worktree, "feature.txt"), "more\n");
+  await git(worktree, ["add", "feature.txt"]);
+  await git(worktree, ["commit", "-m", "advance"]);
+  const { stdout: newHead } = await git(worktree, ["rev-parse", "HEAD"]);
+  const checkpoint = await recordLastSafeState({ repoRoot: repo, cwd: worktree, sessionID: "ses_checkpoint", tool: "bash", config: DEFAULT_CONFIG });
+  assert.equal(checkpoint.ok, true);
+  assert.equal(checkpoint.status, "checkpointed");
+  const checkpointed = requireSession(checkpoint.session);
+  assert.equal(checkpointed.worktree_path, worktree);
+  assert.equal(checkpointed.head_commit, newHead);
 });

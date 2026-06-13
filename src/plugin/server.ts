@@ -48,6 +48,7 @@ function createTools(planCache: PlanTokenCache) {
     guardian_recover: guardianTool("guardian_recover", "List recovery refs, orphaned sessions, stash inventory, and suggested recovery commands without mutation.", planCache),
     guardian_report_html: guardianTool("guardian_report_html", "Write a static offline HTML report for guardian sessions, worktrees, branches, risks, and recovery commands.", planCache),
     guardian_hygiene: guardianTool("guardian_hygiene", "Scan, plan, or apply token-gated cleanup for workspace hygiene findings.", planCache),
+    guardian_gc: guardianTool("guardian_gc", "Plan or apply record-only Guardian state cleanup of stale terminal, poisoned, and orphaned session records.", planCache),
   };
 }
 
