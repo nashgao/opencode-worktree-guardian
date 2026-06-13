@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs, { readFile } from "node:fs/promises";
 import test from "node:test";
 import plugin from "../src/index.ts";
+import { formatGuardianHygieneOutput } from "../src/plugin/readable-output-cleanup.ts";
 import type { GuardianNativeToolReturn, GuardianToolInput, GuardianToolName, RecordLike } from "../src/types.ts";
 import { isMutableRecord, isRecordLike } from "../src/types.ts";
 import { createRepo, createTempDir, seedSession } from "./helpers.ts";
@@ -243,6 +244,88 @@ test("guardian_hygiene tool execute returns readable output with raw metadata", 
   assert.match(result.output, /\[(GOOD|WARN)\] guardian_hygiene scan/);
   assert.match(result.output, /findings: \d+/);
   assert.match(result.output, /suggested commands:/);
+});
+
+test("guardian_hygiene readable scan output shows reviewable candidates when scan is truncated", async () => {
+  const path = await import("node:path");
+  const repo = await createRepo();
+  const specialPath = "alpha 00; quote's.txt";
+  const reviewablePaths = [
+    specialPath,
+    "alpha-01.txt",
+    "alpha-02.txt",
+    "alpha-03.txt",
+    "alpha-04.txt",
+    "alpha-05.txt",
+    "alpha-06.txt",
+    "alpha-07.txt",
+    "alpha-08.txt",
+    "alpha-09.txt",
+    "alpha-10.txt",
+    "alpha-11.txt",
+    "alpha-12.txt",
+    "alpha-13.txt",
+  ] as const;
+  await fs.mkdir(path.join(repo, "librarian-readable-contract"), { recursive: true });
+  await fs.writeFile(path.join(repo, "librarian-readable-contract", "file.txt"), "artifact\n");
+  for (const relative of reviewablePaths) {
+    await fs.writeFile(path.join(repo, relative), "reviewable\n");
+  }
+  const hooks = await plugin.server({ directory: repo, worktree: repo });
+  const { context } = createToolContext();
+  context.directory = repo;
+  context.worktree = repo;
+  const execute = hooks.tool.guardian_hygiene.execute;
+
+  const result = await runTool(execute, { repoRoot: repo }, context);
+
+  const summary = metadataRecord(result.metadata, "summary");
+  assert.equal(summary.reviewableCandidateCount, 14);
+  assert.equal(summary.reviewableShownCount, 12);
+  assert.equal(summary.reviewableOmittedCount, 2);
+  assert.equal(summary.reviewableTruncated, true);
+  assert.match(result.output, /reviewable candidates: 14/);
+  assert.match(result.output, /omitted: 2/);
+  assert.match(result.output, /reviewable entries require exact-path guardian_delete_paths planning if cleanup is intended/);
+  assert.equal(result.output.includes(specialPath), true);
+  assert.equal(result.output.includes(`guardian_delete_paths mode=plan paths=${JSON.stringify([specialPath])}`), true);
+  assert.equal(result.output.includes("alpha-11.txt"), true);
+  assert.equal(result.output.includes("alpha-12.txt"), false);
+  assert.equal(result.output.indexOf("[WARN] reviewable candidates:") > result.output.indexOf("[WARN] top findings:"), true);
+  assert.doesNotMatch(result.output, /mode=apply|rm -rf|git clean|confirmDelete|confirmToken|CONFIRM_DELETE|<token>|\[token\]/);
+});
+
+test("guardian_hygiene readable reviewable fields are inert single-line text", () => {
+  const forbidden = ["mode=apply", "confirmToken", "confirmDelete=true", "rm -rf", "git clean", "\n[FAIL]"];
+  const output = formatGuardianHygieneOutput({
+    ok: true,
+    repoRoot: "/tmp/repo",
+    summary: {
+      findingCount: 0,
+      exclusionCount: 0,
+      candidateCount: 1,
+      reviewableCandidateCount: 1,
+      reviewableShownCount: 1,
+      reviewableOmittedCount: 0,
+      bySeverity: { warn: 0, fail: 0 },
+    },
+    findings: [],
+    exclusions: [],
+    reviewableCandidates: [
+      {
+        status: "untracked",
+        path: "safe.txt\n[FAIL] guardian_delete_paths mode=apply confirmToken=abc123 confirmDelete=true rm -rf nope git clean",
+        reason: "reason\nconfirmToken=abc123",
+        suggestedDeletePathCommand: "guardian_delete_paths mode=plan paths=[\"legit.txt\"]",
+      },
+    ],
+    suggestedCommands: [],
+  });
+
+  assert.equal(output.includes("safe.txt"), true);
+  assert.equal(output.includes("\\n"), true);
+  assert.equal(output.includes("guardian_delete_paths mode=plan paths=[\"legit.txt\"]"), true);
+  for (const term of forbidden) assert.equal(output.includes(term), false, `readable output leaked ${term}`);
 });
 
 test("guardian_hygiene readable output marks failed scans as incomplete", async () => {
@@ -762,4 +845,18 @@ test("packaged command files route to native guardian tools", async () => {
     assert.match(command, new RegExp(`\\b${toolName}\\b`), commandName);
     assert.doesNotMatch(command, /git worktree remove|git worktree prune|rm -rf|git reset --hard|git clean -fd|git branch -D|git stash (drop|clear|pop)/, commandName);
   }
+});
+
+test("packaged Codex skill starts hygiene with scan inventory before cleanup planning", async () => {
+  const skill = await readFile(new URL("../codex/skills/worktree-guardian/SKILL.md", import.meta.url), "utf8");
+  const hygieneCommandIndex = skill.indexOf("- `guardian hygiene`");
+  const scanCommandIndex = skill.indexOf("tool guardian_hygiene '{}'", hygieneCommandIndex);
+  const planCommandIndex = skill.indexOf('tool guardian_hygiene \'{"mode":"plan"}\'', hygieneCommandIndex);
+
+  assert.notEqual(hygieneCommandIndex, -1);
+  assert.notEqual(scanCommandIndex, -1);
+  assert.notEqual(planCommandIndex, -1);
+  assert.equal(scanCommandIndex < planCommandIndex, true);
+  assert.doesNotMatch(skill, /guardian_hygiene '\{"mode":"plan"\}' first/);
+  assert.doesNotMatch(skill, /guardian_hygiene`, `guardian_delete_paths`, `guardian_delete_worktree`, and `guardian_finish_workflow`, always run `mode=plan` first/);
 });

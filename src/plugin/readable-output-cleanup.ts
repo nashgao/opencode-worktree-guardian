@@ -1,17 +1,33 @@
 import { arrayValue, recordValue, shortCommit, textValue } from "./readable-output-values.ts";
 
+function reviewableTextValue(value: unknown, fallback = "-") {
+  return textValue(value, fallback)
+    .replace(/\r\n|\n|\r/g, "\\n")
+    .replace(/\t/g, "\\t")
+    .replace(/(^|\\n|[^A-Za-z0-9_])mode\s*=\s*apply\b/gi, "$1mode=<redacted>")
+    .replace(/(^|\\n|[^A-Za-z0-9_])confirmDelete\s*=\s*true\b/gi, "$1confirmDelete=<redacted>")
+    .replace(/(^|\\n|[^A-Za-z0-9_])confirmToken\s*[:=]\s*[^\\\s]+/gi, "$1confirmation=<redacted>")
+    .replace(/(^|\\n|[^A-Za-z0-9_])confirmToken\b/gi, "$1confirmation")
+    .replace(/(^|[^A-Za-z0-9_]|\\n)rm\s+-rf\b/gi, "$1rm <redacted>")
+    .replace(/(^|[^A-Za-z0-9_]|\\n)git\s+clean\b/gi, "$1git <redacted>");
+}
+
 export function formatGuardianHygieneOutput(rawResult: unknown) {
   const result = recordValue(rawResult);
   if (["planned", "cleaned", "blocked"].includes(textValue(result.status, ""))) return formatGuardianHygienePlanOutput(rawResult);
   const summary = recordValue(result.summary);
   const findings = arrayValue(result.findings);
   const exclusions = arrayValue(result.exclusions);
+  const reviewableCandidates = arrayValue(result.reviewableCandidates);
+  const reviewableCount = Number(summary.reviewableCandidateCount ?? reviewableCandidates.length);
+  const visibleReviewableCandidates = reviewableCandidates;
+  const reviewableOmittedCount = Number(summary.reviewableOmittedCount ?? Math.max(0, reviewableCount - visibleReviewableCandidates.length));
   const failCount = Number(recordValue(summary.bySeverity).fail ?? 0);
   const warnCount = Number(recordValue(summary.bySeverity).warn ?? 0);
   const scanFailed = result.ok === false || summary.scanFailed === true;
   const lines = [`${scanFailed ? "[FAIL]" : findings.length > 0 ? "[WARN]" : "[GOOD]"} guardian_hygiene scan`, `[INFO] repoRoot: ${textValue(result.repoRoot)}`];
   if (scanFailed) lines.push("[WARN] scan incomplete: findings and candidate counts are not trustworthy");
-  else lines.push(`[INFO] findings: ${Number(summary.findingCount ?? findings.length)} | warn: ${warnCount} | fail: ${failCount} | exclusions: ${Number(summary.exclusionCount ?? exclusions.length)} | candidates: ${Number(summary.candidateCount ?? 0)}`);
+  else lines.push(`[INFO] findings: ${Number(summary.findingCount ?? findings.length)} | warn: ${warnCount} | fail: ${failCount} | exclusions: ${Number(summary.exclusionCount ?? exclusions.length)} | candidates: ${Number(summary.candidateCount ?? 0)} | reviewable: ${reviewableCount}`);
   const reason = textValue(result.reason, "");
   if (result.ok === false || reason) lines.push(`[FAIL] ${reason || "guardian_hygiene scan failed"}`);
   if (findings.length > 0) {
@@ -19,6 +35,15 @@ export function formatGuardianHygieneOutput(rawResult: unknown) {
     for (const entry of findings.slice(0, 8)) {
       const finding = recordValue(entry);
       lines.push(`  - ${textValue(finding.severity)} ${textValue(finding.category)} ${textValue(finding.path)}: ${textValue(finding.reason)}`);
+    }
+  }
+  if (reviewableCount > 0) {
+    lines.push(`[WARN] reviewable candidates: ${reviewableCount}${reviewableOmittedCount > 0 ? ` | omitted: ${reviewableOmittedCount}` : ""}`);
+    lines.push("[INFO] reviewable entries require exact-path guardian_delete_paths planning if cleanup is intended");
+    for (const entry of visibleReviewableCandidates) {
+      const candidate = recordValue(entry);
+      lines.push(`  - ${reviewableTextValue(candidate.status)} ${reviewableTextValue(candidate.path)}: ${reviewableTextValue(candidate.reason)}`);
+      lines.push(`    ${reviewableTextValue(candidate.suggestedDeletePathCommand)}`);
     }
   }
   const suggestions = arrayValue(result.suggestedCommands);

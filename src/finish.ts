@@ -4,9 +4,10 @@ import { classifyDirtyFiles, splitPrimaryDirtyFiles } from "./finish-dirty-files
 import { blocked, errorMessage, isFinishStateInput, withFinishReport } from "./finish-report.ts";
 import type { FinishPreflight, GuardianFinishResult, LooseRecord } from "./finish-report.ts";
 import { createSafetyRef, fetchRemote, getCurrentBranch, getDirtyFiles, getHeadCommit, getRepoRoot, isAncestor, listStashes, pushBranch, runGit } from "./git.ts";
-import { isTerminalSession } from "./lifecycle.ts";
+import { isActiveSession, isTerminalSession } from "./lifecycle.ts";
 import { getGuardianPaths, readState, recordSession } from "./state.ts";
 import { isRecordLike } from "./types.ts";
+import { recoverableGuardianWorktreeBlocker, recoverySessionId } from "./worktree-recovery.ts";
 
 function samePath(a: string, b: string) {
   return path.resolve(a) === path.resolve(b);
@@ -19,7 +20,7 @@ export async function guardianFinish(input: LooseRecord = {}): Promise<GuardianF
   const repoRoot = typeof input.repoRoot === "string" ? input.repoRoot : await getRepoRoot(cwd);
   const { config } = isRecordLike(input.config) ? { config: normalizeConfig(input.config) } : await loadConfig(repoRoot);
   const mode = typeof input.finishMode === "string" ? input.finishMode : config.finishMode;
-  const sessionId = typeof input.sessionId === "string" ? input.sessionId : null;
+  let sessionId = typeof input.sessionId === "string" ? input.sessionId : null;
   const preflight: FinishPreflight = {
     sessionId: sessionId ?? null,
     sessionRecorded: false,
@@ -50,12 +51,41 @@ export async function guardianFinish(input: LooseRecord = {}): Promise<GuardianF
     mode,
     blockers: [],
   };
-  if (!sessionId) return blocked("sessionId is required", {}, preflight);
-
   const paths = await getGuardianPaths(repoRoot);
   const state = isFinishStateInput(input.state) ? input.state : await readState(paths, { repoRoot, config });
-  const session = state.sessions?.[sessionId];
+  const currentWorktree = await getRepoRoot(cwd);
+  preflight.currentWorktree = currentWorktree;
+  if (!sessionId) {
+    const activeEntry = Object.entries(state.sessions ?? {}).find(([, candidate]) => isActiveSession(candidate) && typeof candidate.worktree_path === "string" && samePath(candidate.worktree_path, currentWorktree));
+    sessionId = activeEntry?.[0] ?? null;
+  }
+  let session = sessionId ? state.sessions?.[sessionId] : undefined;
+  const terminalSession = session && isTerminalSession(session) ? session : null;
+  if (!session || terminalSession) {
+    const currentBranch = await getCurrentBranch(currentWorktree);
+    const blocker = recoverableGuardianWorktreeBlocker(repoRoot, currentWorktree, currentBranch, config);
+    if (blocker) {
+      if (terminalSession) return blocked(`session ${sessionId} is terminal (${String(terminalSession.status)}); start a new session instead of finishing a deleted or closed worktree`, { sessionId, sessionStatus: terminalSession.status }, preflight);
+      return blocked(sessionId ? `session ${sessionId} is not active and ${blocker}` : blocker, { sessionId }, preflight);
+    }
+    if (!currentBranch) return blocked("detached HEAD cannot be finished safely", { worktree: currentWorktree }, preflight);
+    const headCommit = await getHeadCommit(currentWorktree);
+    sessionId = recoverySessionId(currentBranch, headCommit);
+    const recoveredState = await recordSession(repoRoot, config, {
+      session_id: sessionId,
+      status: "active",
+      branch: currentBranch,
+      worktree_path: currentWorktree,
+      base_ref: `${config.remote}/${config.baseBranch}`,
+      head_commit: headCommit,
+      safety_refs: [],
+    }, { event: { type: "guardian_finish_recover", session_id: sessionId } });
+    session = recoveredState.sessions[sessionId];
+    preflight.sessionRecovered = true;
+  }
   preflight.sessionRecorded = Boolean(session);
+  if (!sessionId) return blocked("sessionId is required", {}, preflight);
+  preflight.sessionId = sessionId;
   if (!session) return blocked("current session is not recorded in guardian state", { sessionId }, preflight);
   if (typeof session.worktree_path !== "string" || session.worktree_path.length === 0) {
     return blocked("recorded session is missing a worktree path", { sessionId }, preflight);
@@ -66,8 +96,6 @@ export async function guardianFinish(input: LooseRecord = {}): Promise<GuardianF
     return blocked(`session ${sessionId} is terminal (${session.status}); start a new session instead of finishing a deleted or closed worktree`, { sessionId, sessionStatus: session.status }, preflight);
   }
 
-  const currentWorktree = await getRepoRoot(cwd);
-  preflight.currentWorktree = currentWorktree;
   preflight.sessionOwnedWorktree = samePath(session.worktree_path, currentWorktree);
   if (!preflight.sessionOwnedWorktree) {
     return blocked("current session does not own this worktree", { sessionWorktree: session.worktree_path, currentWorktree }, preflight);

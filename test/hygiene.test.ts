@@ -19,6 +19,38 @@ function findingPaths(result: Record<string, unknown>) {
   return (result.findings as Array<Record<string, unknown>>).map((finding) => finding.path).sort();
 }
 
+function recordField(record: Record<string, unknown>, key: string) {
+  return record[key];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function pathsFromRecords(records: unknown) {
+  if (!Array.isArray(records)) {
+    throw new TypeError("expected records array");
+  }
+  return records.map((entry) => {
+    if (!isRecord(entry)) {
+      throw new TypeError("expected record entry");
+    }
+    return entry.path;
+  }).sort();
+}
+
+function hasFatalBlocker(records: unknown, predicate: (entry: Record<string, unknown>) => boolean) {
+  if (!Array.isArray(records)) {
+    throw new TypeError("expected blocker records array");
+  }
+  return records.some((entry) => {
+    if (!isRecord(entry)) {
+      throw new TypeError("expected blocker record entry");
+    }
+    return entry.fatal === true && predicate(entry);
+  });
+}
+
 test("hygiene scanner detects known scratch artifact patterns", async () => {
   const repo = await createRepo();
   await writeArtifact(repo, ".omo/run-continuation/session.json");
@@ -103,6 +135,125 @@ test("hygiene scanner excludes protected dependency and build directories", asyn
   const result = await scanWorkspaceHygiene({ repoRoot: repo, config: DEFAULT_CONFIG });
   assert.equal(result.summary.findingCount, 0);
   assert.deepEqual((result.exclusions as Array<Record<string, unknown>>).map((entry) => entry.path).sort(), ["node_modules", "target", "vendor"]);
+});
+
+test("hygiene scanner exposes reviewable scan inventory separately from cleanup findings", async () => {
+  const repo = await createRepo();
+  await fs.writeFile(path.join(repo, ".gitignore"), "*.log\nlogs/\nnode_modules/\n");
+  await git(repo, ["add", ".gitignore"]);
+  await git(repo, ["commit", "-m", "add hygiene fixture ignores"]);
+  await writeArtifact(repo, ".omo/run-continuation/session.json");
+  await writeArtifact(repo, "node_modules/pkg/index.js");
+  await writeArtifact(repo, "logs/run.log");
+  await writeArtifact(repo, "plain.log");
+  for (const relative of [
+    "aaa.txt",
+    "bbb.txt",
+    "ccc.txt",
+    "ddd.txt",
+    "eee.txt",
+    "fff.txt",
+    "ggg.txt",
+    "hhh.txt",
+    "iii.txt",
+    "jjj.txt",
+    "yyy.txt",
+    "zzz.txt",
+  ]) {
+    await writeArtifact(repo, relative);
+  }
+
+  const result = await scanWorkspaceHygiene({ repoRoot: repo, config: DEFAULT_CONFIG });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(findingPaths(result), [".omo"]);
+  assert.deepEqual(pathsFromRecords(result.exclusions), ["node_modules"]);
+  assert.deepEqual(
+    {
+      summary: {
+        candidateCount: result.summary.candidateCount,
+        findingCount: result.summary.findingCount,
+        exclusionCount: result.summary.exclusionCount,
+        reviewableCandidateCount: recordField(result.summary, "reviewableCandidateCount"),
+        reviewableShownCount: recordField(result.summary, "reviewableShownCount"),
+        reviewableOmittedCount: recordField(result.summary, "reviewableOmittedCount"),
+        reviewableTruncated: recordField(result.summary, "reviewableTruncated"),
+      },
+      reviewableCandidates: recordField(result, "reviewableCandidates"),
+    },
+    {
+      summary: {
+        candidateCount: 16,
+        findingCount: 1,
+        exclusionCount: 1,
+        reviewableCandidateCount: 14,
+        reviewableShownCount: 12,
+        reviewableOmittedCount: 2,
+        reviewableTruncated: true,
+      },
+      reviewableCandidates: [
+        { path: "aaa.txt", status: "untracked", reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["aaa.txt"]' },
+        { path: "bbb.txt", status: "untracked", reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["bbb.txt"]' },
+        { path: "ccc.txt", status: "untracked", reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["ccc.txt"]' },
+        { path: "ddd.txt", status: "untracked", reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["ddd.txt"]' },
+        { path: "eee.txt", status: "untracked", reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["eee.txt"]' },
+        { path: "fff.txt", status: "untracked", reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["fff.txt"]' },
+        { path: "ggg.txt", status: "untracked", reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["ggg.txt"]' },
+        { path: "hhh.txt", status: "untracked", reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["hhh.txt"]' },
+        { path: "iii.txt", status: "untracked", reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["iii.txt"]' },
+        { path: "jjj.txt", status: "untracked", reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["jjj.txt"]' },
+        { path: "logs", status: "ignored", reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["logs"] allowRecursive=true' },
+        { path: "plain.log", status: "ignored", reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["plain.log"]' },
+      ],
+    },
+  );
+});
+
+test("hygiene scanner keeps reviewable delete suggestions narrow when siblings include hygiene findings", async () => {
+  const repo = await createRepo();
+  await writeArtifact(repo, "foo/node-compile-cache/cache.blob");
+  await writeArtifact(repo, "foo/ordinary.txt");
+
+  const result = await scanWorkspaceHygiene({ repoRoot: repo, config: DEFAULT_CONFIG });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(findingPaths(result), ["foo/node-compile-cache"]);
+  assert.deepEqual(recordField(result, "reviewableCandidates"), [
+    { path: "foo/ordinary.txt", status: "untracked", reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["foo/ordinary.txt"]' },
+  ]);
+});
+
+test("hygiene scanner keeps reviewable files exact under tracked source directories", async () => {
+  const repo = await createRepo();
+  await fs.writeFile(path.join(repo, ".gitignore"), "*.txt\n");
+  await fs.mkdir(path.join(repo, "src"), { recursive: true });
+  await fs.writeFile(path.join(repo, "src", "index.ts"), "export const tracked = true;\n");
+  await git(repo, ["add", ".gitignore", "src/index.ts"]);
+  await git(repo, ["commit", "-m", "track source directory"]);
+  await fs.writeFile(path.join(repo, "src", "ordinary.txt"), "reviewable\n");
+
+  const result = await scanWorkspaceHygiene({ repoRoot: repo, config: DEFAULT_CONFIG });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(recordField(result, "reviewableCandidates"), [
+    { path: "src/ordinary.txt", status: "ignored", reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["src/ordinary.txt"]' },
+  ]);
+});
+
+test("hygiene scanner keeps nested protected exclusions from suppressing reviewable siblings", async () => {
+  const repo = await createRepo();
+  await writeArtifact(repo, "foo/node_modules/pkg/index.js");
+  await writeArtifact(repo, "foo/ordinary.txt");
+
+  const result = await scanWorkspaceHygiene({ repoRoot: repo, config: DEFAULT_CONFIG });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(pathsFromRecords(result.exclusions), ["foo/node_modules"]);
+  const protectedExclusion = (result.exclusions as Array<Record<string, unknown>>).find((entry) => entry.path === "foo/node_modules");
+  assert.equal(recordField(protectedExclusion ?? {}, "suggestedDeletePathCommand"), undefined);
+  assert.deepEqual(recordField(result, "reviewableCandidates"), [
+    { path: "foo/ordinary.txt", status: "untracked", reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["foo/ordinary.txt"]' },
+  ]);
 });
 
 test("hygiene scanner collapses known residue names to cleanup roots", async () => {
@@ -203,6 +354,53 @@ test("hygiene cleanup plans and applies all default hygiene targets", async () =
   assert.equal(await pathExists(path.join(repo, "research-clone-clean")), false);
   assert.equal(await pathExists(path.join(repo, "research-dump")), false);
   assert.equal(await pathExists(path.join(repo, "tsx-501")), false);
+});
+
+test("hygiene cleanup preflight blocks reviewable scan-only candidates", async () => {
+  const repo = await createRepo();
+  await fs.writeFile(path.join(repo, ".gitignore"), "*.log\nlogs/\n");
+  await git(repo, ["add", ".gitignore"]);
+  await git(repo, ["commit", "-m", "add reviewable fixture ignores"]);
+  await writeArtifact(repo, "librarian-reviewable-clean/file.txt");
+  await writeArtifact(repo, "plain.log");
+  await writeArtifact(repo, "logs/run.log");
+
+  const defaultPlan = await runGuardianTool("guardian_hygiene", { repoRoot: repo, config: DEFAULT_CONFIG, mode: "plan" });
+
+  assert.equal(defaultPlan.ok, true);
+  assert.equal(defaultPlan.status, "planned");
+  assert.equal(typeof defaultPlan.confirmToken, "string");
+  assert.deepEqual(pathsFromRecords(defaultPlan.targets), ["librarian-reviewable-clean"]);
+  assert.equal(pathsFromRecords(defaultPlan.targets).includes("plain.log"), false);
+  assert.equal(pathsFromRecords(defaultPlan.targets).includes("logs"), false);
+  assert.equal(recordField(defaultPlan, "reviewableCandidates"), undefined);
+
+  const explicitReviewable = await runGuardianTool("guardian_hygiene", { repoRoot: repo, config: DEFAULT_CONFIG, mode: "plan", cleanupPaths: ["plain.log"] });
+
+  assert.equal(explicitReviewable.ok, false);
+  assert.equal(explicitReviewable.status, "blocked");
+  assert.equal(explicitReviewable.confirmToken, undefined);
+  assert.deepEqual(pathsFromRecords(explicitReviewable.targets), []);
+  assert.equal(hasFatalBlocker(explicitReviewable.blockers, (blocker) => blocker.path === "plain.log" && /not a current guardian_hygiene finding/.test(String(blocker.reason))), true);
+
+  const unsupportedCategory = await runGuardianTool("guardian_hygiene", { repoRoot: repo, config: DEFAULT_CONFIG, mode: "plan", allowCategories: ["reviewable"] });
+
+  assert.equal(unsupportedCategory.ok, false);
+  assert.equal(unsupportedCategory.status, "blocked");
+  assert.equal(unsupportedCategory.confirmToken, undefined);
+  assert.deepEqual(pathsFromRecords(unsupportedCategory.targets), []);
+  assert.equal(hasFatalBlocker(unsupportedCategory.blockers, (blocker) => blocker.category === "reviewable" && /unsupported allowCategories entry: reviewable/.test(String(blocker.reason))), true);
+
+  const selectedPlan = await runGuardianTool("guardian_hygiene", { repoRoot: repo, config: DEFAULT_CONFIG, mode: "plan", cleanupPaths: ["librarian-reviewable-clean"] });
+  await fs.writeFile(path.join(repo, "plain.log"), "changed reviewable file\n");
+  await writeArtifact(repo, "logs/other.log");
+  const afterReviewableChange = await runGuardianTool("guardian_hygiene", { repoRoot: repo, config: DEFAULT_CONFIG, mode: "plan", cleanupPaths: ["librarian-reviewable-clean"] });
+
+  assert.equal(selectedPlan.ok, true);
+  assert.equal(afterReviewableChange.ok, true);
+  assert.equal(typeof selectedPlan.confirmToken, "string");
+  assert.equal(afterReviewableChange.confirmToken, selectedPlan.confirmToken);
+  assert.deepEqual(pathsFromRecords(afterReviewableChange.targets), ["librarian-reviewable-clean"]);
 });
 
 test("guardian_hygiene plans and applies cleanup for approved target files and directories", async () => {

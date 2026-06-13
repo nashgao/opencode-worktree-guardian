@@ -1,9 +1,11 @@
 ---
-description: Scan, plan, or apply confirmed cleanup for workspace hygiene findings.
+description: Scan hygiene findings and reviewable inventory, or plan/apply confirmed cleanup for findings.
 argument-hint: "[mode=plan|apply] [cleanupPaths...] [confirmDelete=true]"
 ---
 
-Use the native `guardian_hygiene` tool. With no `mode`, scan untracked and ignored workspace artifacts and report findings only.
+Use the native `guardian_hygiene` tool. With no `mode`, scan untracked and ignored workspace artifacts, report cleanup findings, protected exclusions, and scan-only `reviewableCandidates`.
+
+`reviewableCandidates` are not cleanup findings and are not accepted by the `guardian_hygiene` cleanup preflight. If cleanup is intended for a reviewable file, hand off to exact-path planning with `guardian_delete_paths mode=plan paths=["..."]`. If cleanup is intended for a reviewable directory, use `guardian_delete_paths mode=plan paths=["..."] allowRecursive=true`.
 
 For cleanup, run `mode: "plan"` first, inspect exact approved targets and blockers, get explicit user confirmation, then apply with `mode: "apply"` and `confirmDelete: true` for the same cleanup options. Cleanup uses Guardian's internal token/fingerprint gate and internal filesystem APIs; never run raw cleanup commands, broad filesystem deletion, stash mutation, reset, or forced clean.
 

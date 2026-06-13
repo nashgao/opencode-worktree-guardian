@@ -10,6 +10,13 @@ import { dirtySnapshot } from "./done-primary-snapshot.ts";
 import { blocked, samePath } from "./done-shared.ts";
 import { guardianFinishWorkflow } from "./workflow.ts";
 
+function activeSessionIdForWorktree(state: Awaited<ReturnType<typeof readState>>, currentWorktree: string) {
+  for (const [sessionId, session] of Object.entries(state.sessions ?? {})) {
+    if (isRecordLike(session) && isActiveSession(session) && typeof session.worktree_path === "string" && samePath(session.worktree_path, currentWorktree)) return sessionId;
+  }
+  return null;
+}
+
 export async function guardianDone(input: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
   const cwd = typeof input.cwd === "string" ? input.cwd : typeof input.repoRoot === "string" ? input.repoRoot : process.cwd();
   const repoRoot = typeof input.repoRoot === "string" ? input.repoRoot : await getRepoRoot(cwd);
@@ -22,7 +29,8 @@ export async function guardianDone(input: Record<string, unknown> = {}): Promise
   const baseBranch = String(config.baseBranch);
   const protectedBranches = Array.isArray(config.protectedBranches) ? config.protectedBranches : [];
   const state = await readState(await getGuardianPaths(repoRoot), { repoRoot, config });
-  const sessionId = typeof input.sessionId === "string" && input.sessionId.trim().length > 0 ? input.sessionId : null;
+  const requestedSessionId = typeof input.sessionId === "string" && input.sessionId.trim().length > 0 ? input.sessionId : null;
+  const sessionId = requestedSessionId ?? activeSessionIdForWorktree(state, currentWorktree);
   const currentSession = sessionId ? state.sessions?.[sessionId] : null;
 
   if (currentSession && isActiveSession(currentSession) && typeof currentSession.worktree_path === "string") {
@@ -45,8 +53,8 @@ export async function guardianDone(input: Record<string, unknown> = {}): Promise
     return { ...result, lane: "session-finish" };
   }
 
-  if (typeof input.sessionId === "string" && !samePath(currentWorktree, repoRoot)) {
-    return reattachCurrentGuardianWorktree(repoRoot, currentWorktree, currentBranch, config, input.sessionId, input);
+  if (!samePath(currentWorktree, repoRoot)) {
+    return reattachCurrentGuardianWorktree(repoRoot, currentWorktree, currentBranch, config, currentSession ? null : requestedSessionId, input);
   }
 
   if (samePath(currentWorktree, repoRoot) && currentBranch === baseBranch && protectedBranches.includes(baseBranch)) {

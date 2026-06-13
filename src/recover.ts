@@ -28,10 +28,27 @@ type PoisonedSession = GuardianSession & {
   readonly suggestedCommand: string;
 };
 
+type HygieneSummary = Record<string, unknown> & {
+  readonly findingCount: number;
+  readonly reviewableCandidateCount: number;
+  readonly reviewableShownCount: number;
+  readonly reviewableOmittedCount: number;
+  readonly reviewableTruncated: boolean;
+};
+
+type HygieneReviewableCandidate = {
+  readonly path: string;
+  readonly status: "ignored" | "untracked";
+  readonly reason: string;
+  readonly source: string;
+  readonly suggestedDeletePathCommand: string;
+};
+
 type HygieneStatus = Record<string, unknown> & {
   readonly ok?: unknown;
-  readonly summary?: Record<string, unknown> & { readonly findingCount?: unknown };
+  readonly summary: HygieneSummary;
   readonly findings: readonly (Record<string, unknown> & { readonly path?: unknown })[];
+  readonly reviewableCandidates: readonly HygieneReviewableCandidate[];
 };
 
 type GuardianStatusResult = Omit<GuardianToolResult, "activeSessions" | "terminalSessions" | "worktrees" | "safetyRefs" | "sessions"> & {
