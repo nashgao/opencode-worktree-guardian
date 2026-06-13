@@ -6,12 +6,16 @@ export function formatGuardianHygieneOutput(rawResult: unknown) {
   const summary = recordValue(result.summary);
   const findings = arrayValue(result.findings);
   const exclusions = arrayValue(result.exclusions);
+  const reviewableCandidates = arrayValue(result.reviewableCandidates);
+  const reviewableCount = Number(summary.reviewableCandidateCount ?? reviewableCandidates.length);
+  const visibleReviewableCandidates = reviewableCandidates.slice(0, 8);
+  const reviewableOmittedCount = Math.max(0, reviewableCount - visibleReviewableCandidates.length);
   const failCount = Number(recordValue(summary.bySeverity).fail ?? 0);
   const warnCount = Number(recordValue(summary.bySeverity).warn ?? 0);
   const scanFailed = result.ok === false || summary.scanFailed === true;
   const lines = [`${scanFailed ? "[FAIL]" : findings.length > 0 ? "[WARN]" : "[GOOD]"} guardian_hygiene scan`, `[INFO] repoRoot: ${textValue(result.repoRoot)}`];
   if (scanFailed) lines.push("[WARN] scan incomplete: findings and candidate counts are not trustworthy");
-  else lines.push(`[INFO] findings: ${Number(summary.findingCount ?? findings.length)} | warn: ${warnCount} | fail: ${failCount} | exclusions: ${Number(summary.exclusionCount ?? exclusions.length)} | candidates: ${Number(summary.candidateCount ?? 0)}`);
+  else lines.push(`[INFO] findings: ${Number(summary.findingCount ?? findings.length)} | warn: ${warnCount} | fail: ${failCount} | exclusions: ${Number(summary.exclusionCount ?? exclusions.length)} | candidates: ${Number(summary.candidateCount ?? 0)} | reviewable: ${reviewableCount}`);
   const reason = textValue(result.reason, "");
   if (result.ok === false || reason) lines.push(`[FAIL] ${reason || "guardian_hygiene scan failed"}`);
   if (findings.length > 0) {
@@ -19,6 +23,15 @@ export function formatGuardianHygieneOutput(rawResult: unknown) {
     for (const entry of findings.slice(0, 8)) {
       const finding = recordValue(entry);
       lines.push(`  - ${textValue(finding.severity)} ${textValue(finding.category)} ${textValue(finding.path)}: ${textValue(finding.reason)}`);
+    }
+  }
+  if (reviewableCount > 0) {
+    lines.push(`[WARN] reviewable candidates: ${reviewableCount}${reviewableOmittedCount > 0 ? ` | omitted: ${reviewableOmittedCount}` : ""}`);
+    lines.push("[INFO] reviewable entries require exact-path guardian_delete_paths planning if cleanup is intended");
+    for (const entry of visibleReviewableCandidates) {
+      const candidate = recordValue(entry);
+      lines.push(`  - ${textValue(candidate.status)} ${textValue(candidate.path)}: ${textValue(candidate.reason)}`);
+      lines.push(`    ${textValue(candidate.suggestedDeletePathCommand)}`);
     }
   }
   const suggestions = arrayValue(result.suggestedCommands);

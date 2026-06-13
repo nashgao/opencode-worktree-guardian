@@ -243,6 +243,53 @@ test("guardian_hygiene tool execute returns readable output with raw metadata", 
   assert.match(result.output, /suggested commands:/);
 });
 
+test("guardian_hygiene readable scan output shows reviewable candidates when scan is truncated", async () => {
+  const path = await import("node:path");
+  const repo = await createRepo();
+  const specialPath = "alpha 00; quote's.txt";
+  const reviewablePaths = [
+    specialPath,
+    "alpha-01.txt",
+    "alpha-02.txt",
+    "alpha-03.txt",
+    "alpha-04.txt",
+    "alpha-05.txt",
+    "alpha-06.txt",
+    "alpha-07.txt",
+    "alpha-08.txt",
+    "alpha-09.txt",
+    "alpha-10.txt",
+    "alpha-11.txt",
+    "alpha-12.txt",
+    "alpha-13.txt",
+  ] as const;
+  await fs.mkdir(path.join(repo, "librarian-readable-contract"), { recursive: true });
+  await fs.writeFile(path.join(repo, "librarian-readable-contract", "file.txt"), "artifact\n");
+  for (const relative of reviewablePaths) {
+    await fs.writeFile(path.join(repo, relative), "reviewable\n");
+  }
+  const hooks = await plugin.server({ directory: repo, worktree: repo });
+  const { context } = createToolContext();
+  context.directory = repo;
+  context.worktree = repo;
+  const execute = hooks.tool.guardian_hygiene.execute;
+
+  const result = await runTool(execute, { repoRoot: repo }, context);
+
+  const summary = metadataRecord(result.metadata, "summary");
+  assert.equal(summary.reviewableCandidateCount, 14);
+  assert.equal(summary.reviewableShownCount, 12);
+  assert.equal(summary.reviewableOmittedCount, 2);
+  assert.equal(summary.reviewableTruncated, true);
+  assert.match(result.output, /reviewable candidates: 14/);
+  assert.match(result.output, /omitted: 6/);
+  assert.match(result.output, /reviewable entries require exact-path guardian_delete_paths planning if cleanup is intended/);
+  assert.equal(result.output.includes(specialPath), true);
+  assert.equal(result.output.includes(`guardian_delete_paths mode=plan paths=${JSON.stringify([specialPath])}`), true);
+  assert.equal(result.output.indexOf("[WARN] reviewable candidates:") > result.output.indexOf("[WARN] top findings:"), true);
+  assert.doesNotMatch(result.output, /mode=apply|rm -rf|git clean|confirmDelete|confirmToken|CONFIRM_DELETE|<token>|\[token\]/);
+});
+
 test("guardian_hygiene readable output marks failed scans as incomplete", async () => {
   const dir = await createTempDir("guardian-hygiene-contract-no-repo-");
   const hooks = await plugin.server({ directory: dir, worktree: dir });
