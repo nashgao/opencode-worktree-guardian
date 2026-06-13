@@ -4,10 +4,10 @@ function reviewableTextValue(value: unknown, fallback = "-") {
   return textValue(value, fallback)
     .replace(/\r\n|\n|\r/g, "\\n")
     .replace(/\t/g, "\\t")
-    .replace(/\bmode\s*=\s*apply\b/gi, "mode=<redacted>")
-    .replace(/\bconfirmDelete\s*=\s*true\b/gi, "confirmDelete=<redacted>")
-    .replace(/\bconfirmToken\s*[:=]\s*[^\\\s]+/gi, "confirmation=<redacted>")
-    .replace(/\bconfirmToken\b/gi, "confirmation")
+    .replace(/(^|\\n|[^A-Za-z0-9_])mode\s*=\s*apply\b/gi, "$1mode=<redacted>")
+    .replace(/(^|\\n|[^A-Za-z0-9_])confirmDelete\s*=\s*true\b/gi, "$1confirmDelete=<redacted>")
+    .replace(/(^|\\n|[^A-Za-z0-9_])confirmToken\s*[:=]\s*[^\\\s]+/gi, "$1confirmation=<redacted>")
+    .replace(/(^|\\n|[^A-Za-z0-9_])confirmToken\b/gi, "$1confirmation")
     .replace(/(^|[^A-Za-z0-9_]|\\n)rm\s+-rf\b/gi, "$1rm <redacted>")
     .replace(/(^|[^A-Za-z0-9_]|\\n)git\s+clean\b/gi, "$1git <redacted>");
 }
