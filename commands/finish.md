@@ -1,9 +1,9 @@
 ---
-description: Finish Guardian-owned work through the configured gated finish mode.
+description: Finish Guardian worktree work through the configured gated finish mode.
 argument-hint: "[preserve-only|push-branch|create-pr|merge-to-base context]"
 ---
 
-Use the native `guardian_finish` tool for gated completion of Guardian-owned work.
+Use the native `guardian_finish` tool for gated completion of Guardian worktree work. If the current directory is an existing Guardian-root worktree without an active recorded session, Guardian may attach a fresh internal recovery session id before finishing.
 
 Dirty worktrees block finish unless every dirty path matches explicit repo config `allowDirtyPaths`. File-specific patterns such as `.claude/logs/hooks.log` or `.serena/project.yml` match untracked runtime files; broad directories are not required unless the repo intentionally allows the whole directory. Allowed dirty runtime/local-state files are reported and left untouched; Guardian must not delete, stash, revert, stage, or commit them. Any non-matching dirty source, config, doc, or policy file remains a blocker.
 

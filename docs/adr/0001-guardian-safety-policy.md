@@ -79,9 +79,11 @@ When config context is available, Guardian blocks manual bypasses such as pushin
 
 The supported lanes are:
 
-- `session-finish`: delegates recorded session worktrees to `guardian_finish`.
+- `session-finish`: delegates recorded session worktrees to `guardian_finish`; if the current directory is an existing Guardian-root worktree without an active recorded session, `guardian_done` may first attach a fresh internal recovery session id to that worktree and then finish it through the same lane.
 - `cleanup-only`: routes clean primary-base cleanup through `guardian_finish_workflow`.
 - `primary-main-publish`: handles dirty protected primary `baseBranch` work only with an explicit `commitMessage`, explicit confirmation, and the matching internally token-bound dirty snapshot.
+
+The current worktree path, checked-out branch, protected-branch policy, dirty-file gates, and finish preflight are the recovery proof for an existing Guardian-root worktree. The old session id is not required for recovery and must not be the only way to finish a leftover Guardian worktree.
 
 Primary-main apply creates a pre-commit safety ref, commits only token-bound dirty paths, pushes normally to the configured remote/base branch, fetches, proves remote reachability, and returns a separate cleanup plan. It must not silently apply cleanup, force-push, mutate stashes, delete remote branches, merge PRs, or treat old primary/protected session records as ownership.
 
@@ -89,9 +91,11 @@ In plugin flow, the internal plan token may be cached and reused only when sessi
 
 ## `guardian_finish` Session Finish Policy
 
-Use `guardian_finish` for explicit low-level session finishing. Prefer `guardian_done` for normal completion.
+Use `guardian_finish` for explicit low-level Guardian worktree finishing. Prefer `guardian_done` for normal completion.
 
 Finish always creates a safety ref before risky operations and reports preflight facts and blockers. Dirty worktrees block finish unless every dirty path matches explicit `allowDirtyPaths` config. Allowed dirty paths are reported as `allowedDirtyFiles` and left untouched. Guardian must not delete, stash, revert, stage, or commit allowed dirty files.
+
+If no active session owns the current checked-out worktree, `guardian_finish` may attach a fresh internal recovery session id when the current worktree is inside the configured Guardian worktree root, is not the primary repo worktree, is not detached, and is not on a protected branch. If a stale or terminal session id is present, that old session id is metadata only; it must not make an otherwise recoverable Guardian worktree unusable.
 
 `create-pr` pushes the session branch and suggests a PR command; it does not create a PR natively. `merge-to-base` requires explicit approval. Cleanup can run only when `autoCleanup` or `allowCleanup` is enabled and ancestry is proven.
 
@@ -105,7 +109,7 @@ Run `mode: "apply"` only with the returned token after explicit confirmation. Th
 
 ## `guardian_preserve` Policy
 
-`guardian_preserve` marks the current Guardian-owned session terminal/preserved and creates a preserved ref. It does not delete, clean, reset, stash, push, or merge.
+`guardian_preserve` marks the current Guardian worktree terminal/preserved and creates a preserved ref. It does not delete, clean, reset, stash, push, or merge. If no active session owns the current Guardian-root worktree, it may attach a fresh internal recovery session id first.
 
 Preservation is not a permanent retention instruction. Preserved worktrees remain cleanup-eligible through `guardian_delete_worktree` once that tool proves deletion is safe.
 
@@ -113,9 +117,9 @@ Preservation is not a permanent retention instruction. Preserved worktrees remai
 
 Use `guardian_unblock_finish` only when `guardian_finish` is blocked by narrow generated review-rating artifacts. It is not a broad cleanup or source-change commit tool.
 
-Run `mode: "plan"` first. The supported action is `commit-review-artifacts`, which may commit only `.milestones/reviews/*impl-rating-YYYYMMDD.md` or `.milestones/reviews/*impl-rating-YYYYMMDD.txt` review artifacts. If Guardian state does not record the session, plan must receive an explicit `branch` or `worktreePath` that resolves exactly one checked-out worktree under the configured Guardian worktree root.
+Run `mode: "plan"` first. The supported action is `commit-review-artifacts`, which may commit only `.milestones/reviews/*impl-rating-YYYYMMDD.md` or `.milestones/reviews/*impl-rating-YYYYMMDD.txt` review artifacts. If Guardian state does not record the session, plan may resolve the current Guardian-root worktree or receive an explicit `branch` or `worktreePath` that resolves exactly one checked-out worktree under the configured Guardian worktree root.
 
-Run `mode: "apply"` only with the fresh token and the same explicit branch or worktree path when state is still missing. Apply creates a safety ref, stages only approved review artifacts, commits them, and updates Guardian state. It refuses mixed dirty/source paths, renames/copies, symlink artifacts, deletions, ignored files, stashes, and cleanup.
+Run `mode: "apply"` only with the fresh token and the same resolved current worktree, explicit branch, or explicit worktree path when state is still missing. Apply creates a safety ref, stages only approved review artifacts, commits them, and updates Guardian state. It refuses mixed dirty/source paths, renames/copies, symlink artifacts, deletions, ignored files, stashes, and cleanup.
 
 ## `guardian_delete_worktree` Worktree Deletion Policy
 
