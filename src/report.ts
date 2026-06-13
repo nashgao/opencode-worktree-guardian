@@ -99,13 +99,26 @@ function hygieneFindingsTable(findings: unknown[]) {
   return `<table><thead><tr><th>Severity</th><th>Category</th><th>Path</th><th>Reason</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
+function reviewableCandidatesTable(candidates: unknown[]) {
+  const rows = candidates.map((entry) => {
+    const candidate = recordValue(entry);
+    return `<tr><td>${escapeHtml(candidate.status)}</td><td><code>${escapeHtml(candidate.path)}</code></td><td>${escapeHtml(candidate.reason)}</td><td><code>${escapeHtml(candidate.suggestedDeletePathCommand)}</code></td></tr>`;
+  }).join("") || emptyRow(4, "No reviewable hygiene candidates recorded.");
+  return `<table><thead><tr><th>Status</th><th>Path</th><th>Reason</th><th>Suggested Command</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
 function hygieneSection(input: unknown) {
   const hygiene = recordValue(input);
   const summary = recordValue(hygiene.summary);
   const bySeverity = recordValue(summary.bySeverity);
   const byCategory = recordValue(summary.byCategory);
   const findings = arrayValue(hygiene.findings);
+  const reviewableCandidates = arrayValue(hygiene.reviewableCandidates);
   const findingCount = numberValue(summary.findingCount, findings.length);
+  const reviewableCandidateCount = numberValue(summary.reviewableCandidateCount, reviewableCandidates.length);
+  const reviewableShownCount = numberValue(summary.reviewableShownCount, reviewableCandidates.length);
+  const reviewableOmittedCount = numberValue(summary.reviewableOmittedCount);
+  const reviewableTruncated = summary.reviewableTruncated === true;
   const failCount = numberValue(bySeverity.fail);
   const warnCount = numberValue(bySeverity.warn);
   const knownCleanableCount = numberValue(byCategory["known-cleanable"]);
@@ -113,8 +126,9 @@ function hygieneSection(input: unknown) {
   const suspiciousCount = numberValue(byCategory.suspicious);
   const sectionTone = failCount > 0 ? "risk" : findingCount > 0 ? "warning" : "info";
   const failureReason = hygiene.ok === false ? `<p class="hygiene-alert">Scan failed: ${escapeHtml(hygiene.reason)}</p>` : "";
+  const reviewableNote = `Plan exact deletes with guardian_delete_paths mode=plan after review. Showing ${reviewableShownCount} of ${reviewableCandidateCount}${reviewableTruncated ? `; ${reviewableOmittedCount} omitted` : ""}.`;
 
-  return `<section class="card hygiene ${sectionTone}" aria-labelledby="workspace-hygiene-heading"><h2 id="workspace-hygiene-heading">Workspace Hygiene</h2><p class="section-note">Report-only scan of untracked and ignored workspace artifacts. No cleanup actions are performed here.</p>${failureReason}<div class="hygiene-metrics">${hygieneCountCard("Candidate Paths", numberValue(summary.candidateCount))}${hygieneCountCard("Findings", findingCount, findingCount > 0 ? "warn" : "good")}${hygieneCountCard("Fail", failCount, failCount > 0 ? "bad" : "good")}${hygieneCountCard("Warn", warnCount, warnCount > 0 ? "warn" : "good")}${hygieneCountCard("Known Cleanable", knownCleanableCount, knownCleanableCount > 0 ? "warn" : "good")}${hygieneCountCard("Nested Git", nestedGitCount, nestedGitCount > 0 ? "bad" : "good")}${hygieneCountCard("Suspicious", suspiciousCount, suspiciousCount > 0 ? "warn" : "good")}${hygieneCountCard("Exclusions", numberValue(summary.exclusionCount))}</div><h3>Top Findings By Severity And Category</h3>${hygieneFindingsTable(findings)}</section>`;
+  return `<section class="card hygiene ${sectionTone}" aria-labelledby="workspace-hygiene-heading"><h2 id="workspace-hygiene-heading">Workspace Hygiene</h2><p class="section-note">Report-only scan of untracked and ignored workspace artifacts. No cleanup actions are performed here.</p>${failureReason}<div class="hygiene-metrics">${hygieneCountCard("Candidate Paths", numberValue(summary.candidateCount))}${hygieneCountCard("Findings", findingCount, findingCount > 0 ? "warn" : "good")}${hygieneCountCard("Reviewable", reviewableCandidateCount, reviewableCandidateCount > 0 ? "warn" : "good")}${hygieneCountCard("Fail", failCount, failCount > 0 ? "bad" : "good")}${hygieneCountCard("Warn", warnCount, warnCount > 0 ? "warn" : "good")}${hygieneCountCard("Known Cleanable", knownCleanableCount, knownCleanableCount > 0 ? "warn" : "good")}${hygieneCountCard("Nested Git", nestedGitCount, nestedGitCount > 0 ? "bad" : "good")}${hygieneCountCard("Suspicious", suspiciousCount, suspiciousCount > 0 ? "warn" : "good")}${hygieneCountCard("Exclusions", numberValue(summary.exclusionCount))}</div><h3>Top Findings By Severity And Category</h3>${hygieneFindingsTable(findings)}<h3>Reviewable Candidates</h3><p class="section-note">${escapeHtml(reviewableNote)}</p>${reviewableCandidatesTable(reviewableCandidates)}</section>`;
 }
 
 function listSection(title: string, entries: unknown[], tone: "risk" | "info") {

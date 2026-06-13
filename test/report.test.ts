@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
+import path from "node:path";
 import test from "node:test";
 import { DEFAULT_CONFIG } from "../src/config.ts";
+import { guardianRecover, guardianStatus } from "../src/recover.ts";
 import { guardianReportHtml, renderGuardianReportHtml } from "../src/report.ts";
 import { getGuardianPaths, recordSession } from "../src/state.ts";
-import { createRepo } from "./helpers.ts";
+import { createRepo, git } from "./helpers.ts";
 
 function maliciousReportHtml() {
   return renderGuardianReportHtml({
@@ -132,6 +134,77 @@ test("guardian report HTML renders workspace hygiene summary and top findings", 
   assert.match(html, /Top Findings By Severity And Category/);
   assert.match(html, /research-clone/);
   assert.match(html, /nested Git repository has uncommitted changes/);
+});
+
+test("guardian report HTML renders escaped reviewable candidates separately from hygiene findings", () => {
+  const html = renderGuardianReportHtml({
+    reportPath: "/tmp/report.html",
+    generatedAt: "2026-05-20T00:00:00.000Z",
+    status: {
+      repoRoot: "/repo",
+      sessions: [],
+      worktrees: [],
+      orphanedSessions: [],
+      worktreesWithoutState: [],
+      branchesWithoutWorktrees: [],
+      dirtyFiles: [],
+      stashes: [],
+      safetyRefs: [],
+      hygiene: {
+        ok: true,
+        summary: {
+          candidateCount: 1,
+          findingCount: 0,
+          exclusionCount: 0,
+          reviewableCandidateCount: 1,
+          reviewableShownCount: 1,
+          reviewableOmittedCount: 0,
+          reviewableTruncated: false,
+          bySeverity: { warn: 0, fail: 0 },
+          byCategory: { "known-cleanable": 0, "nested-git": 0, suspicious: 0 },
+        },
+        findings: [],
+        reviewableCandidates: [{
+          path: "review/<img src=x onerror=alert(1)>",
+          status: "untracked",
+          reason: "review <script>alert(1)</script> before deleting",
+          source: "git ls-files --others/--ignored",
+          suggestedDeletePathCommand: "guardian_delete_paths mode=plan paths=[\"review/<img src=x onerror=alert(1)>\"]",
+        }],
+      },
+    },
+    recover: { recoveryCandidates: [], suggestedCommands: [] },
+  });
+
+  assert.match(html, /Reviewable Candidates/);
+  assert.match(html, /Plan exact deletes with guardian_delete_paths mode&#61;plan after review/);
+  assert.match(html, /review\/&lt;img src&#61;x onerror&#61;alert\(1\)&gt;/);
+  assert.match(html, /review &lt;script&gt;alert\(1\)&lt;\/script&gt; before deleting/);
+  assert.match(html, /guardian_delete_paths mode&#61;plan paths&#61;\[&quot;review\/&lt;img src&#61;x onerror&#61;alert\(1\)&gt;&quot;\]/);
+  assert.match(html, /<span>Risks<\/span><strong>0<\/strong>/);
+  assert.match(html, /<span>Hygiene Findings<\/span><strong>0<\/strong>/);
+  assert.doesNotMatch(html, /<script/i);
+  assert.doesNotMatch(html, /\son[a-z]+\s*=/i);
+});
+
+test("guardian status and recover expose reviewable hygiene metadata", async () => {
+  const repo = await createRepo();
+  await fs.writeFile(path.join(repo, ".gitignore"), "*.log\n");
+  await git(repo, ["add", ".gitignore"]);
+  await git(repo, ["commit", "-m", "add reviewable ignores"]);
+  await fs.writeFile(path.join(repo, "plain.log"), "ignored reviewable\n");
+  await fs.writeFile(path.join(repo, "ordinary.txt"), "untracked reviewable\n");
+
+  const status = await guardianStatus({ repoRoot: repo, config: DEFAULT_CONFIG });
+  const recover = await guardianRecover({ repoRoot: repo, config: DEFAULT_CONFIG });
+
+  assert.deepEqual(status.hygiene.reviewableCandidates.map((candidate) => candidate.path), ["ordinary.txt", "plain.log"]);
+  assert.equal(status.hygiene.summary.reviewableCandidateCount, 2);
+  assert.equal(status.hygiene.summary.reviewableShownCount, 2);
+  assert.equal(status.hygiene.summary.reviewableOmittedCount, 0);
+  assert.equal(status.hygiene.summary.reviewableTruncated, false);
+  assert.deepEqual(recover.hygiene.reviewableCandidates, status.hygiene.reviewableCandidates);
+  assert.deepEqual(recover.hygiene.summary, status.hygiene.summary);
 });
 
 test("guardian report integration writes repo-local report with session and worktree data", async () => {
