@@ -2,6 +2,7 @@ import { guardianDeletePaths } from "./delete-paths.ts";
 import { guardianDeleteWorktree } from "./delete.ts";
 import { guardianDone } from "./done.ts";
 import { guardianFinish } from "./finish.ts";
+import { guardianGc } from "./gc.ts";
 import { guardianHygiene } from "./hygiene.ts";
 import { guardianPreserve } from "./preserve.ts";
 import { guardianRecover, guardianStatus } from "./recover.ts";
@@ -20,6 +21,7 @@ export const GUARDIAN_TOOL_RUNNERS = {
   guardian_done: guardianDone,
   guardian_finish: guardianFinish,
   guardian_finish_workflow: guardianFinishWorkflow,
+  guardian_gc: guardianGc,
   guardian_hygiene: guardianHygiene,
   guardian_preserve: guardianPreserve,
   guardian_recover: guardianRecover,

@@ -1,9 +1,9 @@
 import path from "node:path";
 import { expandWorktreeRoot } from "../config.ts";
-import { getCurrentBranch, getHeadCommit, getRepoRoot, listWorktrees } from "../git.ts";
+import { getCurrentBranch, getRepoRoot, listWorktrees } from "../git.ts";
 import { isTerminalSession } from "../lifecycle.ts";
-import { getGuardianPaths, readState, recordSession } from "../state.ts";
-import type { GuardianConfig, GuardianToolInput, GuardianToolResult, MutableRecord, SessionWorktreeResult, WorktreeEntry } from "../types.ts";
+import { getGuardianPaths, readState } from "../state.ts";
+import type { GuardianConfig, GuardianToolInput, MutableRecord, SessionWorktreeResult, WorktreeEntry } from "../types.ts";
 import { isRecordLike } from "../types.ts";
 import { configFromInput, sessionIdFromInput, stateFromInput, worktreeCache } from "./context.ts";
 
@@ -131,27 +131,6 @@ export async function resolveSessionWorktree(input: GuardianToolInput = {}): Pro
     matches,
     source: "state",
   };
-}
-
-export async function recordActiveSession(input: {
-  readonly repoRoot: string;
-  readonly config: GuardianConfig;
-  readonly sessionId: string;
-  readonly worktreePath: string;
-  readonly branch: string;
-  readonly eventType: string;
-  readonly tool?: unknown;
-}): Promise<GuardianToolResult> {
-  const headCommit = await getHeadCommit(input.worktreePath);
-  const recordedState = await recordSession(input.repoRoot, input.config, {
-    session_id: input.sessionId,
-    status: "active",
-    branch: input.branch,
-    worktree_path: input.worktreePath,
-    base_ref: `${input.config.remote}/${input.config.baseBranch}`,
-    head_commit: headCommit,
-  }, { event: { type: input.eventType, session_id: input.sessionId, tool: input.tool } });
-  return { ok: true, session: recordedState.sessions[input.sessionId], stateVersion: recordedState.state_version };
 }
 
 export async function currentWorktreeBranch(cwd: string) {

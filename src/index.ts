@@ -5,6 +5,7 @@ export { classifyGuardCommand, classifyNormalAgentGitCommand, classifyReadOnlyIn
 export { guardianDeletePaths } from "./delete-paths.ts";
 export { guardianDeleteWorktree } from "./delete.ts";
 export { guardianDone } from "./done.ts";
+export { guardianGc } from "./gc.ts";
 export { buildPreservedRef, buildSafetyRef, createSafetyRef, deleteBranch, getRepoRoot, listWorktrees, removeWorktree, runGit } from "./git.ts";
 export { scanWorkspaceHygiene } from "./hygiene.ts";
 export { acquireStateLock, appendEvent, getGuardianPaths, readState, recordSession, updateState, writeReportAtomic, writeStateAtomic } from "./state.ts";
