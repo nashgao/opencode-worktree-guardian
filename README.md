@@ -98,6 +98,7 @@ When the TUI plugin entrypoint is enabled, Guardian registers these slash comman
 - `/guardian-preserve`
 - `/guardian-recover`
 - `/guardian-report`
+- `/guardian-hud`
 - `/guardian-hygiene`
 - `/guardian-gc`
 - `/guardian-delete-paths`
