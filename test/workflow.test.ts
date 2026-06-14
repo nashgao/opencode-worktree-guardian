@@ -277,3 +277,46 @@ test("guardian_finish_workflow blocks cleanup batches over the candidate bound",
   assert.equal(plan.preflight.candidateCount, 26);
   assert.match(String(plan.blockers[0].reason), /candidate count exceeds maximum/);
 });
+
+test("guardian_finish_workflow blocks merged worktrees with ignored files unless allowIgnoredFiles is set", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  await fs.writeFile(path.join(repo, ".gitignore"), "ignored-residue/\n");
+  await git(repo, ["add", ".gitignore"]);
+  await git(repo, ["commit", "-m", "add gitignore"]);
+  await git(repo, ["push", "origin", "main"]);
+  const branch = "guardian/workflow-ignored";
+  await createMergedBranch(repo, branch, "workflow-ignored.txt");
+  const worktreePath = path.join(repo, ".worktrees", path.basename(repo), "workflow-ignored");
+  await git(repo, ["worktree", "add", worktreePath, branch]);
+  await fs.mkdir(path.join(worktreePath, "ignored-residue"), { recursive: true });
+  await fs.writeFile(path.join(worktreePath, "ignored-residue", "cache.bin"), "residue\n");
+
+  const blockedPlan = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "plan" }));
+
+  assert.equal(blockedPlan.ok, false);
+  assert.equal(blockedPlan.status, "blocked");
+  assert.equal(blockedPlan.candidates.length, 0);
+  assert.equal(blockedPlan.blockers.length, 1);
+  assert.match(String(blockedPlan.blockers[0].reason), /ignored files/);
+  assert.equal(await pathExists(worktreePath), true);
+  assert.equal(await branchExists(repo, branch), true);
+
+  const plan = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "plan", allowIgnoredFiles: true }));
+
+  assert.equal(plan.ok, true);
+  assert.equal(plan.status, "planned");
+  assert.equal(plan.preflight.candidateCount, 1);
+  assert.equal(plan.candidates.length, 1);
+  assert.equal(plan.candidates[0].branch, branch);
+
+  const apply = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "apply", confirmToken: plan.confirmToken, allowIgnoredFiles: true }));
+
+  assert.equal(apply.ok, true);
+  assert.equal(apply.status, "cleaned");
+  assert.equal(apply.results.length, 1);
+  assert.equal(apply.results[0].worktreeRemoved, true);
+  assert.equal(apply.results[0].branchDeleted, true);
+  await assert.rejects(() => fs.access(worktreePath));
+  await assert.rejects(() => git(repo, ["rev-parse", "--verify", branch]));
+});

@@ -56,7 +56,7 @@ export async function plannedCandidate(repoRoot: string, config: Record<string, 
   };
 }
 
-export async function discoverCandidates(repoRoot: string, cwd: string, config: Record<string, unknown>, preflight: Record<string, unknown>): Promise<{ readonly candidates: Record<string, unknown>[]; readonly blockers: Record<string, unknown>[] }> {
+export async function discoverCandidates(repoRoot: string, cwd: string, config: Record<string, unknown>, preflight: Record<string, unknown>, allowIgnoredFiles = false): Promise<{ readonly candidates: Record<string, unknown>[]; readonly blockers: Record<string, unknown>[] }> {
   const baseRef = `${String(config.remote)}/${String(config.baseBranch)}`;
   const guardianRoot = path.resolve(repoRoot, expandWorktreeRoot(String(config.worktreeRoot), repoRoot));
   const currentWorktree = await getRepoRoot(cwd);
@@ -85,7 +85,7 @@ export async function discoverCandidates(repoRoot: string, cwd: string, config: 
       blockers.push({ kind: "worktree", targetPath: worktree.path, branch: worktree.branch, head: worktree.head, reason: "worktree branch is not proven reachable from base ref" });
       continue;
     }
-    const candidate = await plannedCandidate(repoRoot, config, { targetPath: worktree.path });
+    const candidate = await plannedCandidate(repoRoot, config, { targetPath: worktree.path, allowIgnoredFiles });
     if (candidate.ok) candidates.push({ kind: "worktree", ...candidate });
     else blockers.push({ kind: "worktree", targetPath: worktree.path, branch: worktree.branch, reason: candidate.reason });
   }
@@ -96,7 +96,7 @@ export async function discoverCandidates(repoRoot: string, cwd: string, config: 
     if (checkedOutBranches.has(branch.name)) continue;
     if ((config.protectedBranches as string[]).includes(branch.name)) continue;
     if (!(await isAncestor(repoRoot, branch.commit, baseRef))) continue;
-    const candidate = await plannedCandidate(repoRoot, config, { branch: branch.name });
+    const candidate = await plannedCandidate(repoRoot, config, { branch: branch.name, allowIgnoredFiles });
     if (candidate.ok) candidates.push({ kind: "branch", ...candidate });
   }
 

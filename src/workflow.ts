@@ -59,7 +59,7 @@ export async function guardianFinishWorkflow(input: Record<string, unknown> = {}
   preflight.stashCount = stashes.length;
   if (stashes.length > 0 && config.allowStashIfUnrelated !== true) return blocked("stash inventory is non-empty", { stashes }, preflight);
 
-  const { candidates, blockers } = await discoverCandidates(repoRoot, cwd, config, preflight);
+  const { candidates, blockers } = await discoverCandidates(repoRoot, cwd, config, preflight, input.allowIgnoredFiles === true);
   if (blockers.length > 0) return blocked("cleanup blockers must be resolved before apply", { candidates, blockers }, preflight);
   const confirmToken = createWorkflowToken(preflight, candidates);
   if (mode === "plan") return { ok: true, status: "planned", confirmToken, preflight, candidates, blockers };
@@ -70,12 +70,12 @@ export async function guardianFinishWorkflow(input: Record<string, unknown> = {}
     const targetKind = typeof candidate.targetKind === "string" ? candidate.targetKind : undefined;
     const targetPath = targetKind === "worktree" && typeof candidate.targetPath === "string" ? candidate.targetPath : undefined;
     const branch = targetKind !== "worktree" && typeof candidate.branch === "string" ? candidate.branch : undefined;
-    const plan = await guardianDeleteWorktree({ repoRoot, cwd: repoRoot, mode: "plan", targetPath, branch, deleteBranch: true, config });
+    const plan = await guardianDeleteWorktree({ repoRoot, cwd: repoRoot, mode: "plan", targetPath, branch, deleteBranch: true, allowIgnoredFiles: input.allowIgnoredFiles === true, config });
     if (!plan.ok) {
       results.push({ ...candidateTokenMaterial(candidate), ok: false, status: "blocked", reason: plan.reason });
       continue;
     }
-    const apply = await guardianDeleteWorktree({ repoRoot, cwd: repoRoot, mode: "apply", targetPath, branch, deleteBranch: true, confirmToken: plan.confirmToken, config });
+    const apply = await guardianDeleteWorktree({ repoRoot, cwd: repoRoot, mode: "apply", targetPath, branch, deleteBranch: true, allowIgnoredFiles: input.allowIgnoredFiles === true, confirmToken: plan.confirmToken, config });
     results.push({ ...candidateTokenMaterial(candidate), ok: apply.ok, status: apply.status, reason: apply.reason, worktreeRemoved: apply.worktreeRemoved, branchDeleted: apply.branchDeleted, safetyRef: apply.safetyRef });
   }
 
