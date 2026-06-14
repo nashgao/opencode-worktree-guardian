@@ -12,6 +12,7 @@ import { primaryMainDone } from "./done-primary-publish.ts";
 import { dirtySnapshot } from "./done-primary-snapshot.ts";
 import { blocked, isInside, samePath } from "./done-shared.ts";
 import { guardianFinishWorkflow } from "./workflow.ts";
+import { rescueDirtyWorktree } from "./done-rescue.ts";
 
 function activeSessionIdForWorktree(state: Awaited<ReturnType<typeof readState>>, currentWorktree: string) {
   for (const [sessionId, session] of Object.entries(state.sessions ?? {})) {
@@ -132,6 +133,9 @@ export async function guardianDone(input: Record<string, unknown> = {}): Promise
   if (mode !== "plan" && mode !== "apply") return { ok: false, status: "blocked", reason: "mode must be plan or apply", mode };
 
   const currentWorktree = await getRepoRoot(cwd);
+  if (input.rescue === true) {
+    return rescueDirtyWorktree(currentWorktree, config, input);
+  }
   const currentBranch = await getCurrentBranch(currentWorktree);
   const baseBranch = String(config.baseBranch);
   const protectedBranches = Array.isArray(config.protectedBranches) ? config.protectedBranches : [];
@@ -164,7 +168,8 @@ export async function guardianDone(input: Record<string, unknown> = {}): Promise
         return blocked("changes were made outside the active Guardian lane; consolidate them before finishing", {
           lane: "wrong-lane-dirty-work",
           dirtyFiles: snapshot.paths,
-          nextAction: "Review the dirty files, then rerun guardian_done after they are moved into the active lane.",
+          nextAction: "Finish the lane directly with branch=<lane-branch>, or rerun with rescue=true to back up and clear these out-of-lane changes.",
+          suggestedCommands: ["guardian_done rescue=true", "guardian_status"],
         });
       }
       const result = await guardianFinish({ ...input, repoRoot, cwd: currentSession.worktree_path, sessionId, config });
