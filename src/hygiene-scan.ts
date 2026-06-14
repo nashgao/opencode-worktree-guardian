@@ -203,6 +203,14 @@ export async function scanWorkspaceHygiene(input: Record<string, unknown> = {}) 
     const reviewableCandidateInputs: ReviewableCandidateInput[] = [];
     const seenFindings = new Set<string>();
     const candidates = await listCandidatePaths(repoRoot);
+    const trackedRootCache = new Map<string, boolean>();
+    const trackedRootHasCommittedFiles = async (relative: string) => {
+      const cached = trackedRootCache.get(relative);
+      if (cached !== undefined) return cached;
+      const value = await hasTrackedEntriesUnder(repoRoot, relative);
+      trackedRootCache.set(relative, value);
+      return value;
+    };
     for (const candidate of candidates) {
       const absolutePath = path.resolve(repoRoot, candidate.path);
       const relative = relativePath(repoRoot, absolutePath);
@@ -226,12 +234,16 @@ export async function scanWorkspaceHygiene(input: Record<string, unknown> = {}) 
       }
       const knownMatch = knownCleanableMatch(relative);
       if (knownMatch) {
-        const key = `known-cleanable:${knownMatch.path}`;
-        if (!seenFindings.has(key)) {
-          findings.push({ path: knownMatch.path, category: "known-cleanable" satisfies HygieneCategory, severity: "warn" satisfies HygieneSeverity, reason: knownMatch.reason, source: "git ls-files --others/--ignored" });
-          seenFindings.add(key);
+        const collapsedRoot = typeof knownMatch.path === "string" ? knownMatch.path : "";
+        const committedAgentStateRoot = LOCAL_AGENT_STATE_DIRS.has(collapsedRoot) && await trackedRootHasCommittedFiles(collapsedRoot);
+        if (!committedAgentStateRoot) {
+          const key = `known-cleanable:${knownMatch.path}`;
+          if (!seenFindings.has(key)) {
+            findings.push({ path: knownMatch.path, category: "known-cleanable" satisfies HygieneCategory, severity: "warn" satisfies HygieneSeverity, reason: knownMatch.reason, source: "git ls-files --others/--ignored" });
+            seenFindings.add(key);
+          }
+          continue;
         }
-        continue;
       }
       const residue = residueRoot(relative);
       if (residue) {
