@@ -108,3 +108,19 @@ test("concurrent state updates serialize and events remain jsonl", async () => {
   assert.equal(events.length, 5);
   for (const line of events) assert.doesNotThrow(() => JSON.parse(line));
 });
+
+test("recordSession refuses an active session whose worktree is a different git repository", async () => {
+  const repo = await createRepo();
+  const foreign = await createRepo();
+  await assert.rejects(() => recordSession(repo, DEFAULT_CONFIG, {
+    session_id: "ses_xrepo",
+    status: "active",
+    branch: "guardian/xrepo",
+    worktree_path: foreign,
+    base_ref: "origin/main",
+    safety_refs: [],
+  }), /different git repository/);
+  const paths = await getGuardianPaths(repo);
+  const state = await readState(paths, { repoRoot: repo, config: DEFAULT_CONFIG });
+  assert.equal(state.sessions.ses_xrepo, undefined);
+});

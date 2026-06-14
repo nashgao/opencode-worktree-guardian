@@ -2,13 +2,13 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { loadConfig, normalizeConfig } from "./config.ts";
-import { getRepoRoot, listWorktrees } from "./git.ts";
+import { getCommonGitDir, getRepoRoot, listWorktrees } from "./git.ts";
 import { isTerminalSession } from "./lifecycle.ts";
 import { getGuardianPaths, readState, updateState } from "./state.ts";
 import type { GuardianConfig, GuardianSession, GuardianToolInput, GuardianToolResult, RecordLike, WorktreeEntry } from "./types.ts";
 import { isRecordLike } from "./types.ts";
 
-export type GcReason = "terminal-stale" | "poisoned-primary" | "poisoned-protected" | "orphaned";
+export type GcReason = "terminal-stale" | "poisoned-primary" | "poisoned-protected" | "orphaned" | "foreign-repo";
 
 export type GcCandidate = {
   readonly session_id: string;
@@ -26,6 +26,14 @@ async function pathExists(candidate: string): Promise<boolean> {
     return true;
   } catch {
     return false;
+  }
+}
+
+async function safeCommonGitDir(candidate: string): Promise<string | null> {
+  try {
+    return await getCommonGitDir(candidate);
+  } catch {
+    return null;
   }
 }
 
@@ -56,6 +64,7 @@ async function collectGcCandidates(
   const protectedBranches = Array.isArray(config.protectedBranches) ? config.protectedBranches.filter((branch): branch is string => typeof branch === "string") : [];
   const retentionDays = typeof config.safetyRefRetentionDays === "number" ? config.safetyRefRetentionDays : 30;
   const worktreePaths = new Set(worktrees.map((entry) => path.resolve(entry.path)));
+  const repoCommonDir = path.resolve(await getCommonGitDir(repoRoot));
   const candidates: GcCandidate[] = [];
   for (const [sessionId, raw] of Object.entries(sessions)) {
     if (!isRecordLike(raw)) continue;
@@ -80,7 +89,14 @@ async function collectGcCandidates(
     }
     if (worktreePath) {
       const resolved = path.resolve(worktreePath);
-      if (!worktreePaths.has(resolved) && !(await pathExists(resolved))) candidates.push({ ...base, reason: "orphaned" });
+      const listed = worktreePaths.has(resolved);
+      const exists = listed || (await pathExists(resolved));
+      if (!exists) {
+        candidates.push({ ...base, reason: "orphaned" });
+      } else if (!listed) {
+        const worktreeCommonDir = await safeCommonGitDir(resolved);
+        if (worktreeCommonDir !== null && path.resolve(worktreeCommonDir) !== repoCommonDir) candidates.push({ ...base, reason: "foreign-repo" });
+      }
     }
   }
   return candidates.sort((left, right) => left.session_id.localeCompare(right.session_id));
@@ -95,7 +111,7 @@ function gcConfirmToken(repoRoot: string, candidates: readonly GcCandidate[]): s
 }
 
 function summarizeReasons(candidates: readonly GcCandidate[]): Record<GcReason, number> {
-  const byReason: Record<GcReason, number> = { "terminal-stale": 0, "poisoned-primary": 0, "poisoned-protected": 0, orphaned: 0 };
+  const byReason: Record<GcReason, number> = { "terminal-stale": 0, "poisoned-primary": 0, "poisoned-protected": 0, orphaned: 0, "foreign-repo": 0 };
   for (const candidate of candidates) byReason[candidate.reason] += 1;
   return byReason;
 }
