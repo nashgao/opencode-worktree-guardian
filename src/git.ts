@@ -1,4 +1,7 @@
 import { execFile, spawn } from "node:child_process";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { promisify } from "node:util";
 import { gitMetadataFromError, withGitMetadata } from "./types.ts";
@@ -221,6 +224,36 @@ export async function createSafetyRef(repoRoot: string, { sessionId, branch, com
   const ref = buildSafetyRef(String(sessionId ?? ""), String(branch ?? ""), timestamp);
   await createRef(repoRoot, ref, commit);
   return ref;
+}
+
+export type SnapshotWorktreeDirtOptions = {
+  readonly parentCommit: string;
+  readonly paths: readonly string[];
+  readonly message: string;
+};
+
+// Snapshots the worktree state of `paths` (including untracked files, which `git stash create` drops)
+// into a commit parented on `parentCommit` via a scoped temporary index, leaving the real index/HEAD
+// untouched. A fixed Guardian identity keeps commit-tree working on repos with no configured git user.
+export async function snapshotWorktreeDirtCommit(repoPath: string, { parentCommit, paths, message }: SnapshotWorktreeDirtOptions): Promise<string> {
+  if (paths.length === 0) throw new Error("snapshotWorktreeDirtCommit requires at least one path");
+  const tempIndex = path.join(os.tmpdir(), `guardian-snapshot-index-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  const env = {
+    ...process.env,
+    GIT_INDEX_FILE: tempIndex,
+    GIT_AUTHOR_NAME: "opencode-worktree-guardian",
+    GIT_AUTHOR_EMAIL: "guardian@opencode.local",
+    GIT_COMMITTER_NAME: "opencode-worktree-guardian",
+    GIT_COMMITTER_EMAIL: "guardian@opencode.local",
+  };
+  try {
+    await runGit(repoPath, ["read-tree", parentCommit], { env });
+    await runGit(repoPath, ["add", "-A", "--", ...paths], { env });
+    const tree = (await runGit(repoPath, ["write-tree"], { env })).stdout;
+    return (await runGit(repoPath, ["commit-tree", tree, "-p", parentCommit, "-m", message], { env })).stdout;
+  } finally {
+    await fs.rm(tempIndex, { force: true });
+  }
 }
 
 export async function listRefs(repoRoot: string, prefix: string): Promise<GitRefEntry[]> {
