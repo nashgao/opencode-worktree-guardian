@@ -51,6 +51,24 @@ export function formatGuardianDoneOutput(rawResult: unknown) {
     if (untracked > 0) lines.push(`[INFO] local untracked files remain by user choice: ${untracked}`);
     return lines.join("\n");
   }
+  if (result.status === "needs-selection" || result.lane === "select-session") {
+    const sessions = arrayValue(result.availableSessions);
+    const lines = [
+      "[WARN] guardian_done needs a session selection",
+      `[INFO] ${textValue(result.reason, "no Guardian session matched the current location")}`,
+      `[INFO] active feature sessions: ${sessions.length}`,
+    ];
+    for (const entry of sessions.slice(0, 8)) {
+      const session = recordValue(entry);
+      lines.push(`  - branch=${textValue(session.branch)} session=${textValue(session.session_id)} head=${shortCommit(session.head)} path=${textValue(session.worktree_path)}`);
+    }
+    const commands = arrayValue(result.suggestedCommands);
+    if (commands.length > 0) {
+      lines.push("[INFO] finish one with:");
+      for (const command of commands.slice(0, 8)) lines.push(`  - ${textValue(command, String(command))}`);
+    }
+    return lines.join("\n");
+  }
   const preflight = recordValue(result.preflight);
   const cleanupPlan = recordValue(result.cleanupPlan);
   const dirtySnapshot = recordValue(result.dirtySnapshot);
@@ -76,6 +94,14 @@ export function formatGuardianDoneOutput(rawResult: unknown) {
   if (suggestions.length > 0) {
     lines.push("[INFO] suggested commands:");
     for (const command of suggestions.slice(0, 8)) lines.push(`  - ${textValue(command, String(command))}`);
+  }
+  const available = arrayValue(result.availableSessions);
+  if (available.length > 0) {
+    lines.push("[INFO] active feature sessions you can finish:");
+    for (const entry of available.slice(0, 8)) {
+      const session = recordValue(entry);
+      lines.push(`  - branch=${textValue(session.branch)} session=${textValue(session.session_id)} path=${textValue(session.worktree_path)}`);
+    }
   }
   return lines.join("\n");
 }

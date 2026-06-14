@@ -1,4 +1,6 @@
-import { loadConfig, normalizeConfig } from "./config.ts";
+import fs from "node:fs/promises";
+import path from "node:path";
+import { expandWorktreeRoot, loadConfig, normalizeConfig } from "./config.ts";
 import { guardianFinish } from "./finish.ts";
 import { getCurrentBranch, getHeadCommit, getRepoRoot } from "./git.ts";
 import { isActiveSession } from "./lifecycle.ts";
@@ -8,7 +10,7 @@ import type { GuardianConfig, GuardianSession } from "./types.ts";
 import { reattachCurrentGuardianWorktree } from "./done-reattach.ts";
 import { primaryMainDone } from "./done-primary-publish.ts";
 import { dirtySnapshot } from "./done-primary-snapshot.ts";
-import { blocked, samePath } from "./done-shared.ts";
+import { blocked, isInside, samePath } from "./done-shared.ts";
 import { guardianFinishWorkflow } from "./workflow.ts";
 
 function activeSessionIdForWorktree(state: Awaited<ReturnType<typeof readState>>, currentWorktree: string) {
@@ -18,7 +20,56 @@ function activeSessionIdForWorktree(state: Awaited<ReturnType<typeof readState>>
   return null;
 }
 
-// preserve-only, push-branch, and create-pr finishes all settle to status "preserved".
+function activeSessionIdForBranch(state: Awaited<ReturnType<typeof readState>>, branch: string) {
+  for (const [sessionId, session] of Object.entries(state.sessions ?? {})) {
+    if (isRecordLike(session) && isActiveSession(session) && session.branch === branch) return sessionId;
+  }
+  return null;
+}
+
+type FeatureSession = { readonly session_id: string; readonly branch: string | null; readonly worktree_path: string; readonly head: string | null };
+
+function worktreeExists(target: string) {
+  return fs.access(target).then(() => true, () => false);
+}
+
+async function activeFeatureSessions(state: Awaited<ReturnType<typeof readState>>, repoRoot: string, config: GuardianConfig): Promise<FeatureSession[]> {
+  const guardianRoot = path.resolve(repoRoot, expandWorktreeRoot(String(config.worktreeRoot), repoRoot));
+  const sessions: FeatureSession[] = [];
+  for (const [sessionId, session] of Object.entries(state.sessions ?? {})) {
+    if (!isRecordLike(session) || !isActiveSession(session)) continue;
+    const worktreePath = session.worktree_path;
+    if (typeof worktreePath !== "string" || worktreePath.length === 0) continue;
+    if (samePath(worktreePath, repoRoot) || !isInside(worktreePath, guardianRoot)) continue;
+    if (!(await worktreeExists(worktreePath))) continue;
+    sessions.push({
+      session_id: sessionId,
+      branch: typeof session.branch === "string" ? session.branch : null,
+      worktree_path: worktreePath,
+      head: typeof session.head_commit === "string" ? session.head_commit : null,
+    });
+  }
+  return sessions;
+}
+
+function featureSessionCommands(sessions: readonly FeatureSession[]): string[] {
+  return sessions
+    .filter((session): session is FeatureSession & { branch: string } => typeof session.branch === "string" && session.branch.length > 0)
+    .map((session) => `guardian_done branch=${session.branch} finishMode=merge-to-base allowMergeToBase=true`);
+}
+
+function selectSession(reason: string, sessions: readonly FeatureSession[], extra: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    ok: false,
+    status: "needs-selection",
+    lane: "select-session",
+    reason,
+    availableSessions: sessions,
+    suggestedCommands: featureSessionCommands(sessions),
+    ...extra,
+  };
+}
+
 function preservedSessionForWorktree(
   state: Awaited<ReturnType<typeof readState>>,
   currentWorktree: string,
@@ -54,7 +105,7 @@ async function preservedDoneNoOp(
     localDirtyFileCount = snapshot.paths.length;
     localUntrackedFileCount = snapshot.entries.filter((entry) => entry.status === "??").length;
   } catch {
-    // The working tree may be unavailable; the preserved commit and safety ref are still recorded.
+    localUntrackedFileCount = 0;
   }
   return {
     ok: true,
@@ -86,7 +137,21 @@ export async function guardianDone(input: Record<string, unknown> = {}): Promise
   const protectedBranches = Array.isArray(config.protectedBranches) ? config.protectedBranches : [];
   const state = await readState(await getGuardianPaths(repoRoot), { repoRoot, config });
   const requestedSessionId = typeof input.sessionId === "string" && input.sessionId.trim().length > 0 ? input.sessionId : null;
-  const sessionId = requestedSessionId ?? activeSessionIdForWorktree(state, currentWorktree);
+  const requestedBranch = typeof input.branch === "string" && input.branch.trim().length > 0 ? input.branch.trim() : null;
+  const branchSessionId = requestedBranch && !requestedSessionId ? activeSessionIdForBranch(state, requestedBranch) : null;
+  if (requestedBranch && !requestedSessionId && !branchSessionId) {
+    const candidates = await activeFeatureSessions(state, repoRoot, config);
+    return {
+      ok: false,
+      status: "blocked",
+      lane: "branch-not-found",
+      reason: `no active Guardian session owns branch ${requestedBranch}`,
+      branch: requestedBranch,
+      availableSessions: candidates,
+      suggestedCommands: featureSessionCommands(candidates),
+    };
+  }
+  const sessionId = requestedSessionId ?? branchSessionId ?? activeSessionIdForWorktree(state, currentWorktree);
   const currentSession = sessionId ? state.sessions?.[sessionId] : null;
 
   if (currentSession && isActiveSession(currentSession) && typeof currentSession.worktree_path === "string") {
@@ -125,6 +190,12 @@ export async function guardianDone(input: Record<string, unknown> = {}): Promise
   if (samePath(currentWorktree, repoRoot) && currentBranch === baseBranch && protectedBranches.includes(baseBranch)) {
     const snapshot = await dirtySnapshot(repoRoot, config);
     if (snapshot.paths.length > 0) return primaryMainDone(repoRoot, currentWorktree, config, input);
+    if (!requestedSessionId && !requestedBranch) {
+      const candidates = await activeFeatureSessions(state, repoRoot, config);
+      if (candidates.length > 0) {
+        return selectSession("no Guardian session matches the current location; choose a feature session to finish, or run guardian_finish_workflow to sweep merged worktrees", candidates, { currentWorktree, currentBranch, baseBranch });
+      }
+    }
     const cleanup = await guardianFinishWorkflow({ ...input, repoRoot, cwd: repoRoot, config });
     return { ...cleanup, lane: "cleanup-only" };
   }
@@ -139,6 +210,13 @@ export async function guardianDone(input: Record<string, unknown> = {}): Promise
       baseBranch,
       suggestedCommands: ["guardian_start createWorktree=true", "guardian_status"],
     };
+  }
+
+  if (!requestedSessionId && !requestedBranch) {
+    const candidates = await activeFeatureSessions(state, repoRoot, config);
+    if (candidates.length > 0) {
+      return selectSession("no Guardian session matches the current location; choose a feature session to finish", candidates, { currentWorktree, currentBranch, baseBranch });
+    }
   }
 
   return {

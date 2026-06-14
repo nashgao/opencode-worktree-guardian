@@ -306,3 +306,51 @@ test("guardian_done still blocks a genuinely active dirty session", async (t) =>
   assert.equal(result.lane, "session-finish");
   assert.match(result.reason, /uncommitted changes/);
 });
+
+test("guardian_done finishes a session targeted by branch name from the primary", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_branch_target", taskName: "branch target", createWorktree: true, config: DEFAULT_CONFIG });
+  await fs.writeFile(path.join(started.session.worktree_path, "feat.txt"), "feat\n");
+  await git(started.session.worktree_path, ["add", "feat.txt"]);
+  await git(started.session.worktree_path, ["commit", "-m", "feat"]);
+
+  const result = asDone(await guardianDone({ repoRoot: repo, cwd: repo, branch: started.session.branch, timestamp: "20260609T050505" }));
+
+  assert.equal(result.ok, true);
+  assert.equal(result.lane, "session-finish");
+  assert.equal(result.status, "pr-suggested");
+  assert.equal(result.preflight.sessionId, "ses_branch_target");
+  assert.equal(result.preflight.currentWorktree, started.session.worktree_path);
+});
+
+test("guardian_done lists active feature sessions to select when run bare from the primary", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const a = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_select_a", taskName: "select a", createWorktree: true, config: DEFAULT_CONFIG });
+  const b = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_select_b", taskName: "select b", createWorktree: true, config: DEFAULT_CONFIG });
+
+  const result = asDone(await guardianDone({ repoRoot: repo, cwd: repo }));
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, "needs-selection");
+  assert.equal(result.lane, "select-session");
+  const sessions = result.availableSessions as readonly { branch: string }[];
+  assert.deepEqual(sessions.map((session) => session.branch).sort(), [a.session.branch, b.session.branch].sort());
+  const commands = result.suggestedCommands as readonly string[];
+  assert.ok(commands.some((command) => command.includes(a.session.branch)));
+});
+
+test("guardian_done blocks with candidate sessions when the branch has no active session", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const a = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_branch_missing", taskName: "branch missing", createWorktree: true, config: DEFAULT_CONFIG });
+
+  const result = asDone(await guardianDone({ repoRoot: repo, cwd: repo, branch: "guardian/nope" }));
+
+  assert.equal(result.ok, false);
+  assert.equal(result.lane, "branch-not-found");
+  assert.match(result.reason, /no active Guardian session owns branch/);
+  const sessions = result.availableSessions as readonly { branch: string }[];
+  assert.ok(sessions.some((session) => session.branch === a.session.branch));
+});
