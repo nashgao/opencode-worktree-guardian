@@ -3,7 +3,7 @@ import { loadConfig, normalizeConfig } from "./config.ts";
 import { classifyDirtyFiles, splitPrimaryDirtyFiles } from "./finish-dirty-files.ts";
 import { blocked, errorMessage, isFinishStateInput, withFinishReport } from "./finish-report.ts";
 import type { FinishPreflight, GuardianFinishResult, LooseRecord } from "./finish-report.ts";
-import { createSafetyRef, fetchRemote, getCurrentBranch, getDirtyFiles, getHeadCommit, getRepoRoot, isAncestor, listStashes, listWorktrees, pushBranch, runGit, tryGit } from "./git.ts";
+import { createSafetyRef, fetchRemote, getCurrentBranch, getDirtyFiles, getHeadCommit, getRepoRoot, isAncestor, listStashes, listWorktrees, pushBranch, runGit, snapshotWorktreeDirtCommit, tryGit } from "./git.ts";
 import { isActiveSession, isTerminalSession } from "./lifecycle.ts";
 import { getGuardianPaths, readState, recordSession } from "./state.ts";
 import { isRecordLike } from "./types.ts";
@@ -47,6 +47,8 @@ export async function guardianFinish(input: LooseRecord = {}): Promise<GuardianF
     baseWorktreeIgnoredDirtyFileCount: 0,
     baseWorktreeRepositionRequired: false,
     baseWorktreeRepositioned: false,
+    baseWorktreePreserveReset: false,
+    baseWorktreePreservedDirtRef: null,
     baseWorktreeSafetyRefs: [],
     safetyRef: null,
     remote: config.remote,
@@ -190,14 +192,55 @@ export async function guardianFinish(input: LooseRecord = {}): Promise<GuardianF
     preflight.baseWorktreeIgnoredDirtyFileCount = baseWorktreeIgnoredDirtyFiles.length;
     preflight.baseWorktreeRepositionRequired = baseWorktreeBranch !== config.baseBranch;
 
-    // Guardian never self-heals uncommitted base-worktree work. A plain safety ref preserves only HEAD,
-    // `git stash create` omits untracked files, and committing base dirt is wrong when the base worktree
-    // is on a non-base branch. Dirty base worktrees stay blocked; the human commits or preserves them.
+    const baseWorktreeSafetyRefs: string[] = [];
+
     if (baseWorktreeDirtyFiles.length > 0) {
-      return blocked("merge-to-base requires the primary repo worktree to be clean; Guardian will not self-heal uncommitted base-worktree changes, so commit or preserve them first", { safetyRef, branch, baseWorktree, baseWorktreeBranch, dirtyFiles: baseWorktreeDirtyFiles }, preflight);
+      const allowPreserveReset = config.allowBaseWorktreePreserveReset === true || input.allowBaseWorktreePreserveReset === true;
+      if (!allowPreserveReset) {
+        return blocked("merge-to-base requires the primary repo worktree to be clean; Guardian will not self-heal uncommitted base-worktree changes unless allowBaseWorktreePreserveReset=true, so commit or preserve them first", { safetyRef, branch, baseWorktree, baseWorktreeBranch, dirtyFiles: baseWorktreeDirtyFiles }, preflight);
+      }
+      let preservedDirtCommit: string;
+      try {
+        preservedDirtCommit = await snapshotWorktreeDirtCommit(baseWorktree, {
+          parentCommit: baseWorktreeOriginalHead,
+          paths: baseWorktreeDirtyFiles,
+          message: `guardian: preserved dirty primary worktree before merge-to-base (session ${sessionId})`,
+        });
+      } catch (error) {
+        return blocked("merge-to-base could not snapshot the dirty primary worktree before preserve-reset", { safetyRef, branch, baseWorktree, baseWorktreeBranch, dirtyFiles: baseWorktreeDirtyFiles, error: errorMessage(error) }, preflight);
+      }
+      const baseWorktreePreservedDirtRef = await createSafetyRef(baseWorktree, {
+        sessionId: `${sessionId}/base-worktree-preserved-dirt`,
+        branch: baseWorktreeBranch ?? `detached-${baseWorktreeOriginalHead.slice(0, 12)}`,
+        commit: preservedDirtCommit,
+        timestamp: input.timestamp,
+      });
+      baseWorktreeSafetyRefs.push(baseWorktreePreservedDirtRef);
+      preflight.baseWorktreePreserveReset = true;
+      preflight.baseWorktreePreservedDirtRef = baseWorktreePreservedDirtRef;
+      preflight.baseWorktreeSafetyRefs = [...baseWorktreeSafetyRefs];
+
+      // Scope the clean to the recomputed blocking paths only: reset --hard touches just tracked files,
+      // then a path-scoped clean removes the remaining untracked dirt. A blanket clean would delete the
+      // Guardian session worktrees that live under the worktree root.
+      try {
+        await runGit(baseWorktree, ["reset", "--hard", baseWorktreeOriginalHead]);
+        const remainingUntracked = splitPrimaryDirtyFiles(await getDirtyFiles(baseWorktree), repoRoot, config).blockingDirtyFiles;
+        if (remainingUntracked.length > 0) {
+          await runGit(baseWorktree, ["clean", "-f", "-d", "--", ...remainingUntracked]);
+        }
+      } catch (error) {
+        return blocked("merge-to-base could not reset the primary worktree clean after preserving its dirt", { safetyRef, branch, baseWorktree, baseWorktreePreservedDirtRef, error: errorMessage(error) }, preflight);
+      }
+
+      const stillDirty = splitPrimaryDirtyFiles(await getDirtyFiles(baseWorktree), repoRoot, config).blockingDirtyFiles;
+      preflight.baseWorktreeDirtyFiles = stillDirty;
+      preflight.baseWorktreeDirtyFileCount = stillDirty.length;
+      if (stillDirty.length > 0) {
+        return blocked("merge-to-base could not fully clean the primary worktree after preserving its dirt", { safetyRef, branch, baseWorktree, baseWorktreePreservedDirtRef, dirtyFiles: stillDirty }, preflight);
+      }
     }
 
-    const baseWorktreeSafetyRefs: string[] = [];
     if (baseWorktreeBranch !== config.baseBranch) {
       const baseBranchExists = await tryGit(baseWorktree, ["rev-parse", "--verify", `refs/heads/${config.baseBranch}^{commit}`]);
       if (!baseBranchExists.ok) {

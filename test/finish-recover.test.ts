@@ -639,6 +639,88 @@ test("merge-to-base refuses when primary repo worktree is dirty", async () => {
   assert.equal((await git(repo, ["branch", "--show-current"])).stdout, "main");
 });
 
+test("merge-to-base preserve-resets a dirty primary worktree when explicitly allowed", async () => {
+  const { base, repo } = await createRepoWithOrigin();
+  test.after(() => fs.rm(base, { recursive: true, force: true }));
+  const config = { ...DEFAULT_CONFIG, finishMode: "merge-to-base" };
+  const start = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_merge_preserve_reset", taskName: "merge preserve reset", createWorktree: true, config });
+  await fs.writeFile(path.join(start.session.worktree_path, "merged.txt"), "merged\n");
+  await git(start.session.worktree_path, ["add", "merged.txt"]);
+  await git(start.session.worktree_path, ["commit", "-m", "add merged file"]);
+  const { stdout: commit } = await git(start.session.worktree_path, ["rev-parse", "HEAD"]);
+  const { stdout: baseHeadBefore } = await git(repo, ["rev-parse", "HEAD"]);
+  await fs.writeFile(path.join(repo, "README.md"), "locally modified\n");
+  await fs.writeFile(path.join(repo, "primary-dirty.txt"), "scratch\n");
+
+  const result = await guardianFinish({ repoRoot: repo, cwd: start.session.worktree_path, sessionId: "ses_merge_preserve_reset", config, allowMergeToBase: true, allowBaseWorktreePreserveReset: true });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.status, "merged");
+  assert.equal(result.preflight.baseWorktreePreserveReset, true);
+  assert.deepEqual(result.preflight.baseWorktreeDirtyFiles, []);
+  assert.equal(result.report.baseWorktreePreserveReset, true);
+
+  const baseSafetyRefs = requireStringArray(result.baseWorktreeSafetyRefs);
+  const preservedDirtRef = baseSafetyRefs.find((ref) => ref.includes("base-worktree-preserved-dirt"));
+  assert.ok(preservedDirtRef);
+  assert.equal(result.preflight.baseWorktreePreservedDirtRef, preservedDirtRef);
+  assert.equal(result.report.baseWorktreePreservedDirtRef, preservedDirtRef);
+
+  assert.equal((await git(repo, ["branch", "--show-current"])).stdout, "main");
+  assert.equal(await fs.readFile(path.join(repo, "README.md"), "utf8"), "initial\n");
+  assert.equal(await fs.access(path.join(repo, "primary-dirty.txt")).then(() => true, () => false), false);
+  assert.equal(await fs.access(path.join(repo, ".worktrees")).then(() => true, () => false), true);
+
+  assert.equal((await git(repo, ["show", `${preservedDirtRef}:README.md`])).stdout, "locally modified");
+  assert.equal((await git(repo, ["show", `${preservedDirtRef}:primary-dirty.txt`])).stdout, "scratch");
+  const preservedParent = await git(repo, ["rev-parse", `${preservedDirtRef}^`]);
+  assert.equal(preservedParent.stdout, baseHeadBefore);
+  const preservedDiff = await git(repo, ["diff", "--name-only", baseHeadBefore, requireString(preservedDirtRef)]);
+  assert.deepEqual(preservedDiff.stdout.split("\n").sort(), ["README.md", "primary-dirty.txt"]);
+
+  const ancestry = await git(repo, ["merge-base", "--is-ancestor", commit, "origin/main"]).then(() => true, () => false);
+  assert.equal(ancestry, true);
+
+  const status = await guardianStatus({ repoRoot: repo, config });
+  const session = findSession(status.sessions, "ses_merge_preserve_reset");
+  assert.equal(session.status, "finished");
+  assert.equal(requireStringArray(session.safety_refs).includes(requireString(preservedDirtRef)), true);
+});
+
+test("merge-to-base preserve-resets and repositions a dirty wrong-branch primary worktree via config gate", async () => {
+  const { base, repo } = await createRepoWithOrigin();
+  test.after(() => fs.rm(base, { recursive: true, force: true }));
+  const config = { ...DEFAULT_CONFIG, finishMode: "merge-to-base", allowBaseWorktreePreserveReset: true };
+  const start = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_merge_preserve_reposition", taskName: "merge preserve reposition", createWorktree: true, config });
+  await fs.writeFile(path.join(start.session.worktree_path, "merged.txt"), "merged\n");
+  await git(start.session.worktree_path, ["add", "merged.txt"]);
+  await git(start.session.worktree_path, ["commit", "-m", "add merged file"]);
+  const { stdout: commit } = await git(start.session.worktree_path, ["rev-parse", "HEAD"]);
+  await git(repo, ["checkout", "-b", "local-primary"]);
+  await fs.writeFile(path.join(repo, "primary-dirty.txt"), "scratch\n");
+
+  const result = await guardianFinish({ repoRoot: repo, cwd: start.session.worktree_path, sessionId: "ses_merge_preserve_reposition", config, allowMergeToBase: true });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.status, "merged");
+  assert.equal(result.preflight.baseWorktreePreserveReset, true);
+  assert.equal(result.preflight.baseWorktreeRepositioned, true);
+  assert.equal(result.preflight.baseWorktreeBranch, "main");
+  assert.equal((await git(repo, ["branch", "--show-current"])).stdout, "main");
+  assert.equal(await fs.access(path.join(repo, "primary-dirty.txt")).then(() => true, () => false), false);
+  assert.equal(await fs.access(path.join(repo, ".worktrees")).then(() => true, () => false), true);
+
+  const baseSafetyRefs = requireStringArray(result.baseWorktreeSafetyRefs);
+  assert.equal(baseSafetyRefs.some((ref) => ref.includes("base-worktree-preserved-dirt")), true);
+  assert.equal(baseSafetyRefs.some((ref) => ref.includes("base-worktree-original-head")), true);
+  assert.equal(baseSafetyRefs.some((ref) => ref.includes("base-branch-head")), true);
+  const preservedDirtRef = requireString(baseSafetyRefs.find((ref) => ref.includes("base-worktree-preserved-dirt")));
+  assert.equal((await git(repo, ["show", `${preservedDirtRef}:primary-dirty.txt`])).stdout, "scratch");
+
+  const ancestry = await git(repo, ["merge-base", "--is-ancestor", commit, "origin/main"]).then(() => true, () => false);
+  assert.equal(ancestry, true);
+});
+
 test("recover/status are read-only inventories with suggestions", async () => {
   const repo = await createRepo();
   const config: LooseRecord = { ...DEFAULT_CONFIG, finishMode: "preserve-only" };

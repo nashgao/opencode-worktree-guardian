@@ -52,6 +52,8 @@ export function withFinishReport(result: LooseRecord, preflight: FinishPreflight
       baseWorktreeIgnoredDirtyFileCount: preflightSnapshot.baseWorktreeIgnoredDirtyFileCount,
       baseWorktreeRepositionRequired: preflightSnapshot.baseWorktreeRepositionRequired,
       baseWorktreeRepositioned: preflightSnapshot.baseWorktreeRepositioned,
+      baseWorktreePreserveReset: preflightSnapshot.baseWorktreePreserveReset,
+      baseWorktreePreservedDirtRef: preflightSnapshot.baseWorktreePreservedDirtRef,
       baseWorktreeSafetyRefs: preflightSnapshot.baseWorktreeSafetyRefs,
       safetyRef: preflightSnapshot.safetyRef ?? result.safetyRef ?? null,
       remote: preflightSnapshot.remote,
