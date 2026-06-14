@@ -543,22 +543,82 @@ test("merge-to-base requires explicit mode and ancestry proof", async () => {
   assert.equal(ancestry, true);
 });
 
-test("merge-to-base refuses when primary repo worktree is not on base branch", async () => {
+test("merge-to-base self-heals a clean primary worktree on the wrong branch", async () => {
   const { base, repo } = await createRepoWithOrigin();
   test.after(() => fs.rm(base, { recursive: true, force: true }));
   const config = { ...DEFAULT_CONFIG, finishMode: "merge-to-base" };
-  const start = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_merge_primary_branch", taskName: "merge primary branch", createWorktree: true, config });
+  const start = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_merge_reposition", taskName: "merge reposition", createWorktree: true, config });
   await fs.writeFile(path.join(start.session.worktree_path, "merged.txt"), "merged\n");
   await git(start.session.worktree_path, ["add", "merged.txt"]);
   await git(start.session.worktree_path, ["commit", "-m", "add merged file"]);
+  const { stdout: commit } = await git(start.session.worktree_path, ["rev-parse", "HEAD"]);
   await git(repo, ["checkout", "-b", "local-primary"]);
+  const { stdout: localPrimaryHead } = await git(repo, ["rev-parse", "HEAD"]);
 
-  const result = await guardianFinish({ repoRoot: repo, cwd: start.session.worktree_path, sessionId: "ses_merge_primary_branch", config, allowMergeToBase: true });
+  const result = await guardianFinish({ repoRoot: repo, cwd: start.session.worktree_path, sessionId: "ses_merge_reposition", config, allowMergeToBase: true });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.status, "merged");
+  assert.equal(result.preflight.baseWorktreeRepositionRequired, true);
+  assert.equal(result.preflight.baseWorktreeRepositioned, true);
+  assert.equal(result.preflight.baseWorktreeBranch, "main");
+  assert.equal((await git(repo, ["branch", "--show-current"])).stdout, "main");
+
+  const baseSafetyRefs = requireStringArray(result.baseWorktreeSafetyRefs);
+  assert.equal(baseSafetyRefs.length, 2);
+  assert.equal(baseSafetyRefs.some((ref) => ref.includes("base-worktree-original-head")), true);
+  assert.equal(baseSafetyRefs.some((ref) => ref.includes("base-branch-head")), true);
+  assert.deepEqual(result.report.baseWorktreeSafetyRefs, baseSafetyRefs);
+
+  const originalHeadRef = baseSafetyRefs.find((ref) => ref.includes("base-worktree-original-head"));
+  assert.ok(originalHeadRef);
+  assert.equal((await git(repo, ["rev-parse", originalHeadRef])).stdout, localPrimaryHead);
+
+  const ancestry = await git(repo, ["merge-base", "--is-ancestor", commit, "origin/main"]).then(() => true, () => false);
+  assert.equal(ancestry, true);
+
+  const status = await guardianStatus({ repoRoot: repo, config });
+  const session = findSession(status.sessions, "ses_merge_reposition");
+  assert.equal(session.status, "finished");
+  for (const ref of baseSafetyRefs) assert.equal(requireStringArray(session.safety_refs).includes(ref), true);
+});
+
+test("merge-to-base blocks when the base branch is checked out in another worktree", async () => {
+  const { base, repo } = await createRepoWithOrigin();
+  test.after(() => fs.rm(base, { recursive: true, force: true }));
+  const config = { ...DEFAULT_CONFIG, finishMode: "merge-to-base" };
+  const start = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_merge_base_elsewhere", taskName: "merge base elsewhere", createWorktree: true, config });
+  await fs.writeFile(path.join(start.session.worktree_path, "merged.txt"), "merged\n");
+  await git(start.session.worktree_path, ["add", "merged.txt"]);
+  await git(start.session.worktree_path, ["commit", "-m", "add merged file"]);
+  await git(repo, ["checkout", "-b", "side-branch"]);
+  const mainElsewhere = path.join(path.dirname(repo), `${path.basename(repo)}-main-elsewhere`);
+  test.after(() => fs.rm(mainElsewhere, { recursive: true, force: true }));
+  await git(repo, ["worktree", "add", mainElsewhere, "main"]);
+
+  const result = await guardianFinish({ repoRoot: repo, cwd: start.session.worktree_path, sessionId: "ses_merge_base_elsewhere", config, allowMergeToBase: true });
 
   assert.equal(result.ok, false);
-  assert.match(requireString(result.reason), /primary repo worktree.*base branch/);
-  assert.equal(result.preflight.baseWorktreeBranch, "local-primary");
-  assert.equal((await git(repo, ["branch", "--show-current"])).stdout, "local-primary");
+  assert.match(requireString(result.reason), /checked out in another worktree/);
+  assert.equal((await git(repo, ["branch", "--show-current"])).stdout, "side-branch");
+});
+
+test("merge-to-base blocks when the configured base branch is missing locally", async () => {
+  const { base, repo } = await createRepoWithOrigin();
+  test.after(() => fs.rm(base, { recursive: true, force: true }));
+  const config = { ...DEFAULT_CONFIG, finishMode: "merge-to-base" };
+  const start = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_merge_base_missing", taskName: "merge base missing", createWorktree: true, config });
+  await fs.writeFile(path.join(start.session.worktree_path, "merged.txt"), "merged\n");
+  await git(start.session.worktree_path, ["add", "merged.txt"]);
+  await git(start.session.worktree_path, ["commit", "-m", "add merged file"]);
+  await git(repo, ["checkout", "-b", "side-branch"]);
+  await git(repo, ["branch", "-D", "main"]);
+
+  const result = await guardianFinish({ repoRoot: repo, cwd: start.session.worktree_path, sessionId: "ses_merge_base_missing", config, allowMergeToBase: true });
+
+  assert.equal(result.ok, false);
+  assert.match(requireString(result.reason), /base branch to exist locally/);
+  assert.equal((await git(repo, ["branch", "--show-current"])).stdout, "side-branch");
 });
 
 test("merge-to-base refuses when primary repo worktree is dirty", async () => {

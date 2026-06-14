@@ -98,7 +98,7 @@ Finish always creates a safety ref before risky operations and reports preflight
 
 If no active session owns the current checked-out worktree, `guardian_finish` may attach a fresh internal recovery session id when the current worktree is inside the configured Guardian worktree root, is not the primary repo worktree, is not detached, and is not on a protected branch. If a stale or terminal session id is present, that old session id is metadata only; it must not make an otherwise recoverable Guardian worktree unusable.
 
-`create-pr` pushes the session branch and suggests a PR command; it does not create a PR natively. `merge-to-base` requires explicit approval. Cleanup can run only when `autoCleanup` or `allowCleanup` is enabled and ancestry is proven.
+`create-pr` pushes the session branch and suggests a PR command; it does not create a PR natively. `merge-to-base` requires explicit approval via `allowMergeToBase: true`. Under that approval it may self-heal a clean primary repo worktree that is on the wrong branch: it creates safety refs for the primary worktree's original HEAD and the local base branch head, then repositions the primary worktree onto the base branch with a non-overwriting checkout before the fast-forward merge. It never self-heals a dirty primary worktree, never auto-creates a missing local base branch, and never checks out the base branch while it is checked out in another worktree; those cases, plus any non-fast-forward merge, push failure, or remote-proof failure, fail closed with safety refs recorded. Cleanup can run only when `autoCleanup` or `allowCleanup` is enabled and ancestry is proven.
 
 ## `guardian_finish_workflow` Cleanup Policy
 
