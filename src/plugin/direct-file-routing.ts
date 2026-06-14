@@ -39,6 +39,9 @@ export async function routeDirectFileMutation(input: GuardCommandPayload, output
   if (!repoRoot) return { routed: false, blocked: true, reason: "direct file mutation cannot be checked without a Guardian repo root" };
   if (!isPathInside(repoRoot, pathArg.value)) return { routed: false, blocked: false, reason: null };
   if (sessionWorktree?.sessionId == null) return { routed: false, blocked: false, reason: null };
+  // A terminal session has intentionally given up its worktree, so there is no live ownership to
+  // enforce; treat it like "no session" and allow normal edits instead of locking the agent out.
+  if (sessionWorktree?.terminal === true) return { routed: false, blocked: false, reason: null };
   if (typeof sessionWorktree?.expectedWorktree !== "string") {
     return { routed: false, blocked: true, reason: "direct file mutation cannot be checked against a recorded Guardian worktree" };
   }
