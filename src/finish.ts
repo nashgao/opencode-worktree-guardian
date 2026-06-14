@@ -3,7 +3,7 @@ import { loadConfig, normalizeConfig } from "./config.ts";
 import { classifyDirtyFiles, splitPrimaryDirtyFiles } from "./finish-dirty-files.ts";
 import { blocked, errorMessage, isFinishStateInput, withFinishReport } from "./finish-report.ts";
 import type { FinishPreflight, GuardianFinishResult, LooseRecord } from "./finish-report.ts";
-import { createSafetyRef, fetchRemote, getCurrentBranch, getDirtyFiles, getHeadCommit, getRepoRoot, isAncestor, listStashes, pushBranch, runGit } from "./git.ts";
+import { createSafetyRef, fetchRemote, getCurrentBranch, getDirtyFiles, getHeadCommit, getRepoRoot, isAncestor, listStashes, listWorktrees, pushBranch, runGit, tryGit } from "./git.ts";
 import { isActiveSession, isTerminalSession } from "./lifecycle.ts";
 import { getGuardianPaths, readState, recordSession } from "./state.ts";
 import { isRecordLike } from "./types.ts";
@@ -45,6 +45,9 @@ export async function guardianFinish(input: LooseRecord = {}): Promise<GuardianF
     baseWorktreeDirtyFileCount: 0,
     baseWorktreeIgnoredDirtyFiles: [],
     baseWorktreeIgnoredDirtyFileCount: 0,
+    baseWorktreeRepositionRequired: false,
+    baseWorktreeRepositioned: false,
+    baseWorktreeSafetyRefs: [],
     safetyRef: null,
     remote: config.remote,
     baseBranch: config.baseBranch,
@@ -176,6 +179,7 @@ export async function guardianFinish(input: LooseRecord = {}): Promise<GuardianF
     }
     const baseWorktree = await getRepoRoot(repoRoot);
     const baseWorktreeBranch = await getCurrentBranch(baseWorktree);
+    const baseWorktreeOriginalHead = await getHeadCommit(baseWorktree);
     const baseWorktreeAllDirtyFiles = await getDirtyFiles(baseWorktree);
     const { ignoredDirtyFiles: baseWorktreeIgnoredDirtyFiles, blockingDirtyFiles: baseWorktreeDirtyFiles } = splitPrimaryDirtyFiles(baseWorktreeAllDirtyFiles, repoRoot, config);
     preflight.baseWorktree = baseWorktree;
@@ -184,15 +188,68 @@ export async function guardianFinish(input: LooseRecord = {}): Promise<GuardianF
     preflight.baseWorktreeDirtyFileCount = baseWorktreeDirtyFiles.length;
     preflight.baseWorktreeIgnoredDirtyFiles = baseWorktreeIgnoredDirtyFiles;
     preflight.baseWorktreeIgnoredDirtyFileCount = baseWorktreeIgnoredDirtyFiles.length;
-    if (baseWorktreeBranch !== config.baseBranch) {
-      return blocked("merge-to-base requires primary repo worktree to already be on the base branch", { safetyRef, branch, baseWorktree, baseWorktreeBranch, baseBranch: config.baseBranch }, preflight);
-    }
+    preflight.baseWorktreeRepositionRequired = baseWorktreeBranch !== config.baseBranch;
+
+    // Guardian never self-heals uncommitted base-worktree work. A plain safety ref preserves only HEAD,
+    // `git stash create` omits untracked files, and committing base dirt is wrong when the base worktree
+    // is on a non-base branch. Dirty base worktrees stay blocked; the human commits or preserves them.
     if (baseWorktreeDirtyFiles.length > 0) {
-      return blocked("merge-to-base requires primary repo worktree to be clean", { safetyRef, branch, baseWorktree, dirtyFiles: baseWorktreeDirtyFiles }, preflight);
+      return blocked("merge-to-base requires the primary repo worktree to be clean; Guardian will not self-heal uncommitted base-worktree changes, so commit or preserve them first", { safetyRef, branch, baseWorktree, baseWorktreeBranch, dirtyFiles: baseWorktreeDirtyFiles }, preflight);
     }
-    await runGit(repoRoot, ["checkout", config.baseBranch]);
-    await runGit(repoRoot, ["merge", "--ff-only", branch]);
-    await runGit(repoRoot, ["push", config.remote, config.baseBranch]);
+
+    const baseWorktreeSafetyRefs: string[] = [];
+    if (baseWorktreeBranch !== config.baseBranch) {
+      const baseBranchExists = await tryGit(baseWorktree, ["rev-parse", "--verify", `refs/heads/${config.baseBranch}^{commit}`]);
+      if (!baseBranchExists.ok) {
+        return blocked("merge-to-base requires the configured base branch to exist locally; refusing to auto-create a tracking branch", { safetyRef, branch, baseWorktree, baseBranch: config.baseBranch, baseWorktreeBranch }, preflight);
+      }
+      const conflictingWorktree = (await listWorktrees(repoRoot)).find((entry) => entry.branch === config.baseBranch && !samePath(entry.path, baseWorktree));
+      if (conflictingWorktree) {
+        return blocked("merge-to-base cannot check out the base branch because it is checked out in another worktree", { safetyRef, branch, baseWorktree, baseBranch: config.baseBranch, conflictingWorktree: conflictingWorktree.path }, preflight);
+      }
+      const baseOriginalHeadSafetyRef = await createSafetyRef(baseWorktree, {
+        sessionId: `${sessionId}/base-worktree-original-head`,
+        branch: baseWorktreeBranch ?? `detached-${baseWorktreeOriginalHead.slice(0, 12)}`,
+        commit: baseWorktreeOriginalHead,
+        timestamp: input.timestamp,
+      });
+      baseWorktreeSafetyRefs.push(baseOriginalHeadSafetyRef);
+      preflight.baseWorktreeSafetyRefs = [...baseWorktreeSafetyRefs];
+      // --no-overwrite-ignore keeps git's refuse-to-overwrite behavior as a safety net for ignored files.
+      const repositioned = await tryGit(baseWorktree, ["checkout", "--no-overwrite-ignore", config.baseBranch]);
+      if (!repositioned.ok) {
+        return blocked("merge-to-base could not check out the base branch in the primary repo worktree", { safetyRef, branch, baseWorktree, baseBranch: config.baseBranch, baseWorktreeOriginalBranch: baseWorktreeBranch, baseWorktreeOriginalHeadSafetyRef: baseOriginalHeadSafetyRef, error: errorMessage(repositioned.error) }, preflight);
+      }
+      preflight.baseWorktreeRepositioned = true;
+      const repositionedBranch = await getCurrentBranch(baseWorktree);
+      const repositionedDirtyFiles = splitPrimaryDirtyFiles(await getDirtyFiles(baseWorktree), repoRoot, config).blockingDirtyFiles;
+      preflight.baseWorktreeBranch = repositionedBranch;
+      if (repositionedBranch !== config.baseBranch || repositionedDirtyFiles.length > 0) {
+        return blocked("merge-to-base could not bring the primary repo worktree to a clean base-branch state", { safetyRef, branch, baseWorktree, baseBranch: config.baseBranch, baseWorktreeBranch: repositionedBranch, dirtyFiles: repositionedDirtyFiles, baseWorktreeOriginalHeadSafetyRef: baseOriginalHeadSafetyRef }, preflight);
+      }
+    }
+
+    // Safety-ref the local base branch head before the fast-forward merge so it stays recoverable.
+    const baseBranchLocalHead = await getHeadCommit(baseWorktree);
+    const baseBranchHeadSafetyRef = await createSafetyRef(baseWorktree, {
+      sessionId: `${sessionId}/base-branch-head`,
+      branch: config.baseBranch,
+      commit: baseBranchLocalHead,
+      timestamp: input.timestamp,
+    });
+    baseWorktreeSafetyRefs.push(baseBranchHeadSafetyRef);
+    preflight.baseWorktreeSafetyRefs = [...baseWorktreeSafetyRefs];
+
+    try {
+      await runGit(repoRoot, ["merge", "--ff-only", branch]);
+    } catch (error) {
+      return blocked("merge-to-base fast-forward merge failed", { safetyRef, branch, baseBranch: config.baseBranch, baseBranchHeadSafetyRef, error: errorMessage(error) }, preflight);
+    }
+    try {
+      await runGit(repoRoot, ["push", config.remote, config.baseBranch]);
+    } catch (error) {
+      return blocked("merge-to-base push failed after the local fast-forward merge", { safetyRef, branch, baseBranch: config.baseBranch, baseBranchHeadSafetyRef, error: errorMessage(error) }, preflight);
+    }
     await fetchRemote(repoRoot, config.remote);
     const proven = await isAncestor(repoRoot, commit, `${config.remote}/${config.baseBranch}`);
     if (!proven) return blocked("merged commit is not proven reachable from remote base", { safetyRef, commit }, preflight);
@@ -204,9 +261,9 @@ export async function guardianFinish(input: LooseRecord = {}): Promise<GuardianF
         session_id: sessionId,
         status: "finished",
         head_commit: commit,
-        safety_refs: [...(session.safety_refs ?? []), safetyRef],
+        safety_refs: [...(session.safety_refs ?? []), safetyRef, ...baseWorktreeSafetyRefs],
       }, { event: { type: "guardian_finish", session_id: sessionId, ref: safetyRef } });
-      return withFinishReport({ ok: true, status: "merged", mode, branch, commit, safetyRef, cleaned: false }, preflight, { action: "merged-without-cleanup" });
+      return withFinishReport({ ok: true, status: "merged", mode, branch, commit, safetyRef, baseWorktreeSafetyRefs, cleaned: false }, preflight, { action: "merged-without-cleanup" });
     }
     if (preflight.allowedDirtyFileCount > 0) {
       await recordSession(repoRoot, config, {
@@ -214,9 +271,9 @@ export async function guardianFinish(input: LooseRecord = {}): Promise<GuardianF
         session_id: sessionId,
         status: "finished",
         head_commit: commit,
-        safety_refs: [...(session.safety_refs ?? []), safetyRef],
+        safety_refs: [...(session.safety_refs ?? []), safetyRef, ...baseWorktreeSafetyRefs],
       }, { event: { type: "guardian_finish", session_id: sessionId, ref: safetyRef } });
-      return withFinishReport({ ok: true, status: "merged", mode, branch, commit, safetyRef, cleaned: false, cleanupSkippedReason: "allowed dirty files are present" }, preflight, { action: "merged-without-cleanup", cleanupSkippedReason: "allowed dirty files are present" });
+      return withFinishReport({ ok: true, status: "merged", mode, branch, commit, safetyRef, baseWorktreeSafetyRefs, cleaned: false, cleanupSkippedReason: "allowed dirty files are present" }, preflight, { action: "merged-without-cleanup", cleanupSkippedReason: "allowed dirty files are present" });
     }
     if (samePath(currentWorktree, repoRoot)) {
       return blocked("refusing to remove the primary/current repo worktree", { safetyRef, commit, branch }, preflight);
@@ -229,11 +286,11 @@ export async function guardianFinish(input: LooseRecord = {}): Promise<GuardianF
       session_id: sessionId,
       status: "finished",
       head_commit: commit,
-      safety_refs: [...(session.safety_refs ?? []), safetyRef],
+      safety_refs: [...(session.safety_refs ?? []), safetyRef, ...baseWorktreeSafetyRefs],
       deleted_worktree_path: currentWorktree,
       deleted_branch: branch,
     }, { event: { type: "guardian_finish", session_id: sessionId, ref: safetyRef } });
-    return withFinishReport({ ok: true, status: "finished", mode, branch, commit, safetyRef, cleaned: true }, preflight, { action: "merged-and-cleaned" });
+    return withFinishReport({ ok: true, status: "finished", mode, branch, commit, safetyRef, baseWorktreeSafetyRefs, cleaned: true }, preflight, { action: "merged-and-cleaned" });
   }
 
   return blocked(`unsupported finish mode: ${mode}`, { safetyRef }, preflight);
