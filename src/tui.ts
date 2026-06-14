@@ -1,4 +1,5 @@
 import type { TuiPluginApi } from "@opencode-ai/plugin/tui";
+import { openHud } from "./hud/Hud.tsx";
 
 const COMMANDS = [
   {
@@ -100,16 +101,28 @@ async function submitPrompt(api: TuiPluginApi, prompt: string) {
 }
 
 export async function tui(api: TuiPluginApi) {
+  const promptCommands = COMMANDS.map((command) => ({
+    namespace: "palette",
+    name: command.name,
+    title: command.title,
+    desc: command.description,
+    category: "Guardian",
+    slashName: command.name,
+    run: () => submitPrompt(api, command.prompt),
+  }));
   api.keymap.registerLayer({
-    commands: COMMANDS.map((command) => ({
-      namespace: "palette",
-      name: command.name,
-      title: command.title,
-      desc: command.description,
-      category: "Guardian",
-      slashName: command.name,
-      run: () => submitPrompt(api, command.prompt),
-    })),
+    commands: [
+      ...promptCommands,
+      {
+        namespace: "palette",
+        name: "guardian-hud",
+        title: "Guardian: HUD",
+        desc: "Open the live Guardian worktree HUD",
+        category: "Guardian",
+        slashName: "guardian-hud",
+        run: () => openHud(api),
+      },
+    ],
     bindings: [],
   });
 }

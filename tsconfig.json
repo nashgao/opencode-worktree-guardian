@@ -11,10 +11,12 @@
     "noFallthroughCasesInSwitch": true,
     "noImplicitReturns": true,
     "checkJs": false,
+    "jsx": "preserve",
+    "jsxImportSource": "@opentui/solid",
     "types": ["node"],
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["src/**/*.ts", "test/**/*.ts", "scripts/**/*.ts", "codex/**/*.ts"],
+  "include": ["src/**/*.ts", "src/**/*.tsx", "test/**/*.ts", "test/**/*.tsx", "scripts/**/*.ts", "scripts/**/*.tsx", "codex/**/*.ts"],
   "exclude": ["node_modules"]
 }
