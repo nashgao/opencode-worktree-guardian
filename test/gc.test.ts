@@ -77,3 +77,25 @@ test("guardian_gc rejects an invalid mode", async () => {
   assert.equal(result.ok, false);
   assert.match(String(result.reason), /mode must be plan or apply/);
 });
+
+test("guardian_gc detects and prunes a mis-homed active session whose worktree belongs to a different repository", async () => {
+  const repo = await createRepo();
+  const foreign = await createRepo();
+  test.after(() => fs.rm(repo, { recursive: true, force: true }));
+  test.after(() => fs.rm(foreign, { recursive: true, force: true }));
+  await seedSession(repo, { session_id: "ses_foreign", status: "active", branch: "tooling/preserve-local-changes", worktree_path: foreign, base_ref: "origin/main", safety_refs: [] });
+
+  const plan = await guardianGc({ repoRoot: repo, cwd: repo, mode: "plan", config: DEFAULT_CONFIG });
+  assert.equal(plan.ok, true);
+  const candidates = Array.isArray(plan.candidates) ? plan.candidates : [];
+  const foreignCandidate = candidates.find((candidate) => isRecordLike(candidate) && candidate.session_id === "ses_foreign");
+  assert.ok(foreignCandidate && isRecordLike(foreignCandidate));
+  assert.equal(foreignCandidate.reason, "foreign-repo");
+
+  const apply = await guardianGc({ repoRoot: repo, cwd: repo, mode: "apply", confirmDelete: true, confirmToken: typeof plan.confirmToken === "string" ? plan.confirmToken : "", config: DEFAULT_CONFIG });
+  assert.equal(apply.ok, true);
+  assert.equal(apply.status, "pruned");
+  assert.equal(Array.isArray(apply.prunedSessionIds) && apply.prunedSessionIds.includes("ses_foreign"), true);
+
+  assert.equal((await git(foreign, ["rev-parse", "--verify", "main"])).stdout.length > 0, true);
+});

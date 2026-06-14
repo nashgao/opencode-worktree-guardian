@@ -195,8 +195,25 @@ function assertActiveSessionBoundary(
   }
 }
 
+async function assertSameRepoBinding(repoRoot: string, previous: SessionBindingFields | undefined, next: SessionBindingFields): Promise<void> {
+  if (next.status !== "active" || typeof next.worktree_path !== "string") return;
+  // Tolerate re-recording an already cross-repo-bound active session so finish/done/recovery can clean up legacy contamination.
+  if (previous?.status === "active" && typeof previous.worktree_path === "string" && path.resolve(previous.worktree_path) === path.resolve(next.worktree_path)) return;
+  let repoCommonDir: string;
+  let worktreeCommonDir: string;
+  try {
+    repoCommonDir = path.resolve(await getCommonGitDir(repoRoot));
+    worktreeCommonDir = path.resolve(await getCommonGitDir(next.worktree_path));
+  } catch {
+    return;
+  }
+  if (repoCommonDir !== worktreeCommonDir) {
+    throw stateError("illegal_active_binding", `Refusing to bind active session ${String(next.session_id)} whose worktree ${String(next.worktree_path)} belongs to a different git repository than ${repoRoot}`);
+  }
+}
+
 export async function recordSession(repoRoot: string, config: GuardianConfigInput, session: GuardianSession, options: { readonly paths?: GuardianPaths; readonly event?: RecordLike } = {}) {
-  return updateState(repoRoot, config, (state) => {
+  return updateState(repoRoot, config, async (state) => {
     if (!state.sessions) state.sessions = {};
     const sessionId = session.session_id;
     if (!sessionId) throw new Error("session.session_id is required");
@@ -224,6 +241,7 @@ export async function recordSession(repoRoot: string, config: GuardianConfigInpu
       updated_at: now,
     });
     assertActiveSessionBoundary(repoRoot, config, previous, merged);
+    await assertSameRepoBinding(repoRoot, previous, merged);
     state.sessions[sessionId] = merged;
     return state;
   }, { ...options, event: options.event ?? { type: "session_recorded", session_id: session.session_id } });

@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { expandWorktreeRoot } from "./config.ts";
-import { getCurrentBranch, getHeadCommit, getRepoRoot, runGit } from "./git.ts";
+import { getCommonGitDir, getCurrentBranch, getHeadCommit, getRepoRoot, runGit } from "./git.ts";
 import { isTerminalSession } from "./lifecycle.ts";
 import { getGuardianPaths, readState, recordSession } from "./state.ts";
 import type { GuardianSession, GuardianToolInput, GuardianToolResult, MutableRecord } from "./types.ts";
@@ -139,6 +139,20 @@ export async function guardianStart(input: GuardianToolInput = {}): Promise<Guar
   }
 
   if (!branch) throw new Error("Cannot start guardian session from detached HEAD");
+  // State lives at getCommonGitDir(repoRoot); a worktree in a different repo would contaminate the
+  // wrong state.json and bypass the repoRoot-keyed primary/protected poison guards. Refuse it.
+  const repoCommonDir = await getCommonGitDir(repoRoot);
+  const worktreeCommonDir = await getCommonGitDir(worktreePath);
+  if (path.resolve(repoCommonDir) !== path.resolve(worktreeCommonDir)) {
+    return {
+      ok: false,
+      status: "blocked",
+      reason: `session ${sessionId} worktree ${worktreePath} belongs to a different git repository than repoRoot ${repoRoot}; refusing to record cross-repo session state`,
+      branch,
+      worktreePath,
+      stateVersion: state.state_version,
+    };
+  }
   if (input.createWorktree !== true && path.resolve(worktreePath) === path.resolve(repoRoot)) {
     return {
       ok: false,
