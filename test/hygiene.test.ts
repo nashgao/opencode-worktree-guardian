@@ -256,6 +256,35 @@ test("hygiene scanner keeps nested protected exclusions from suppressing reviewa
   ]);
 });
 
+test("hygiene scanner does not flag a committed agent-state directory for cleanup", async () => {
+  const repo = await createRepo();
+  await fs.writeFile(path.join(repo, ".gitignore"), "logs/\n");
+  await writeArtifact(repo, ".milestones/active/milestone-001.yaml");
+  await git(repo, ["add", ".gitignore", ".milestones/active/milestone-001.yaml"]);
+  await git(repo, ["commit", "-m", "track milestone deliverables"]);
+  await writeArtifact(repo, ".milestones/logs/progress-events.jsonl");
+
+  const result = await scanWorkspaceHygiene({ repoRoot: repo, config: DEFAULT_CONFIG });
+
+  assert.equal(result.ok, true);
+  assert.equal(findingPaths(result).includes(".milestones"), false);
+  assert.deepEqual(recordField(result, "reviewableCandidates"), [
+    { path: ".milestones/logs", status: "ignored", reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=[".milestones/logs"] allowRecursive=true' },
+  ]);
+});
+
+test("hygiene scanner still flags an agent-state directory with only untracked scratch", async () => {
+  const repo = await createRepo();
+  await writeArtifact(repo, ".milestones/logs/progress-events.jsonl");
+
+  const result = await scanWorkspaceHygiene({ repoRoot: repo, config: DEFAULT_CONFIG });
+
+  assert.equal(result.ok, true);
+  assert.equal(findingPaths(result).includes(".milestones"), true);
+  const reasons = new Map((result.findings as Array<Record<string, unknown>>).map((finding) => [finding.path, finding.reason]));
+  assert.equal(reasons.get(".milestones"), "local agent state directory");
+});
+
 test("hygiene scanner collapses known residue names to cleanup roots", async () => {
   const repo = await createRepo();
   await writeArtifact(repo, "guardian-residue/.opencode/worktree-guardian.json");
