@@ -45,7 +45,7 @@ async function makeMergedCleanupCandidate(repo: string) {
   return { branch, worktreePath };
 }
 
-test("guardian_done delegates recorded session worktrees to guardian_finish", async (t) => {
+test("guardian_done previews land-and-clean for recorded session worktrees", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
   const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_done_session", taskName: "done session", createWorktree: true, config: DEFAULT_CONFIG });
@@ -54,9 +54,10 @@ test("guardian_done delegates recorded session worktrees to guardian_finish", as
 
   assert.equal(result.ok, true);
   assert.equal(result.lane, "session-finish");
-  assert.equal(result.status, "pr-suggested");
-  assert.equal(result.preflight.sessionOwnedWorktree, true);
-  assert.equal(result.preflight.currentWorktree, started.session.worktree_path);
+  assert.equal(result.status, "planned");
+  assert.equal(result.action, "land-and-clean");
+  assert.equal(result.worktreePath, started.session.worktree_path);
+  assert.equal(result.nextAction, "guardian_done mode=apply confirm=true");
 });
 
 test("guardian_done plans cleanup-only on clean primary main", async (t) => {
@@ -197,7 +198,7 @@ test("guardian_done still requires an explicit message for dirty primary publish
   assert.deepEqual(result.dirtyFiles, ["wrong-lane.txt"]);
 });
 
-test("guardian_done finishes the active session from primary cwd when primary is clean", async (t) => {
+test("guardian_done previews the active session from primary cwd when primary is clean", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
   const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_done_primary_cwd", taskName: "done primary cwd", createWorktree: true, config: DEFAULT_CONFIG });
@@ -206,9 +207,9 @@ test("guardian_done finishes the active session from primary cwd when primary is
 
   assert.equal(result.ok, true);
   assert.equal(result.lane, "session-finish");
-  assert.equal(result.status, "pr-suggested");
-  assert.equal(result.preflight.currentWorktree, started.session.worktree_path);
-  assert.equal(result.preflight.sessionOwnedWorktree, true);
+  assert.equal(result.status, "planned");
+  assert.equal(result.action, "land-and-clean");
+  assert.equal(result.worktreePath, started.session.worktree_path);
 });
 
 test("guardian_done reattaches a new session inside an existing Guardian worktree", async (t) => {
@@ -292,7 +293,7 @@ test("guardian_done no-op keeps user-kept untracked notes without implying the p
   assert.equal(result.localUntrackedFileCount, 2);
 });
 
-test("guardian_done still blocks a genuinely active dirty session", async (t) => {
+test("guardian_done blocks a dirty active session without commitMessage", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
   const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_done_active_dirty", taskName: "done active dirty", createWorktree: true, config: DEFAULT_CONFIG });
@@ -304,10 +305,10 @@ test("guardian_done still blocks a genuinely active dirty session", async (t) =>
   assert.equal(result.ok, false);
   assert.equal(result.status, "blocked");
   assert.equal(result.lane, "session-finish");
-  assert.match(result.reason, /uncommitted changes/);
+  assert.match(result.reason, /commitMessage/);
 });
 
-test("guardian_done finishes a session targeted by branch name from the primary", async (t) => {
+test("guardian_done previews a session targeted by branch name from the primary", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
   const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_branch_target", taskName: "branch target", createWorktree: true, config: DEFAULT_CONFIG });
@@ -319,9 +320,10 @@ test("guardian_done finishes a session targeted by branch name from the primary"
 
   assert.equal(result.ok, true);
   assert.equal(result.lane, "session-finish");
-  assert.equal(result.status, "pr-suggested");
-  assert.equal(result.preflight.sessionId, "ses_branch_target");
-  assert.equal(result.preflight.currentWorktree, started.session.worktree_path);
+  assert.equal(result.status, "planned");
+  assert.equal(result.action, "land-and-clean");
+  assert.equal(result.branch, started.session.branch);
+  assert.equal(result.worktreePath, started.session.worktree_path);
 });
 
 test("guardian_done lists active feature sessions to select when run bare from the primary", async (t) => {

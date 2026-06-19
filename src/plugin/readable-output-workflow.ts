@@ -71,16 +71,24 @@ export function formatGuardianDoneOutput(rawResult: unknown) {
   }
   const preflight = recordValue(result.preflight);
   const cleanupPlan = recordValue(result.cleanupPlan);
+  const cleanup = recordValue(result.cleanup);
+  const pr = recordValue(result.pr);
   const dirtySnapshot = recordValue(result.dirtySnapshot);
   const dirtyPaths = arrayValue(dirtySnapshot.paths ?? preflight.dirtyFiles);
+  const branch = preflight.currentBranch ?? result.branch;
+  const baseBranch = preflight.baseBranch ?? result.baseBranch;
   const lines = [
     `${result.ok === false ? "[FAIL]" : result.status === "planned" ? "[WARN]" : "[GOOD]"} guardian_done ${textValue(result.status)}`,
-    `[INFO] lane: ${textValue(result.lane)} | branch: ${textValue(preflight.currentBranch ?? result.branch)} | baseBranch: ${textValue(preflight.baseBranch)}`,
+    `[INFO] lane: ${textValue(result.lane)} | branch: ${textValue(branch)} | baseBranch: ${textValue(baseBranch)}`,
     `[INFO] dirty: ${dirtyPaths.length} | stashes: ${Number(preflight.stashCount ?? 0)} | safetyRef: ${textValue(result.safetyRef)}`,
   ];
   const reason = textValue(result.reason, "");
   if (result.ok === false || reason) lines.push(`[FAIL] ${reason || "guardian_done blocked"}`);
   if (typeof result.nextAction === "string") lines.push(`[INFO] nextAction: ${result.nextAction}`);
+  if (typeof result.worktreePath === "string") lines.push(`[INFO] worktree: ${result.worktreePath}`);
+  if (typeof result.head === "string") lines.push(`[INFO] head: ${shortCommit(result.head)}`);
+  if (Object.keys(pr).length > 0) lines.push(`[INFO] pr: #${textValue(pr.number)} ${textValue(pr.url)} created=${String(result.prCreated === true)} adminBypass=${String(result.adminBypass === true)}`);
+  if (Object.keys(cleanup).length > 0) lines.push(`[INFO] cleanup: ${textValue(cleanup.status)} worktreeRemoved=${String(cleanup.worktreeRemoved === true)} branchDeleted=${String(cleanup.branchDeleted === true)}`);
   if (typeof result.commitMessage === "string") lines.push(`[INFO] commitMessage: ${result.commitMessage}`);
   if (typeof result.commit === "string") lines.push(`[INFO] commit: ${shortCommit(result.commit)}`);
   if (dirtyPaths.length > 0) {

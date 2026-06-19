@@ -8,6 +8,7 @@ import { getGuardianPaths, readState } from "./state.ts";
 import { isRecordLike } from "./types.ts";
 import type { GuardianConfig, GuardianSession } from "./types.ts";
 import { reattachCurrentGuardianWorktree } from "./done-reattach.ts";
+import { guardianDoneLandClean } from "./done-land-clean.ts";
 import { primaryMainDone } from "./done-primary-publish.ts";
 import { dirtySnapshot } from "./done-primary-snapshot.ts";
 import { blocked, isInside, samePath } from "./done-shared.ts";
@@ -56,7 +57,7 @@ async function activeFeatureSessions(state: Awaited<ReturnType<typeof readState>
 function featureSessionCommands(sessions: readonly FeatureSession[]): string[] {
   return sessions
     .filter((session): session is FeatureSession & { branch: string } => typeof session.branch === "string" && session.branch.length > 0)
-    .map((session) => `guardian_done branch=${session.branch} finishMode=merge-to-base allowMergeToBase=true`);
+    .map((session) => `guardian_done branch=${session.branch}`);
 }
 
 function selectSession(reason: string, sessions: readonly FeatureSession[], extra: Record<string, unknown> = {}): Record<string, unknown> {
@@ -69,6 +70,10 @@ function selectSession(reason: string, sessions: readonly FeatureSession[], extr
     suggestedCommands: featureSessionCommands(sessions),
     ...extra,
   };
+}
+
+function useDirectFinishMode(input: Record<string, unknown>) {
+  return typeof input.finishMode === "string" && input.finishMode !== "create-pr";
 }
 
 function preservedSessionForWorktree(
@@ -159,6 +164,7 @@ export async function guardianDone(input: Record<string, unknown> = {}): Promise
   const currentSession = sessionId ? state.sessions?.[sessionId] : null;
 
   if (currentSession && isActiveSession(currentSession) && typeof currentSession.worktree_path === "string") {
+    if (!sessionId) return blocked("active Guardian session could not be matched to a session id", { lane: "session-finish" });
     if (!samePath(currentWorktree, currentSession.worktree_path)) {
       const snapshot = samePath(currentWorktree, repoRoot) ? await dirtySnapshot(repoRoot, config) : { paths: [] };
       if (snapshot.paths.length > 0) {
@@ -172,10 +178,18 @@ export async function guardianDone(input: Record<string, unknown> = {}): Promise
           suggestedCommands: ["guardian_done rescue=true", "guardian_status"],
         });
       }
-      const result = await guardianFinish({ ...input, repoRoot, cwd: currentSession.worktree_path, sessionId, config });
+      if (useDirectFinishMode(input)) {
+        const finish = await guardianFinish({ ...input, repoRoot, cwd: currentSession.worktree_path, sessionId, config });
+        return { ...finish, lane: "session-finish" };
+      }
+      const result = await guardianDoneLandClean({ input: { ...input, mode }, repoRoot, cwd: currentSession.worktree_path, sessionId, session: currentSession, config });
       return { ...result, lane: "session-finish" };
     }
-    const result = await guardianFinish({ ...input, repoRoot, cwd: currentWorktree, sessionId, config });
+    if (useDirectFinishMode(input)) {
+      const finish = await guardianFinish({ ...input, repoRoot, cwd: currentWorktree, sessionId, config });
+      return { ...finish, lane: "session-finish" };
+    }
+    const result = await guardianDoneLandClean({ input: { ...input, mode }, repoRoot, cwd: currentWorktree, sessionId, session: currentSession, config });
     return { ...result, lane: "session-finish" };
   }
 

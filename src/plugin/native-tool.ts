@@ -53,6 +53,7 @@ export function guardianTool(name: GuardianToolName, description: string, planCa
       timestamp: z.string().optional(),
       finishMode: z.enum(["preserve-only", "push-branch", "create-pr", "merge-to-base"]).optional(),
       allowMergeToBase: z.boolean().optional(),
+      allowAdminBypass: z.boolean().optional(),
       allowBaseWorktreePreserveReset: z.boolean().optional(),
     },
     async execute(args: GuardianToolInput, context: HookContext): Promise<GuardianNativeToolReturn> {

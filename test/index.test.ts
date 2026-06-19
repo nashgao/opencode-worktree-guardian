@@ -387,7 +387,7 @@ test("/guardian slash commands rewrite to native tool instructions", async () =>
 
   const doneOutput = { parts: [] };
   await hooks["command.execute.before"]({ command: "/guardian done", sessionID: "ses_123", arguments: [] }, doneOutput);
-  assert.deepEqual(doneOutput.parts, [{ type: "text", text: "Use the guardian_done native tool. Run mode=plan first. Dirty primary-main publishing requires an explicit commitMessage and explicit user confirmation; apply with confirm=true so the plugin reuses the matching internal plan token. Cleanup after publish returns a separate cleanup plan and must not be silently applied." }]);
+  assert.deepEqual(doneOutput.parts, [{ type: "text", text: "Use the guardian_done native tool. Run mode=plan first. Active session apply requires explicit confirmation with confirm=true; when the session is dirty, include commitMessage so Guardian can commit before creating or reusing the PR, merging it, proving remote-base reachability, then removing the stale worktree and local branch. Dirty primary-main publishing also requires commitMessage and confirm=true; publish cleanup returns a separate cleanup plan. Admin bypass requires allowAdminBypass=true." }]);
 });
 
 test("session idle auto-finish is opt-in and deduplicated", async () => {

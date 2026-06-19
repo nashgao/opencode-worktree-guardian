@@ -80,13 +80,13 @@ When config context is available, Guardian blocks manual bypasses such as pushin
 
 The supported lanes are:
 
-- `session-finish`: delegates recorded session worktrees to `guardian_finish`; if the current directory is an existing Guardian-root worktree without an active recorded session, `guardian_done` may first attach a fresh internal recovery session id to that worktree and then finish it through the same lane.
+- `session-finish`: for an active recorded session, confirmed apply commits dirty session work only with an explicit `commitMessage`, pushes the branch, creates or reuses the PR, merges it, proves the session commit is reachable from `remote/baseBranch`, then removes the stale Guardian worktree and local branch. Admin bypass is never automatic and requires explicit `allowAdminBypass: true`. If the current directory is an existing Guardian-root worktree without an active recorded session, `guardian_done` may first attach a fresh internal recovery session id to that worktree and then finish it through the low-level `guardian_finish` path.
 - `cleanup-only`: routes clean primary-base cleanup through `guardian_finish_workflow`.
 - `primary-main-publish`: handles dirty protected primary `baseBranch` work only with an explicit `commitMessage`, explicit confirmation, and the matching internally token-bound dirty snapshot.
 
 The current worktree path, checked-out branch, protected-branch policy, dirty-file gates, and finish preflight are the recovery proof for an existing Guardian-root worktree. The old session id is not required for recovery and must not be the only way to finish a leftover Guardian worktree.
 
-Primary-main apply creates a pre-commit safety ref, commits only token-bound dirty paths, pushes normally to the configured remote/base branch, fetches, proves remote reachability, and returns a separate cleanup plan. It must not silently apply cleanup, force-push, mutate stashes, delete remote branches, merge PRs, or treat old primary/protected session records as ownership.
+Active-session apply must not clean up until the PR merge has completed and the session commit is proven reachable from the freshly fetched remote base ref. Primary-main apply creates a pre-commit safety ref, commits only token-bound dirty paths, pushes normally to the configured remote/base branch, fetches, proves remote reachability, and returns a separate cleanup plan. The primary-main lane must not silently apply cleanup, force-push, mutate stashes, delete remote branches, merge PRs, or treat old primary/protected session records as ownership.
 
 In plugin flow, the internal plan token may be cached and reused only when session, repo, options, and dirty snapshot still match the plan. Blank token values and confirmation placeholders are treated as absent.
 

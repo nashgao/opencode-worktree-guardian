@@ -150,6 +150,7 @@ test("guardian native tools expose OpenCode tool definitions", async () => {
   assert.equal(typeof hooks.tool.guardian_hygiene.args.cleanupPaths.safeParse, "function");
   assert.equal(typeof hooks.tool.guardian_hygiene.args.allowCategories.safeParse, "function");
   assert.equal(typeof hooks.tool.guardian_hygiene.args.confirmDelete.safeParse, "function");
+  assert.equal(typeof hooks.tool.guardian_done.args.allowAdminBypass.safeParse, "function");
 });
 
 test("guardian_status tool execute returns readable output with raw metadata", async () => {
