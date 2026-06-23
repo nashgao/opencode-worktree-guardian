@@ -55,10 +55,12 @@ function isRedundantDirtyKind(value: unknown): value is RedundantDirtyProof["kin
   return value === "tracked-modified" || value === "tracked-deleted" || value === "untracked";
 }
 
+function isUnknownRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
 function isRedundantDirtyProof(value: unknown): value is RedundantDirtyProof {
-  if (typeof value !== "object" || value === null) return false;
-  const proof = value as Record<string, unknown>;
-  return typeof proof.path === "string" && typeof proof.status === "string" && isRedundantDirtyKind(proof.kind) && typeof proof.baseRef === "string" && typeof proof.baseRefOid === "string" && typeof proof.matchesBase === "boolean";
+  return isUnknownRecord(value) && typeof value.path === "string" && typeof value.status === "string" && isRedundantDirtyKind(value.kind) && typeof value.baseRef === "string" && typeof value.baseRefOid === "string" && typeof value.matchesBase === "boolean";
 }
 
 function getRedundantDirtyProofs(preflight: Record<string, unknown>): readonly RedundantDirtyProof[] {

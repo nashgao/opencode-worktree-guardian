@@ -73,16 +73,6 @@ function scopedIndexEnv(tempIndex: string) {
   };
 }
 
-function snapshotEnv(tempIndex: string) {
-  return {
-    ...scopedIndexEnv(tempIndex),
-    GIT_AUTHOR_NAME: "opencode-worktree-guardian",
-    GIT_AUTHOR_EMAIL: "guardian@opencode.local",
-    GIT_COMMITTER_NAME: "opencode-worktree-guardian",
-    GIT_COMMITTER_EMAIL: "guardian@opencode.local",
-  };
-}
-
 function isPathInside(root: string, relativePath: string) {
   if (path.isAbsolute(relativePath)) return false;
   const resolved = path.resolve(root, relativePath);
