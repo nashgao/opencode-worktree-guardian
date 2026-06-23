@@ -1,13 +1,12 @@
 import path from "node:path";
 import { expandWorktreeRoot, loadConfig } from "./config.ts";
 import { abandonBranch, createSafetyRef, deleteBranch, getBranchCommit, getDirtyFiles, getHeadCommit, getIgnoredFiles, getRepoRoot, listStashes, listWorktrees, removeWorktree } from "./git.ts";
-import { cleanRedundantDirtyPaths, createDirtySnapshotRef, proveRedundantDirtyPaths, resolveRedundantDirtyBase } from "./delete-worktree-dirty-proof.ts";
+import { applyRedundantDirtyCleanup, dirtyResultFields, sessionSafetyRefs, validateRedundantDirtyPreflight } from "./delete-worktree-dirty-runtime.ts";
 import { isSameOrInside, samePath } from "./filesystem-boundaries.ts";
 import { getGuardianPaths, readState, recordSession } from "./state.ts";
 import { blocked, createConfirmToken, errorMessage, withDeleteReport } from "./delete-worktree-report.ts";
 import { collectIgnoredFileFingerprint, recordAncestryPreflight } from "./delete-worktree-preflight.ts";
 import { findTarget } from "./delete-worktree-targets.ts";
-import type { RedundantDirtyProof } from "./delete-worktree-dirty-proof.ts";
 import type { GuardianSession, WorktreeEntry } from "./types.ts";
 
 function emptyDeletePreflight(repoRoot: string, mode: unknown, deleteRequestedBranch: boolean, abandonUnmerged: boolean, allowIgnoredFiles: boolean, allowRedundantDirtyPaths: boolean): Record<string, unknown> {
@@ -48,43 +47,6 @@ function emptyDeletePreflight(repoRoot: string, mode: unknown, deleteRequestedBr
     stashCount: 0,
     safetyRef: null,
     blockers: [],
-  };
-}
-
-function isRedundantDirtyKind(value: unknown): value is RedundantDirtyProof["kind"] {
-  return value === "tracked-modified" || value === "tracked-deleted" || value === "untracked";
-}
-
-function isUnknownRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
-function isRedundantDirtyProof(value: unknown): value is RedundantDirtyProof {
-  return isUnknownRecord(value) && typeof value.path === "string" && typeof value.status === "string" && isRedundantDirtyKind(value.kind) && typeof value.baseRef === "string" && typeof value.baseRefOid === "string" && typeof value.matchesBase === "boolean";
-}
-
-function getRedundantDirtyProofs(preflight: Record<string, unknown>): readonly RedundantDirtyProof[] {
-  const proofs = preflight.redundantDirtyProofs;
-  if (!Array.isArray(proofs)) return [];
-  return proofs.filter(isRedundantDirtyProof);
-}
-
-function sessionSafetyRefs(session: GuardianSession, safetyRef: string, preflight: Record<string, unknown>) {
-  const refs = [...(session.safety_refs ?? []), safetyRef];
-  if (typeof preflight.dirtySnapshotRef === "string") refs.push(preflight.dirtySnapshotRef);
-  return refs;
-}
-
-function dirtyResultFields(preflight: Record<string, unknown>) {
-  return {
-    dirtySnapshotCommit: preflight.dirtySnapshotCommit ?? null,
-    dirtySnapshotRef: preflight.dirtySnapshotRef ?? null,
-    dirtySnapshotFileCount: preflight.dirtySnapshotFileCount ?? 0,
-    dirtySnapshotFiles: preflight.dirtySnapshotFiles ?? [],
-    cleanedDirtyFiles: preflight.cleanedDirtyFiles ?? [],
-    cleanedDirtyFileCount: preflight.cleanedDirtyFileCount ?? 0,
-    redundantDirtyProofs: preflight.redundantDirtyProofs ?? [],
-    redundantDirtyFileCount: preflight.redundantDirtyFileCount ?? 0,
   };
 }
 
@@ -172,7 +134,6 @@ async function preflightWorktreeDeletion(input: Record<string, unknown>, config:
   const deleteRequestedBranch = input.deleteBranch === true;
   const abandonUnmerged = input.abandonUnmerged === true;
   const allowIgnoredFiles = input.allowIgnoredFiles === true;
-  const allowRedundantDirtyPaths = input.allowRedundantDirtyPaths === true;
   preflight.targetPath = path.resolve(entry.path);
   preflight.worktreeListed = true;
   preflight.branch = entry.branch ?? null;
@@ -189,21 +150,8 @@ async function preflightWorktreeDeletion(input: Record<string, unknown>, config:
   const dirtyFiles = await getDirtyFiles(entry.path);
   preflight.dirtyFiles = dirtyFiles;
   preflight.dirtyFileCount = dirtyFiles.length;
-  if (dirtyFiles.length > 0) {
-    if (!allowRedundantDirtyPaths) return blocked("worktree has uncommitted changes", { dirtyFiles, targetPath: entry.path }, preflight);
-    const baseRef = session?.base_ref ?? `${String(config.remote)}/${String(config.baseBranch)}`;
-    preflight.baseRef = baseRef;
-    const base = await resolveRedundantDirtyBase(repoRoot, String(config.remote), baseRef);
-    if (!base.ok) {
-      preflight.baseRefResolutionError = base.error;
-      return blocked(base.reason, { baseRef, error: base.error }, preflight);
-    }
-    preflight.baseRefOid = base.baseRefOid;
-    const proof = await proveRedundantDirtyPaths(entry.path, base.baseRef, base.baseRefOid);
-    preflight.redundantDirtyProofs = proof.proofs;
-    preflight.redundantDirtyFileCount = proof.proofs.length;
-    if (!proof.ok) return blocked(proof.reason, { dirtyFiles, failedPath: proof.failedPath, redundantDirtyProofs: proof.proofs, targetPath: entry.path }, preflight);
-  }
+  const dirtyBlocker = await validateRedundantDirtyPreflight({ input, config, preflight, entry }, session, dirtyFiles);
+  if (dirtyBlocker) return dirtyBlocker;
   const ignoredFiles = await getIgnoredFiles(entry.path);
   preflight.ignoredFiles = ignoredFiles;
   preflight.ignoredFileFingerprint = await collectIgnoredFileFingerprint(entry.path, ignoredFiles);
@@ -236,27 +184,8 @@ async function applyWorktreeDeletion(input: Record<string, unknown>, config: Rec
   const head = String(preflight.head ?? await getHeadCommit(entry.path));
   const safetyRef = await createSafetyRef(repoRoot, { sessionId: safetySessionId, branch, commit: head, timestamp: input.timestamp });
   preflight.safetyRef = safetyRef;
-  const redundantDirtyProofs = getRedundantDirtyProofs(preflight);
-  if (redundantDirtyProofs.length > 0) {
-    const dirtySnapshot = await createDirtySnapshotRef(repoRoot, entry.path, {
-      sessionId: safetySessionId,
-      branch,
-      head,
-      paths: redundantDirtyProofs.map((proof) => proof.path),
-      timestamp: input.timestamp,
-    });
-    preflight.dirtySnapshotCommit = dirtySnapshot.dirtySnapshotCommit;
-    preflight.dirtySnapshotRef = dirtySnapshot.dirtySnapshotRef;
-    preflight.dirtySnapshotFiles = dirtySnapshot.dirtySnapshotFiles;
-    preflight.dirtySnapshotFileCount = dirtySnapshot.dirtySnapshotFiles.length;
-    const cleanup = await cleanRedundantDirtyPaths(entry.path, redundantDirtyProofs);
-    preflight.cleanedDirtyFiles = cleanup.cleanedFiles;
-    preflight.cleanedDirtyFileCount = cleanup.cleanedFiles.length;
-    if (cleanup.remainingEntries.length > 0) {
-      preflight.remainingDirtyFiles = cleanup.remainingEntries.map((remaining) => remaining.path);
-      return blocked("redundant dirty cleanup left uncommitted changes", { targetPath: entry.path, dirtySnapshotCommit: dirtySnapshot.dirtySnapshotCommit, dirtySnapshotRef: dirtySnapshot.dirtySnapshotRef, remainingDirtyFiles: preflight.remainingDirtyFiles }, preflight);
-    }
-  }
+  const cleanupBlocker = await applyRedundantDirtyCleanup({ input, preflight, entry }, { safetySessionId, branch, head });
+  if (cleanupBlocker) return cleanupBlocker;
   try {
     await removeWorktree(repoRoot, entry.path);
   } catch (error) {
@@ -291,9 +220,9 @@ async function recordWorktreeRemovalFailure(repoRoot: string, config: Record<str
 async function recordPartialWorktreeDeletion(repoRoot: string, config: Record<string, unknown>, preflight: Record<string, unknown>, entry: WorktreeEntry, session: GuardianSession | undefined, head: string, safetyRef: string, abandonUnmerged: boolean, error: unknown) {
   const branchDeleteError = errorMessage(error);
   if (session?.session_id) {
-    await recordSession(repoRoot, config, { ...session, session_id: session.session_id, status: "deleted", head_commit: head, safety_refs: [...(session.safety_refs ?? []), safetyRef], deleted_worktree_path: entry.path, deleted_branch: null, branch_delete_failed: true, branch_delete_error: branchDeleteError, abandon_unmerged: preflight.ancestryProven === false && abandonUnmerged, unmerged_commits: preflight.ancestryProven === false && abandonUnmerged ? preflight.unmergedCommits : undefined }, { event: { type: "guardian_delete_worktree_partial", session_id: session.session_id, ref: safetyRef } });
+    await recordSession(repoRoot, config, { ...session, session_id: session.session_id, status: "deleted", head_commit: head, safety_refs: sessionSafetyRefs(session, safetyRef, preflight), deleted_worktree_path: entry.path, deleted_branch: null, branch_delete_failed: true, branch_delete_error: branchDeleteError, abandon_unmerged: preflight.ancestryProven === false && abandonUnmerged, unmerged_commits: preflight.ancestryProven === false && abandonUnmerged ? preflight.unmergedCommits : undefined }, { event: { type: "guardian_delete_worktree_partial", session_id: session.session_id, ref: safetyRef } });
   }
-  return withDeleteReport({ ok: false, status: "partial", reason: "worktree deleted but branch deletion failed", targetPath: entry.path, branch: entry.branch, head, safetyRef, branchDeleted: false, worktreeRemoved: true, error: branchDeleteError }, preflight, { action: "worktree-deleted-branch-delete-failed", worktreeRemoved: true, branchDeleteError });
+  return withDeleteReport({ ok: false, status: "partial", reason: "worktree deleted but branch deletion failed", targetPath: entry.path, branch: entry.branch, head, safetyRef, branchDeleted: false, worktreeRemoved: true, error: branchDeleteError, ...dirtyResultFields(preflight) }, preflight, { action: "worktree-deleted-branch-delete-failed", worktreeRemoved: true, branchDeleteError });
 }
 
 export async function guardianDeleteWorktree(input: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
