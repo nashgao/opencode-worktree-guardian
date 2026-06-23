@@ -39,6 +39,7 @@ export function guardianTool(name: GuardianToolName, description: string, planCa
       confirmToken: z.string().optional(),
       confirmDelete: z.boolean().optional(),
       confirm: z.boolean().optional(),
+      all: z.boolean().optional(),
       action: z.enum(["commit-review-artifacts"]).optional(),
       commitMessage: z.string().optional(),
       deleteBranch: z.boolean().optional(),

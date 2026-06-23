@@ -1,6 +1,4 @@
-import fs from "node:fs/promises";
-import path from "node:path";
-import { expandWorktreeRoot, loadConfig, normalizeConfig } from "./config.ts";
+import { loadConfig, normalizeConfig } from "./config.ts";
 import { guardianFinish } from "./finish.ts";
 import { getCurrentBranch, getHeadCommit, getRepoRoot } from "./git.ts";
 import { isActiveSession } from "./lifecycle.ts";
@@ -11,9 +9,11 @@ import { reattachCurrentGuardianWorktree } from "./done-reattach.ts";
 import { guardianDoneLandClean } from "./done-land-clean.ts";
 import { primaryMainDone } from "./done-primary-publish.ts";
 import { dirtySnapshot } from "./done-primary-snapshot.ts";
-import { blocked, isInside, samePath } from "./done-shared.ts";
+import { blocked, samePath } from "./done-shared.ts";
 import { guardianFinishWorkflow } from "./workflow.ts";
 import { rescueDirtyWorktree } from "./done-rescue.ts";
+import { activeFeatureSessions, featureSessionCommands, type FeatureSession } from "./done-feature-sessions.ts";
+import { guardianDoneAll } from "./done-all.ts";
 
 function activeSessionIdForWorktree(state: Awaited<ReturnType<typeof readState>>, currentWorktree: string) {
   for (const [sessionId, session] of Object.entries(state.sessions ?? {})) {
@@ -27,37 +27,6 @@ function activeSessionIdForBranch(state: Awaited<ReturnType<typeof readState>>, 
     if (isRecordLike(session) && isActiveSession(session) && session.branch === branch) return sessionId;
   }
   return null;
-}
-
-type FeatureSession = { readonly session_id: string; readonly branch: string | null; readonly worktree_path: string; readonly head: string | null };
-
-function worktreeExists(target: string) {
-  return fs.access(target).then(() => true, () => false);
-}
-
-async function activeFeatureSessions(state: Awaited<ReturnType<typeof readState>>, repoRoot: string, config: GuardianConfig): Promise<FeatureSession[]> {
-  const guardianRoot = path.resolve(repoRoot, expandWorktreeRoot(String(config.worktreeRoot), repoRoot));
-  const sessions: FeatureSession[] = [];
-  for (const [sessionId, session] of Object.entries(state.sessions ?? {})) {
-    if (!isRecordLike(session) || !isActiveSession(session)) continue;
-    const worktreePath = session.worktree_path;
-    if (typeof worktreePath !== "string" || worktreePath.length === 0) continue;
-    if (samePath(worktreePath, repoRoot) || !isInside(worktreePath, guardianRoot)) continue;
-    if (!(await worktreeExists(worktreePath))) continue;
-    sessions.push({
-      session_id: sessionId,
-      branch: typeof session.branch === "string" ? session.branch : null,
-      worktree_path: worktreePath,
-      head: typeof session.head_commit === "string" ? session.head_commit : null,
-    });
-  }
-  return sessions;
-}
-
-function featureSessionCommands(sessions: readonly FeatureSession[]): string[] {
-  return sessions
-    .filter((session): session is FeatureSession & { branch: string } => typeof session.branch === "string" && session.branch.length > 0)
-    .map((session) => `guardian_done branch=${session.branch}`);
 }
 
 function selectSession(reason: string, sessions: readonly FeatureSession[], extra: Record<string, unknown> = {}): Record<string, unknown> {
@@ -136,6 +105,8 @@ export async function guardianDone(input: Record<string, unknown> = {}): Promise
   const config = isRecordLike(input.config) ? normalizeConfig(input.config) : (await loadConfig(repoRoot)).config;
   const mode = input.mode ?? "plan";
   if (mode !== "plan" && mode !== "apply") return { ok: false, status: "blocked", reason: "mode must be plan or apply", mode };
+
+  if (input.all === true) return guardianDoneAll({ ...input, repoRoot, config });
 
   const currentWorktree = await getRepoRoot(cwd);
   if (input.rescue === true) {

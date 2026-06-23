@@ -36,7 +36,7 @@ async function tryInvisibleStart(input: GuardCommandPayload, context: HookContex
 
 function createTools(planCache: PlanTokenCache) {
   return {
-    guardian_done: guardianTool("guardian_done", "Plan or apply the safest implementation-done path for this repository state.", planCache),
+    guardian_done: guardianTool("guardian_done", "Plan or apply the safest implementation-done path for this repository state. Pass all=true to finish every active Guardian session in one gated plan/apply pass.", planCache),
     guardian_start: guardianTool("guardian_start", "Create or attach this OpenCode session to a guardian-owned worktree.", planCache),
     guardian_status: guardianTool("guardian_status", "Report guardian state, worktrees, safety refs, stash inventory, and blockers without mutating the repo.", planCache),
     guardian_delete_paths: guardianTool("guardian_delete_paths", "Plan or apply exact path deletion with confirm-token, fingerprint, tracked-file, recursive, and protected-root gates.", planCache),

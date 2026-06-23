@@ -196,6 +196,62 @@ fi
   return { logPath, url };
 }
 
+// Relies on land-clean invoking `pr create -> view -> merge` sequentially per session: create
+// records its --head branch to a file that view/merge replay. Merges use --no-ff so independent
+// session branches can all land on main.
+export async function installMultiBranchFakeGh(t: TestLifecycle, options: { readonly repo: string }) {
+  const binDir = await createTempDir("guardian-multi-gh-");
+  const stateDir = await createTempDir("guardian-multi-gh-state-");
+  const ghPath = path.join(binDir, "gh");
+  const logPath = path.join(stateDir, "gh.log");
+  const currentPath = path.join(stateDir, "current-branch");
+  const script = `#!/bin/sh
+set -eu
+printf '%s\\n' "$*" >> "$GUARDIAN_TEST_GH_LOG"
+sub="\${2:-}"
+head_branch=""
+prev=""
+for arg in "$@"; do
+  if [ "$prev" = "--head" ]; then head_branch="$arg"; fi
+  prev="$arg"
+done
+if [ "$1" = "pr" ] && [ "$sub" = "list" ]; then
+  printf '[]\\n'
+elif [ "$1" = "pr" ] && [ "$sub" = "create" ]; then
+  printf '%s\\n' "$head_branch" > "$GUARDIAN_TEST_CURRENT_BRANCH"
+  printf 'https://github.example/acme/widget/pull/%s\\n' "$head_branch"
+elif [ "$1" = "pr" ] && [ "$sub" = "view" ]; then
+  branch="$(cat "$GUARDIAN_TEST_CURRENT_BRANCH")"
+  oid="$(git -C "$GUARDIAN_TEST_REPO" rev-parse "$branch")"
+  printf '{"number":1,"url":"https://github.example/acme/widget/pull/%s","headRefName":"%s","headRefOid":"%s"}\\n' "$branch" "$branch" "$oid"
+elif [ "$1" = "pr" ] && [ "$sub" = "merge" ]; then
+  branch="$(cat "$GUARDIAN_TEST_CURRENT_BRANCH")"
+  git -C "$GUARDIAN_TEST_REPO" checkout main >/dev/null 2>&1
+  git -C "$GUARDIAN_TEST_REPO" merge --no-ff "$branch" -m "merge $branch" >/dev/null 2>&1
+  git -C "$GUARDIAN_TEST_REPO" push origin main >/dev/null 2>&1
+else
+  echo "unexpected gh invocation: $*" >&2
+  exit 2
+fi
+`;
+  await fs.writeFile(ghPath, script, "utf8");
+  await fs.chmod(ghPath, 0o755);
+  const originalEnv = {
+    PATH: process.env.PATH,
+    GUARDIAN_TEST_REPO: process.env.GUARDIAN_TEST_REPO,
+    GUARDIAN_TEST_GH_LOG: process.env.GUARDIAN_TEST_GH_LOG,
+    GUARDIAN_TEST_CURRENT_BRANCH: process.env.GUARDIAN_TEST_CURRENT_BRANCH,
+  };
+  process.env.PATH = `${binDir}${path.delimiter}${process.env.PATH ?? ""}`;
+  process.env.GUARDIAN_TEST_REPO = options.repo;
+  process.env.GUARDIAN_TEST_GH_LOG = logPath;
+  process.env.GUARDIAN_TEST_CURRENT_BRANCH = currentPath;
+  t.after(() => {
+    for (const [key, value] of Object.entries(originalEnv)) restoreEnv(key, value);
+  });
+  return { logPath };
+}
+
 
 export async function seedSession(repo: string, session: Record<string, unknown>, config: Record<string, unknown> = DEFAULT_CONFIG): Promise<void> {
   const paths = await getGuardianPaths(repo);
