@@ -787,6 +787,64 @@ test("guardian_finish_workflow tool execute returns readable plan output with ra
   assert.match(result.output, /confirmToken:/);
 });
 
+test("guardian_finish_workflow tool execute reports completed empty candidate scan", async () => {
+  const { createRepoWithOrigin } = await import("./helpers.ts");
+  const { base, repo } = await createRepoWithOrigin();
+  test.after(() => fs.rm(base, { recursive: true, force: true }));
+  const hooks = await plugin.server({ directory: repo, worktree: repo });
+  const { context } = createToolContext();
+  context.directory = repo;
+  context.worktree = repo;
+  const execute = hooks.tool.guardian_finish_workflow.execute;
+
+  const result = await runTool(execute, { repoRoot: repo, cwd: repo, mode: "plan" }, context);
+
+  assert.equal(result.metadata.status, "planned");
+  const preflight = metadataRecord(result.metadata, "preflight");
+  assert.equal(preflight.candidateScanStatus, "completed");
+  assert.equal(preflight.candidateCount, 0);
+  assert.match(result.output, /candidateScan: completed/);
+  assert.match(result.output, /candidates: 0/);
+});
+
+test("guardian_finish_workflow tool execute dirty primary candidate scan reports blocked inventory", async () => {
+  const { createRepoWithOrigin, git } = await import("./helpers.ts");
+  const path = await import("node:path");
+  const { base, repo } = await createRepoWithOrigin();
+  test.after(() => fs.rm(base, { recursive: true, force: true }));
+  const branch = "guardian/contract-dirty-primary-candidate";
+  await git(repo, ["checkout", "-b", branch]);
+  await fs.writeFile(path.join(repo, "contract-dirty-primary-candidate.txt"), "workflow\n");
+  await git(repo, ["add", "contract-dirty-primary-candidate.txt"]);
+  await git(repo, ["commit", "-m", "add contract dirty primary candidate"]);
+  await git(repo, ["checkout", "main"]);
+  await git(repo, ["merge", "--no-ff", branch, "-m", "merge contract dirty primary candidate"]);
+  await git(repo, ["push", "origin", "main"]);
+  const worktreePath = path.join(repo, ".worktrees", path.basename(repo), "contract-dirty-primary-candidate");
+  await git(repo, ["worktree", "add", worktreePath, branch]);
+  await fs.writeFile(path.join(repo, "contract-dirty-primary.txt"), "dirty\n");
+  const hooks = await plugin.server({ directory: repo, worktree: repo });
+  const { context } = createToolContext();
+  context.directory = repo;
+  context.worktree = repo;
+  const execute = hooks.tool.guardian_finish_workflow.execute;
+
+  const result = await runTool(execute, { repoRoot: repo, cwd: repo, mode: "plan" }, context);
+
+  assert.equal(result.metadata.status, "blocked");
+  assert.equal(result.metadata.confirmToken, undefined);
+  const preflight = metadataRecord(result.metadata, "preflight");
+  assert.equal(preflight.candidateScanStatus, "completed");
+  assert.equal(preflight.candidateCount, 1);
+  assert.equal(metadataArray(result.metadata, "candidates").length, 1);
+  assert.match(String(result.metadata.reason), /primary worktree/);
+  assert.match(result.output, /\[FAIL\] guardian_finish_workflow blocked/);
+  assert.match(result.output, /candidateScan: completed/);
+  assert.match(result.output, /candidates: 1/);
+  assert.match(result.output, /primary worktree has uncommitted changes/);
+  assert.doesNotMatch(result.output, /confirmToken:/);
+});
+
 test("guardian_finish_workflow tool execute returns readable blocked output with raw metadata", async () => {
   const { createRepoWithOrigin } = await import("./helpers.ts");
   const path = await import("node:path");
@@ -804,7 +862,29 @@ test("guardian_finish_workflow tool execute returns readable blocked output with
   assert.equal(result.metadata.status, "blocked");
   assert.match(String(result.metadata.reason), /primary worktree/);
   assert.match(result.output, /\[FAIL\] guardian_finish_workflow blocked/);
+  assert.match(result.output, /candidateScan: completed/);
   assert.match(result.output, /primary worktree has uncommitted changes/);
+});
+
+test("guardian_finish_workflow tool execute candidate scan skipped output is explicit", async () => {
+  const { createRepoWithOrigin } = await import("./helpers.ts");
+  const { base, repo } = await createRepoWithOrigin();
+  test.after(() => fs.rm(base, { recursive: true, force: true }));
+  const hooks = await plugin.server({ directory: repo, worktree: repo });
+  const { context } = createToolContext();
+  context.directory = repo;
+  context.worktree = repo;
+  const execute = hooks.tool.guardian_finish_workflow.execute;
+
+  const result = await runTool(execute, { repoRoot: repo, cwd: repo, mode: "preview" }, context);
+
+  assert.equal(result.metadata.status, "blocked");
+  const preflight = metadataRecord(result.metadata, "preflight");
+  assert.equal(preflight.candidateScanStatus, "skipped");
+  assert.equal(preflight.candidateScanSkippedReason, "invalid-mode");
+  assert.match(result.output, /candidateScan: skipped/);
+  assert.match(result.output, /reason: invalid-mode/);
+  assert.doesNotMatch(result.output, /candidates: 0/);
 });
 
 test("guardian_finish tool execute defaults cwd to recorded session worktree", async () => {

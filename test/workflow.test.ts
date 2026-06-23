@@ -11,7 +11,17 @@ type WorkflowResult = {
   status: string;
   reason?: string;
   confirmToken?: string;
-  preflight: { candidateCount?: number; dirtyFileCount?: number; blockerCount?: number; baseRefOid?: string; maxCandidateCount?: number };
+  preflight: {
+    candidateCount?: number;
+    dirtyFileCount?: number;
+    blockerCount?: number;
+    baseRefOid?: string;
+    maxCandidateCount?: number;
+    candidateScanStatus?: "completed" | "skipped" | "failed";
+    candidateScanSkippedReason?: "invalid-mode" | "base-unavailable" | "stash-blocker";
+    candidateScanFailedReason?: "candidate-discovery-failed";
+    blockers?: string[];
+  };
   candidates: Array<Record<string, unknown>>;
   blockers: Array<Record<string, unknown>>;
   results: Array<Record<string, unknown>>;
@@ -118,6 +128,52 @@ test("guardian_finish_workflow blocks dirty primary worktrees before cleanup", a
   assert.equal(plan.preflight.dirtyFileCount, 1);
 });
 
+test("guardian_finish_workflow dirty primary candidate scan includes read-only candidate inventory", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const branch = "guardian/workflow-dirty-primary-candidate";
+  const head = await createMergedBranch(repo, branch, "workflow-dirty-primary-candidate.txt");
+  const worktreePath = path.join(repo, ".worktrees", path.basename(repo), "workflow-dirty-primary-candidate");
+  await git(repo, ["worktree", "add", worktreePath, branch]);
+  await fs.writeFile(path.join(repo, "dirty-primary.txt"), "dirty\n");
+
+  const plan = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "plan" }));
+
+  assert.equal(plan.ok, false);
+  assert.equal(plan.status, "blocked");
+  assert.equal(plan.confirmToken, undefined);
+  assert.match(String(plan.reason), /primary worktree has uncommitted changes/);
+  assert.equal(plan.preflight.candidateScanStatus, "completed");
+  assert.equal(plan.preflight.candidateCount, 1);
+  assert.equal(plan.candidates.length, 1);
+  assert.equal(plan.candidates[0].branch, branch);
+  assert.equal(plan.candidates[0].head, head);
+  assert.equal(plan.blockers.length, 0);
+
+  const apply = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "apply", confirmToken: "stale" }));
+  assert.equal(apply.ok, false);
+  assert.equal(apply.confirmToken, undefined);
+  assert.equal(await pathExists(worktreePath), true);
+  assert.equal(await branchExists(repo, branch), true);
+});
+
+test("guardian_finish_workflow dirty primary candidate scan reports completed empty inventory", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  await fs.writeFile(path.join(repo, "dirty-primary-empty.txt"), "dirty\n");
+
+  const plan = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "plan" }));
+
+  assert.equal(plan.ok, false);
+  assert.equal(plan.status, "blocked");
+  assert.equal(plan.confirmToken, undefined);
+  assert.match(String(plan.reason), /primary worktree has uncommitted changes/);
+  assert.equal(plan.preflight.candidateScanStatus, "completed");
+  assert.equal(plan.preflight.candidateCount, 0);
+  assert.deepEqual(plan.candidates, []);
+  assert.deepEqual(plan.blockers, []);
+});
+
 test("guardian_finish_workflow plans cleanly when no cleanup candidates exist", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
@@ -144,6 +200,71 @@ test("guardian_finish_workflow blocks when stash inventory exists", async (t) =>
   assert.equal(plan.ok, false);
   assert.equal(plan.status, "blocked");
   assert.match(String(plan.reason), /stash inventory/);
+});
+
+test("guardian_finish_workflow scan skipped for invalid mode without completed candidate evidence", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+
+  const plan = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "preview" }));
+
+  assert.equal(plan.ok, false);
+  assert.equal(plan.status, "blocked");
+  assert.equal(plan.confirmToken, undefined);
+  assert.equal(plan.preflight.candidateScanStatus, "skipped");
+  assert.equal(plan.preflight.candidateScanSkippedReason, "invalid-mode");
+  assert.equal(plan.preflight.candidateCount, undefined);
+  assert.equal(plan.preflight.maxCandidateCount, 25);
+});
+
+test("guardian_finish_workflow scan skipped for base-unavailable without completed candidate evidence", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const config = { ...DEFAULT_CONFIG, remote: "missing-origin" };
+
+  const plan = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "plan", config }));
+
+  assert.equal(plan.ok, false);
+  assert.equal(plan.status, "blocked");
+  assert.equal(plan.confirmToken, undefined);
+  assert.equal(plan.preflight.candidateScanStatus, "skipped");
+  assert.equal(plan.preflight.candidateScanSkippedReason, "base-unavailable");
+  assert.equal(plan.preflight.candidateCount, undefined);
+  assert.equal(plan.preflight.maxCandidateCount, 25);
+});
+
+test("guardian_finish_workflow scan skipped for stash blocker without completed candidate evidence", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  await fs.writeFile(path.join(repo, "stashed-skip.txt"), "stashed\n");
+  await git(repo, ["stash", "push", "-u", "-m", "workflow stash skip"]);
+
+  const plan = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "plan" }));
+
+  assert.equal(plan.ok, false);
+  assert.equal(plan.status, "blocked");
+  assert.equal(plan.confirmToken, undefined);
+  assert.equal(plan.preflight.candidateScanStatus, "skipped");
+  assert.equal(plan.preflight.candidateScanSkippedReason, "stash-blocker");
+  assert.equal(plan.preflight.candidateCount, undefined);
+  assert.equal(plan.preflight.maxCandidateCount, 25);
+});
+
+test("guardian_finish_workflow scan skipped suite catches failed candidate discovery after dirty primary blocker", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  await fs.writeFile(path.join(repo, "dirty-primary-failed-scan.txt"), "dirty\n");
+  const missingCwd = path.join(repo, "missing-cwd");
+
+  const plan = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: missingCwd, mode: "plan" }));
+
+  assert.equal(plan.ok, false);
+  assert.equal(plan.status, "blocked");
+  assert.equal(plan.confirmToken, undefined);
+  assert.equal(plan.preflight.candidateScanStatus, "failed");
+  assert.equal(plan.preflight.candidateScanFailedReason, "candidate-discovery-failed");
+  assert.match(String(plan.reason), /candidate discovery failed/);
+  assert.ok(plan.preflight.blockers?.some((blocker) => blocker.includes("primary worktree has uncommitted changes")));
 });
 
 test("guardian_finish_workflow blocks stale workflow tokens after base ref advances", async (t) => {

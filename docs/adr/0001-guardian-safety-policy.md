@@ -106,7 +106,11 @@ Use `guardian_finish_workflow` only after implementation is already committed, p
 
 Run `mode: "plan"` first. The workflow verifies the primary worktree is clean, stash policy is satisfied, the configured remote can be fetched, and redundant cleanup candidates are already merged to the freshly resolved `remote/baseBranch` commit. It discovers Guardian-root worktrees and non-protected, checked-out-nowhere local branches whose heads are ancestors of that base commit. At most 25 cleanup candidates can be applied from one plan.
 
+The candidate scan status is structured metadata. Invalid mode, base-unavailable, and stash-blocker preflights skip candidate discovery and must report skipped candidate scan status instead of completed zero-candidate evidence. A dirty primary worktree remains a blocker, but `mode: "plan"` may continue through read-only cleanup inventory discovery after base evidence exists and stash policy is satisfied; that blocked inventory can help the user see what will be eligible later, but it does not authorize dirty primary cleanup and must not include a `confirmToken`. Unexpected discovery failures report failed candidate scan status while preserving earlier preflight blockers.
+
 Run `mode: "apply"` only with the returned token after explicit confirmation. The token binds the resolved base commit and cleanup targets. Apply re-plans each target and delegates deletion to `guardian_delete_worktree`. It must not create commits, choose commit messages, merge protected branches, mutate stashes, force-delete branches, or run raw filesystem/Git cleanup. Any blocker fails closed and apply deletes nothing until a fresh plan has no blockers.
+
+Apply requires a fresh clean plan and a fresh no-blocker plan token. Skipped or incomplete candidate scans, dirty primary blockers, stash blockers, candidate blockers, and stale or missing tokens all block apply; none of those states permit cleanup from blocked inventory.
 
 ## `guardian_preserve` Policy
 

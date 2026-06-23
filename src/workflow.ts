@@ -2,11 +2,23 @@ import path from "node:path";
 import { expandWorktreeRoot, loadConfig } from "./config.ts";
 import { guardianDeleteWorktree } from "./delete.ts";
 import { fetchRemote, getCurrentBranch, getDirtyFiles, getRefCommit, getRepoRoot, listStashes } from "./git.ts";
-import { candidateTokenMaterial, createWorkflowToken, discoverCandidates, isGuardianWorktreeStatusPath } from "./workflow-candidates.ts";
+import { candidateTokenMaterial, createWorkflowToken, discoverCandidates, isGuardianWorktreeStatusPath, MAX_WORKFLOW_CLEANUP_CANDIDATES } from "./workflow-candidates.ts";
 
 function blocked(reason: string, details: Record<string, unknown> = {}, preflight?: Record<string, unknown>): Record<string, unknown> {
-  if (preflight) preflight.blockers = [...((preflight.blockers as string[] | undefined) ?? []), reason];
+  if (preflight) addPreflightBlocker(preflight, reason);
   return { ok: false, status: "blocked", reason, ...details, ...(preflight ? { preflight } : {}) };
+}
+
+function preflightBlockers(preflight: Record<string, unknown>): string[] {
+  const blockers = preflight.blockers;
+  if (!Array.isArray(blockers)) return [];
+  return blockers.filter((blocker): blocker is string => typeof blocker === "string");
+}
+
+function addPreflightBlocker(preflight: Record<string, unknown>, reason: string): void {
+  const blockers = preflightBlockers(preflight);
+  if (blockers.includes(reason)) return;
+  preflight.blockers = [...blockers, reason];
 }
 
 export async function guardianFinishWorkflow(input: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
@@ -28,18 +40,24 @@ export async function guardianFinishWorkflow(input: Record<string, unknown> = {}
     dirtyFiles: [],
     dirtyFileCount: 0,
     stashCount: 0,
-    candidateCount: 0,
     blockerCount: 0,
+    maxCandidateCount: MAX_WORKFLOW_CLEANUP_CANDIDATES,
     blockers: [],
   };
 
-  if (mode !== "plan" && mode !== "apply") return blocked("mode must be plan or apply", { mode }, preflight);
+  if (mode !== "plan" && mode !== "apply") {
+    preflight.candidateScanStatus = "skipped";
+    preflight.candidateScanSkippedReason = "invalid-mode";
+    return blocked("mode must be plan or apply", { mode }, preflight);
+  }
 
   try {
     await fetchRemote(repoRoot, String(config.remote));
     preflight.baseRefFetched = true;
     preflight.baseRefOid = await getRefCommit(repoRoot, baseRef);
   } catch (error) {
+    preflight.candidateScanStatus = "skipped";
+    preflight.candidateScanSkippedReason = "base-unavailable";
     return blocked("remote base ref could not be fetched or resolved", { baseRef, error: error instanceof Error ? error.message : String(error) }, preflight);
   }
 
@@ -53,13 +71,32 @@ export async function guardianFinishWorkflow(input: Record<string, unknown> = {}
   preflight.blockingDirtyFileCount = blockingDirtyFiles.length;
   preflight.ignoredGuardianWorktreeFiles = ignoredGuardianWorktreeFiles;
   preflight.ignoredGuardianWorktreeFileCount = ignoredGuardianWorktreeFiles.length;
-  if (blockingDirtyFiles.length > 0) return blocked("primary worktree has uncommitted changes; commit implemented code before finish workflow cleanup", { dirtyFiles: blockingDirtyFiles }, preflight);
+  const dirtyPrimaryReason = "primary worktree has uncommitted changes; commit implemented code before finish workflow cleanup";
+  if (blockingDirtyFiles.length > 0) addPreflightBlocker(preflight, dirtyPrimaryReason);
 
   const stashes = await listStashes(repoRoot);
   preflight.stashCount = stashes.length;
-  if (stashes.length > 0 && config.allowStashIfUnrelated !== true) return blocked("stash inventory is non-empty", { stashes }, preflight);
+  if (stashes.length > 0 && config.allowStashIfUnrelated !== true) {
+    preflight.candidateScanStatus = "skipped";
+    preflight.candidateScanSkippedReason = "stash-blocker";
+    return blocked("stash inventory is non-empty", { stashes }, preflight);
+  }
 
-  const { candidates, blockers } = await discoverCandidates(repoRoot, cwd, config, preflight, input.allowIgnoredFiles === true);
+  let candidates: Record<string, unknown>[];
+  let blockers: Record<string, unknown>[];
+  try {
+    const discovered = await discoverCandidates(repoRoot, cwd, config, preflight, input.allowIgnoredFiles === true);
+    candidates = discovered.candidates;
+    blockers = discovered.blockers;
+    preflight.candidateScanStatus = "completed";
+  } catch (error) {
+    preflight.candidateScanStatus = "failed";
+    preflight.candidateScanFailedReason = "candidate-discovery-failed";
+    preflight.candidateDiscoveryError = error instanceof Error ? error.message : String(error);
+    return blocked("candidate discovery failed; cleanup inventory is incomplete", { candidates: [], blockers: [] }, preflight);
+  }
+
+  if (preflightBlockers(preflight).length > 0) return blocked(dirtyPrimaryReason, { dirtyFiles: blockingDirtyFiles, candidates, blockers }, preflight);
   if (blockers.length > 0) return blocked("cleanup blockers must be resolved before apply", { candidates, blockers }, preflight);
   const confirmToken = createWorkflowToken(preflight, candidates);
   if (mode === "plan") return { ok: true, status: "planned", confirmToken, preflight, candidates, blockers };
