@@ -7,6 +7,8 @@ Use the native `guardian_delete_worktree` tool for safe explicit worktree deleti
 
 Run `mode: "plan"` first for the exact `targetPath`, `sessionId`, or `branch`. Inspect blockers, ignored files, target identity, branch, HEAD, and token details. Apply only after explicit user confirmation with `mode: "apply"`, the returned `confirmToken`, and the same target/options.
 
+Dirty or untracked target worktrees block by default. Use `allowRedundantDirtyPaths: true` only for direct `guardian_delete_worktree` plan/apply when Guardian proves every dirty path already matches the fetched base tree; inspect `baseRef`, `baseRefOid`, `redundantDirtyProofs`, and `dirtySnapshotRef` before applying. High-level done/finish-workflow cleanup does not opt into this.
+
 Use `deleteBranch: true` only when branch deletion is explicitly intended. Use `abandonUnmerged: true` only when the user explicitly confirms abandoning unmerged local Guardian work, and include it in both plan and apply.
 
 Do not run raw worktree removal, prune, filesystem deletion, hard reset, forced clean, raw branch deletion, stash mutation, or protected-branch bypasses. Full policy: `docs/adr/0001-guardian-safety-policy.md`.

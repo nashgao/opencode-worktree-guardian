@@ -197,6 +197,32 @@ test("guardian_finish_workflow blocks dirty Guardian-root candidates and deletes
   assert.equal(await branchExists(repo, cleanBranch), true);
 });
 
+test("guardian_finish_workflow blocks redundant dirty Guardian-root candidates without opt-in", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const branch = "guardian/workflow-redundant-dirty";
+  const fileName = "workflow-redundant-dirty.txt";
+  await createMergedBranch(repo, branch, fileName);
+  const worktreePath = path.join(repo, ".worktrees", path.basename(repo), "workflow-redundant-dirty");
+  await git(repo, ["worktree", "add", worktreePath, branch]);
+  await fs.writeFile(path.join(repo, fileName), "new base content\n");
+  await git(repo, ["add", fileName]);
+  await git(repo, ["commit", "-m", "advance redundant dirty base"]);
+  await git(repo, ["push", "origin", "main"]);
+  await fs.writeFile(path.join(worktreePath, fileName), "new base content\n");
+
+  const plan = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "plan" }));
+
+  assert.equal(plan.ok, false);
+  assert.equal(plan.status, "blocked");
+  assert.equal(plan.candidates.length, 0);
+  assert.equal(plan.blockers.length, 1);
+  assert.match(String(plan.blockers[0].reason), /uncommitted changes/);
+  assert.equal(plan.blockers[0].allowRedundantDirtyPaths, undefined);
+  assert.equal(await pathExists(worktreePath), true);
+  assert.equal(await branchExists(repo, branch), true);
+});
+
 test("guardian_finish_workflow reports unmerged Guardian-root candidates as blockers", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));

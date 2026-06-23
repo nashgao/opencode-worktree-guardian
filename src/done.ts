@@ -10,7 +10,7 @@ import type { GuardianConfig, GuardianSession } from "./types.ts";
 import { reattachCurrentGuardianWorktree } from "./done-reattach.ts";
 import { guardianDoneLandClean } from "./done-land-clean.ts";
 import { primaryMainDone } from "./done-primary-publish.ts";
-import { dirtySnapshot } from "./done-primary-snapshot.ts";
+import { dirtySnapshot, statusEntries } from "./done-primary-snapshot.ts";
 import { blocked, isInside, samePath } from "./done-shared.ts";
 import { guardianFinishWorkflow } from "./workflow.ts";
 import { rescueDirtyWorktree } from "./done-rescue.ts";
@@ -94,6 +94,10 @@ function preservedSessionForWorktree(
   return null;
 }
 
+function isLocalUntrackedStatus(status: string): boolean {
+  return status === "??" || status === "!!";
+}
+
 async function preservedDoneNoOp(
   currentWorktree: string,
   config: GuardianConfig,
@@ -108,8 +112,9 @@ async function preservedDoneNoOp(
   let localDirtyFileCount = 0;
   try {
     const snapshot = await dirtySnapshot(currentWorktree, config);
+    const localEntries = await statusEntries(currentWorktree, { includeIgnored: true });
     localDirtyFileCount = snapshot.paths.length;
-    localUntrackedFileCount = snapshot.entries.filter((entry) => entry.status === "??").length;
+    localUntrackedFileCount = localEntries.filter((entry) => isLocalUntrackedStatus(entry.status)).length;
   } catch {
     localUntrackedFileCount = 0;
   }

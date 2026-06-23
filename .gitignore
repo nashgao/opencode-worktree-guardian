@@ -13,6 +13,8 @@ dist/
 .milestones/
 .worktrees/
 guardian-*/
+!codex/skills/guardian-*/
+!codex/skills/guardian-*/SKILL.md
 guardian-origin-*/
 guardian-package-smoke-*/
 node-compile-cache/

@@ -76,6 +76,24 @@ test("guardian_done plans cleanup-only on clean primary main", async (t) => {
   assert.equal(await pathExists(candidate.worktreePath), true);
 });
 
+test("guardian_done cleanup-only blocks redundant dirty cleanup candidates", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const candidate = await makeMergedCleanupCandidate(repo);
+  await fs.writeFile(path.join(repo, "done-cleanup.txt"), "advanced base cleanup\n");
+  await git(repo, ["add", "done-cleanup.txt"]);
+  await git(repo, ["commit", "-m", "advance done cleanup base"]);
+  await git(repo, ["push", "origin", "main"]);
+  await fs.writeFile(path.join(candidate.worktreePath, "done-cleanup.txt"), "advanced base cleanup\n");
+
+  const result = asDone(await guardianDone({ repoRoot: repo, cwd: repo, mode: "plan" }));
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, "blocked");
+  assert.match(result.reason, /cleanup blockers/);
+  assert.equal(await pathExists(candidate.worktreePath), true);
+});
+
 test("guardian_done plans dirty primary-main publish with token-bound dirty files", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));

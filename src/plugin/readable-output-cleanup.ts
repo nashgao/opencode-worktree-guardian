@@ -92,6 +92,18 @@ export function formatGuardianDeleteOutput(rawResult: unknown) {
     `[INFO] targetPath: ${textValue(preflight.targetPath ?? result.targetPath)}`,
     `[INFO] branch: ${textValue(preflight.branch ?? result.branch)} | head: ${shortCommit(preflight.head ?? result.head)}`,
   ];
+  if (preflight.allowRedundantDirtyPaths === true || Number(preflight.redundantDirtyFileCount ?? 0) > 0) {
+    lines.push(`[INFO] allowRedundantDirtyPaths: ${String(preflight.allowRedundantDirtyPaths === true)} | baseRef: ${textValue(preflight.baseRef)} | baseRefOid: ${shortCommit(preflight.baseRefOid)}`);
+    lines.push(`[INFO] redundantDirtyFileCount: ${Number(preflight.redundantDirtyFileCount ?? 0)} | dirtySnapshotRef: ${textValue(preflight.dirtySnapshotRef ?? result.dirtySnapshotRef)}`);
+    const proofs = arrayValue(preflight.redundantDirtyProofs);
+    if (proofs.length > 0) {
+      lines.push("[INFO] redundant dirty proofs:");
+      for (const entry of proofs.slice(0, 8)) {
+        const proof = recordValue(entry);
+        lines.push(`  - ${textValue(proof.status)} ${textValue(proof.kind)} ${textValue(proof.path)}: matchesBase=${String(proof.matchesBase === true)}`);
+      }
+    }
+  }
   if (preflight.ancestryProven === false || Number(preflight.unmergedCommitCount ?? 0) > 0) {
     lines.push(`[WARN] ancestryProven: ${String(preflight.ancestryProven === true)} | ancestryRef: ${textValue(preflight.ancestryRef)} | unmergedCommitCount: ${Number(preflight.unmergedCommitCount ?? 0)}`);
   }

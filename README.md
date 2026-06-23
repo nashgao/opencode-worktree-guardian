@@ -67,7 +67,7 @@ Repo-local config lives at `.opencode/worktree-guardian.json`. The current suppo
 }
 ```
 
-Defaults are delivery-first, lifecycle-managed, and cleanup-conservative. `guardian_finish` defaults to `create-pr`: it creates a safety ref, pushes the session branch, and suggests a `gh pr create` command without merging or deleting the worktree. `autoStart` is enabled by default so Guardian can create/attach a session worktree and own its finish/delete lifecycle; repo config can set `autoStart: false` to disable automatic ownership. Terminal sessions (`deleted`, `abandoned`, `finished`, or `preserved`) are not auto-started again; agents should start a new session instead of recreating stale worktrees. `autoFinish` and `autoCleanup` remain disabled unless repo config opts in. Stash mutation is never cleanup. `allowBaseWorktreePreserveReset` defaults to `false`; when enabled (or passed per call to `guardian_finish`), `merge-to-base` may snapshot a dirty primary worktree's tracked and untracked changes into a recoverable Guardian safety ref, reset only those paths clean, and proceed, instead of blocking. `allowDirtyPaths` defaults to empty; when configured, it lets `guardian_finish` tolerate matching runtime or local-state dirt without deleting, stashing, reverting, staging, or committing those files. Dirty scanning enumerates untracked files, so narrow file-specific patterns such as `.claude/logs/hooks.log` or `.serena/project.yml` can match generated files inside otherwise-untracked runtime directories. `branchPrefix` is the default namespace for auto-created branch names, not the ownership rule; explicit descriptive branch names are allowed when Guardian state or a token-bound target proves ownership.
+Defaults are delivery-first, lifecycle-managed, and cleanup-conservative. `guardian_finish` defaults to `create-pr`: it creates a safety ref, pushes the session branch, and suggests a `gh pr create` command without merging or deleting the worktree. `autoStart` is enabled by default so Guardian can create/attach a session worktree and own its finish/delete lifecycle; repo config can set `autoStart: false` to disable automatic ownership. Terminal sessions (`deleted`, `abandoned`, `finished`, or `preserved`) are not auto-started again; agents should start a new session instead of recreating stale worktrees. `autoFinish` and `autoCleanup` remain disabled unless repo config opts in. Stash mutation is never cleanup. `allowBaseWorktreePreserveReset` defaults to `false`; when enabled (or passed per call to `guardian_finish`), `merge-to-base` may snapshot a dirty primary worktree's tracked and untracked changes into a recoverable Guardian safety ref, clean only those paths through Guardian's internal path-scoped reset/clean routine, and proceed, instead of blocking. `allowDirtyPaths` defaults to empty; when configured, it lets `guardian_finish` tolerate matching runtime or local-state dirt without deleting, stashing, reverting, staging, or committing those files. Dirty scanning enumerates untracked files, so narrow file-specific patterns such as `.claude/logs/hooks.log` or `.serena/project.yml` can match generated files inside otherwise-untracked runtime directories. `branchPrefix` is the default namespace for auto-created branch names, not the ownership rule; explicit descriptive branch names are allowed when Guardian state or a token-bound target proves ownership.
 
 ## Native Tools
 
@@ -75,7 +75,7 @@ Defaults are delivery-first, lifecycle-managed, and cleanup-conservative. `guard
 - `guardian_done`: plan or apply the safest implementation-done path for the current repository state. For an active recorded session, confirmed apply commits dirty session work only when `commitMessage` is explicit, pushes the branch, creates or reuses the PR, merges it, fetches, proves the session commit is reachable from `remote/baseBranch`, then removes the stale Guardian worktree and local branch. Admin bypass is never automatic; it requires explicit `allowAdminBypass: true`. `guardian_done` can also reattach an existing Guardian-root worktree with a fresh internal recovery session id when no active session owns it, routes clean primary-base cleanup to `guardian_finish_workflow`, and handles dirty protected primary `baseBranch` only with an explicit `commitMessage` plus explicit confirmation. Primary-main apply creates a safety ref before committing, pushes normally to the configured remote/base branch, proves the new commit is reachable, and returns a separate cleanup plan; that lane does not silently apply cleanup, force-push, mutate stashes, delete remote branches, or weaken worktree safety.
 - `guardian_status`: read-only inventory of sessions, worktrees, refs, stashes, dirty files. Its native tool output renders a terminal-readable summary, while `metadata` keeps the full structured result for automation.
 - `guardian_delete_paths`: safe exact path deletion for files and directories inside the repo. Run `mode: "plan"` first with explicit `paths`, inspect statuses and blockers, then apply through the plugin with `mode: "apply"` and `confirmDelete: true`; low-level direct calls also require the matching `confirmToken`. Tracked source deletion requires `allowTracked: true`; directory deletion requires `allowRecursive: true`. Worktree deletion remains separate and must use `guardian_delete_worktree`.
-- `guardian_delete_worktree`: safe explicit worktree deletion. Run `mode: "plan"` first to get a confirm token, then `mode: "apply"` with that token. It creates a safety ref before removal, uses non-force `git worktree remove`, keeps the branch by default, and only uses non-force `git branch -d` when `deleteBranch: true` and ancestry is proven. Intentional unmerged local abandonment requires `deleteBranch: true` plus `abandonUnmerged: true` in both plan and apply.
+- `guardian_delete_worktree`: safe explicit worktree deletion. Run `mode: "plan"` first to get a confirm token, then `mode: "apply"` with that token. It creates a safety ref before removal, uses non-force worktree removal, keeps the branch by default, and only uses non-force branch deletion when `deleteBranch: true` and ancestry is proven. Dirty or untracked target worktrees still block by default. The direct tool can proceed only when `allowRedundantDirtyPaths: true` is present in both plan and apply, every dirty path is an eligible unstaged tracked modification, unstaged tracked deletion, or untracked regular file, and Guardian proves that final path state already matches the fetched base tree. Apply snapshots that dirt to `dirtySnapshotRef`, cleans only proof-approved paths, rechecks status, then removes the worktree. Intentional unmerged local abandonment requires `deleteBranch: true` plus `abandonUnmerged: true` in both plan and apply.
 - `guardian_unblock_finish`: safe explicit finish-unblock helper. Run `mode: "plan"` first to get a confirm token, then `mode: "apply"` with that token. The first supported action, `commit-review-artifacts`, commits only `.milestones/reviews/*impl-rating-YYYYMMDD.md` or `.milestones/reviews/*impl-rating-YYYYMMDD.txt` review artifacts and refuses mixed source changes, renames/copies, and symlink artifacts. Descriptive branch names are allowed when the recorded session owns that exact branch/worktree binding. If the session is missing from Guardian state, plan and apply can resolve the current Guardian-root worktree or exactly one checked-out worktree under the configured Guardian worktree root from the same explicit `branch` or `worktreePath`, then attach a fresh internal recovery session id.
 - `guardian_finish`: gated finish behavior based on `finishMode`. If the current directory is an existing Guardian-root worktree without an active recorded session, Guardian can attach a fresh internal recovery session id before running the finish preflight. Under `merge-to-base` with `allowMergeToBase: true`, finish can self-heal a clean primary repo worktree that is on the wrong branch by safety-reffing its original HEAD and the local base branch head, then repositioning it onto the base branch before the fast-forward merge. A dirty primary worktree fails closed unless `allowBaseWorktreePreserveReset: true` (per call or via config) is also set, in which case finish snapshots the base dirt (tracked changes and untracked files) into a recoverable safety ref, resets only those paths clean, then repositions and merges; the Guardian session worktrees under the worktree root are never touched. A base branch checked out in another worktree, a missing local base branch, or any non-fast-forward/push/proof failure still fail closed with safety refs recorded.
 - `guardian_finish_workflow`: high-level implementation-done cleanup workflow. Run `mode: "plan"` first to verify the primary worktree is clean, stash inventory is acceptable, the configured remote can be fetched, and redundant cleanup candidates are already merged to the freshly resolved `remote/baseBranch` commit. Run `mode: "apply"` only with the returned token; the token binds the resolved base commit and cleanup targets, then apply re-plans each target and delegates removal to `guardian_delete_worktree`. It does not create commits, choose commit messages, merge protected branches, mutate stashes, force-delete branches, or run raw cleanup.
@@ -129,6 +129,27 @@ Each packaged command is a thin prompt wrapper around the matching native Guardi
 
 Native OpenCode command discovery is separate from packaged plugin assets. User or project commands live in `~/.config/opencode/commands/*.md` or `<repo>/.opencode/commands/*.md`; OpenCode core does not automatically discover this package's internal `commands/*.md` without a loader that supports packaged plugin commands.
 
+## Codex Skills
+
+The Codex adapter exposes the same command-style entry points as `$guardian-*` skills because Codex plugin discovery surfaces skills rather than OpenCode slash-command registrations:
+
+- `$guardian-status`
+- `$guardian-done`
+- `$guardian-start`
+- `$guardian-finish`
+- `$guardian-finish-workflow`
+- `$guardian-preserve`
+- `$guardian-recover`
+- `$guardian-report`
+- `$guardian-hud`
+- `$guardian-hygiene`
+- `$guardian-gc`
+- `$guardian-delete-paths`
+- `$guardian-delete-worktree`
+- `$guardian-unblock-finish`
+
+Each skill is a thin prompt wrapper around the same Codex adapter CLI and native Guardian tool policy. `$guardian-hud` maps to status/report output because Codex does not have OpenCode's TUI HUD layer.
+
 ## Safety Model
 
 The canonical Guardian safety policy is [ADR 0001: Guardian Safety Policy](docs/adr/0001-guardian-safety-policy.md). This README summarizes the public workflow; the ADR is the authority for block, allow, route, plan/apply, confirmation, and deletion posture.
@@ -139,7 +160,7 @@ The canonical Guardian safety policy is [ADR 0001: Guardian Safety Policy](docs/
 - Use `guardian_hygiene` for hygiene scan/plan/apply cleanup. Scan output is evidence only. Cleanup requires `mode: "plan"`, exact-target review, explicit confirmation, then `mode: "apply"` with `confirmDelete: true`.
   `reviewableCandidates` are scan-only inventory and are not accepted by the hygiene cleanup preflight.
 - Use `guardian_delete_paths` for intentional exact file or directory deletion, including tracked source only when explicitly allowed. Worktree deletion is separate and must use `guardian_delete_worktree`.
-- Use `guardian_delete_worktree` for Guardian worktree, orphan-branch, stale-branch, or explicit unmerged-abandon cleanup. Run plan first, inspect blockers and safety evidence, then apply only through the native tool.
+- Use `guardian_delete_worktree` for Guardian worktree, orphan-branch, stale-branch, redundant-dirty worktree, or explicit unmerged-abandon cleanup. Run plan first, inspect blockers and safety evidence, then apply only through the native tool. Redundant dirty cleanup is direct-tool-only and requires `allowRedundantDirtyPaths: true`; high-level `guardian_done` and `guardian_finish_workflow` do not silently opt into it.
 - Use `guardian_status`, `guardian_recover`, and `guardian_report_html` as read-only evidence/report surfaces. Their output can identify candidates but never authorizes deletion by itself.
 - Use `guardian_unblock_finish` only for the narrow generated review-artifact finish blocker described in the ADR.
 
@@ -171,6 +192,8 @@ Clean `guardian_status` keeps the readable summary short and the structured fiel
 [INFO] branch: guardian/old-session | head: abc123def456
 [WARN] confirmToken: <sha256-token>
 ```
+
+For redundant dirty target worktrees, pass `allowRedundantDirtyPaths: true` in both plan and apply. Plan fetches the configured remote, resolves `baseRef`/`baseRefOid`, and token-binds the per-path proof. Apply creates the normal `safetyRef`, creates `dirtySnapshotRef`, restores or removes only proof-approved paths internally, rechecks that the worktree is clean, and then performs the same non-force worktree removal. Staged changes, mixed status, renames/copies, conflicts, symlinks, directories, ignored files, unreadable paths, and non-redundant content remain blockers.
 
 Apply with that token removes only the linked worktree unless `deleteBranch: true` is also supplied and ancestry is proven:
 
@@ -365,6 +388,6 @@ Suggested manual checklist:
 3. Start OpenCode from that disposable repo.
 4. Confirm `guardian_status` is visible and returns repository inventory, including any owned worktree path.
 5. From the base repo, ask OpenCode to run an allowed write such as `git add`; confirm Guardian routes the tool execution to the owned worktree instead of mutating the base repo.
-6. Ask OpenCode to run a blocked command such as `git reset --hard`; confirm Guardian still blocks before mutation.
+6. Ask OpenCode to run a known destructive reset command; confirm Guardian still blocks before mutation.
 
 If this manual check disagrees with the deterministic smoke suite, treat the plugin as not release-ready until the discrepancy is understood.
