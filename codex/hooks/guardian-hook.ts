@@ -198,6 +198,9 @@ function confirmationHint(name: string, result: Record<string, unknown>): string
   if (name === "guardian_done" || name === "guardian_finish_workflow") {
     return "After explicit user confirmation, rerun with mode=apply and confirm=true; the Codex adapter reuses the matching cached plan token.";
   }
+  if (name === "guardian_delete_worktree") {
+    return `After explicit user confirmation, rerun with mode=apply and confirmToken=${result["confirmToken"]}; delete-worktree tokens are not auto-injected.`;
+  }
   return undefined;
 }
 

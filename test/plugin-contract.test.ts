@@ -143,6 +143,7 @@ test("guardian native tools expose OpenCode tool definitions", async () => {
     assert.equal(typeof definition.args.sessionId.safeParse, "function", toolName);
   }
   assert.equal(typeof hooks.tool.guardian_delete_worktree.args.abandonUnmerged.safeParse, "function");
+  assert.equal(typeof hooks.tool.guardian_delete_worktree.args.allowRedundantDirtyPaths.safeParse, "function");
   assert.equal(typeof hooks.tool.guardian_delete_paths.args.paths.safeParse, "function");
   assert.equal(typeof hooks.tool.guardian_delete_paths.args.allowTracked.safeParse, "function");
   assert.equal(typeof hooks.tool.guardian_delete_paths.args.allowRecursive.safeParse, "function");
@@ -534,6 +535,65 @@ test("guardian_delete_worktree tool execute returns readable plan output with ra
   assert.match(result.output, /confirmToken:/);
 });
 
+test("guardian_delete_worktree redundant dirty output exposes proof metadata", async () => {
+  const path = await import("node:path");
+  const { createRepoWithOrigin, git } = await import("./helpers.ts");
+  const { guardianStart } = await import("../src/tools.ts");
+  const { DEFAULT_CONFIG } = await import("../src/config.ts");
+  const { base, repo } = await createRepoWithOrigin();
+  test.after(() => fs.rm(base, { recursive: true, force: true }));
+  const start = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_contract_redundant_dirty", taskName: "contract redundant dirty", createWorktree: true, config: DEFAULT_CONFIG });
+  await fs.writeFile(path.join(repo, "README.md"), "contract base\n");
+  await git(repo, ["add", "README.md"]);
+  await git(repo, ["commit", "-m", "contract base change"]);
+  await git(repo, ["push", "origin", "main"]);
+  await fs.writeFile(path.join(start.session.worktree_path, "README.md"), "contract base\n");
+  const hooks = await plugin.server({ directory: repo, worktree: repo });
+  const { context } = createToolContext();
+  context.directory = repo;
+  context.worktree = repo;
+  const execute = hooks.tool.guardian_delete_worktree.execute;
+
+  const result = await runTool(execute, { repoRoot: repo, cwd: repo, mode: "plan", sessionId: "ses_contract_redundant_dirty", allowRedundantDirtyPaths: true }, context);
+
+  assert.equal(result.metadata.status, "planned");
+  assert.equal(result.metadata.preflight.allowRedundantDirtyPaths, true);
+  assert.equal(result.metadata.preflight.redundantDirtyFileCount, 1);
+  assert.equal(result.metadata.preflight.baseRef, "origin/main");
+  assert.match(result.output, /allowRedundantDirtyPaths: true/);
+  assert.match(result.output, /redundantDirtyFileCount: 1/);
+  assert.match(result.output, /redundant dirty proofs:/);
+  assert.match(result.output, /README\.md/);
+});
+
+test("guardian_delete_worktree redundant dirty plans do not auto-inject confirm tokens", async () => {
+  const path = await import("node:path");
+  const { createRepoWithOrigin, git } = await import("./helpers.ts");
+  const { guardianStart } = await import("../src/tools.ts");
+  const { DEFAULT_CONFIG } = await import("../src/config.ts");
+  const { base, repo } = await createRepoWithOrigin();
+  test.after(() => fs.rm(base, { recursive: true, force: true }));
+  const start = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_contract_redundant_dirty_no_cache", taskName: "contract redundant dirty no cache", createWorktree: true, config: DEFAULT_CONFIG });
+  await fs.writeFile(path.join(repo, "README.md"), "contract cache base\n");
+  await git(repo, ["add", "README.md"]);
+  await git(repo, ["commit", "-m", "contract cache base change"]);
+  await git(repo, ["push", "origin", "main"]);
+  await fs.writeFile(path.join(start.session.worktree_path, "README.md"), "contract cache base\n");
+  const hooks = await plugin.server({ directory: repo, worktree: repo });
+  const { context } = createToolContext();
+  context.directory = repo;
+  context.worktree = repo;
+  const execute = hooks.tool.guardian_delete_worktree.execute;
+
+  const plan = await runTool(execute, { repoRoot: repo, cwd: repo, mode: "plan", sessionId: "ses_contract_redundant_dirty_no_cache", allowRedundantDirtyPaths: true }, context);
+  const apply = await runTool(execute, { repoRoot: repo, cwd: repo, mode: "apply", sessionId: "ses_contract_redundant_dirty_no_cache", allowRedundantDirtyPaths: true }, context);
+
+  assert.equal(plan.metadata.status, "planned");
+  assert.equal(apply.metadata.status, "blocked");
+  assert.match(String(apply.metadata.reason), /confirm token mismatch/);
+  assert.equal(await fs.access(start.session.worktree_path).then(() => true, () => false), true);
+});
+
 test("guardian_delete_worktree tool execute exposes abandon plan evidence in readable output", async () => {
   const { createRepoWithOrigin, git } = await import("./helpers.ts");
   const { guardianStart } = await import("../src/tools.ts");
@@ -727,6 +787,64 @@ test("guardian_finish_workflow tool execute returns readable plan output with ra
   assert.match(result.output, /confirmToken:/);
 });
 
+test("guardian_finish_workflow tool execute reports completed empty candidate scan", async () => {
+  const { createRepoWithOrigin } = await import("./helpers.ts");
+  const { base, repo } = await createRepoWithOrigin();
+  test.after(() => fs.rm(base, { recursive: true, force: true }));
+  const hooks = await plugin.server({ directory: repo, worktree: repo });
+  const { context } = createToolContext();
+  context.directory = repo;
+  context.worktree = repo;
+  const execute = hooks.tool.guardian_finish_workflow.execute;
+
+  const result = await runTool(execute, { repoRoot: repo, cwd: repo, mode: "plan" }, context);
+
+  assert.equal(result.metadata.status, "planned");
+  const preflight = metadataRecord(result.metadata, "preflight");
+  assert.equal(preflight.candidateScanStatus, "completed");
+  assert.equal(preflight.candidateCount, 0);
+  assert.match(result.output, /candidateScan: completed/);
+  assert.match(result.output, /candidates: 0/);
+});
+
+test("guardian_finish_workflow tool execute dirty primary candidate scan reports blocked inventory", async () => {
+  const { createRepoWithOrigin, git } = await import("./helpers.ts");
+  const path = await import("node:path");
+  const { base, repo } = await createRepoWithOrigin();
+  test.after(() => fs.rm(base, { recursive: true, force: true }));
+  const branch = "guardian/contract-dirty-primary-candidate";
+  await git(repo, ["checkout", "-b", branch]);
+  await fs.writeFile(path.join(repo, "contract-dirty-primary-candidate.txt"), "workflow\n");
+  await git(repo, ["add", "contract-dirty-primary-candidate.txt"]);
+  await git(repo, ["commit", "-m", "add contract dirty primary candidate"]);
+  await git(repo, ["checkout", "main"]);
+  await git(repo, ["merge", "--no-ff", branch, "-m", "merge contract dirty primary candidate"]);
+  await git(repo, ["push", "origin", "main"]);
+  const worktreePath = path.join(repo, ".worktrees", path.basename(repo), "contract-dirty-primary-candidate");
+  await git(repo, ["worktree", "add", worktreePath, branch]);
+  await fs.writeFile(path.join(repo, "contract-dirty-primary.txt"), "dirty\n");
+  const hooks = await plugin.server({ directory: repo, worktree: repo });
+  const { context } = createToolContext();
+  context.directory = repo;
+  context.worktree = repo;
+  const execute = hooks.tool.guardian_finish_workflow.execute;
+
+  const result = await runTool(execute, { repoRoot: repo, cwd: repo, mode: "plan" }, context);
+
+  assert.equal(result.metadata.status, "blocked");
+  assert.equal(result.metadata.confirmToken, undefined);
+  const preflight = metadataRecord(result.metadata, "preflight");
+  assert.equal(preflight.candidateScanStatus, "completed");
+  assert.equal(preflight.candidateCount, 1);
+  assert.equal(metadataArray(result.metadata, "candidates").length, 1);
+  assert.match(String(result.metadata.reason), /primary worktree/);
+  assert.match(result.output, /\[FAIL\] guardian_finish_workflow blocked/);
+  assert.match(result.output, /candidateScan: completed/);
+  assert.match(result.output, /candidates: 1/);
+  assert.match(result.output, /primary worktree has uncommitted changes/);
+  assert.doesNotMatch(result.output, /confirmToken:/);
+});
+
 test("guardian_finish_workflow tool execute returns readable blocked output with raw metadata", async () => {
   const { createRepoWithOrigin } = await import("./helpers.ts");
   const path = await import("node:path");
@@ -744,7 +862,29 @@ test("guardian_finish_workflow tool execute returns readable blocked output with
   assert.equal(result.metadata.status, "blocked");
   assert.match(String(result.metadata.reason), /primary worktree/);
   assert.match(result.output, /\[FAIL\] guardian_finish_workflow blocked/);
+  assert.match(result.output, /candidateScan: completed/);
   assert.match(result.output, /primary worktree has uncommitted changes/);
+});
+
+test("guardian_finish_workflow tool execute candidate scan skipped output is explicit", async () => {
+  const { createRepoWithOrigin } = await import("./helpers.ts");
+  const { base, repo } = await createRepoWithOrigin();
+  test.after(() => fs.rm(base, { recursive: true, force: true }));
+  const hooks = await plugin.server({ directory: repo, worktree: repo });
+  const { context } = createToolContext();
+  context.directory = repo;
+  context.worktree = repo;
+  const execute = hooks.tool.guardian_finish_workflow.execute;
+
+  const result = await runTool(execute, { repoRoot: repo, cwd: repo, mode: "preview" }, context);
+
+  assert.equal(result.metadata.status, "blocked");
+  const preflight = metadataRecord(result.metadata, "preflight");
+  assert.equal(preflight.candidateScanStatus, "skipped");
+  assert.equal(preflight.candidateScanSkippedReason, "invalid-mode");
+  assert.match(result.output, /candidateScan: skipped/);
+  assert.match(result.output, /reason: invalid-mode/);
+  assert.doesNotMatch(result.output, /candidates: 0/);
 });
 
 test("guardian_finish tool execute defaults cwd to recorded session worktree", async () => {

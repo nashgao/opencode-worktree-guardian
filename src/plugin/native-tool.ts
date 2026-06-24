@@ -45,6 +45,7 @@ export function guardianTool(name: GuardianToolName, description: string, planCa
       deleteBranch: z.boolean().optional(),
       abandonUnmerged: z.boolean().optional(),
       allowIgnoredFiles: z.boolean().optional(),
+      allowRedundantDirtyPaths: z.boolean().optional(),
       paths: z.array(z.string()).optional(),
       allowTracked: z.boolean().optional(),
       allowRecursive: z.boolean().optional(),

@@ -106,7 +106,11 @@ Use `guardian_finish_workflow` only after implementation is already committed, p
 
 Run `mode: "plan"` first. The workflow verifies the primary worktree is clean, stash policy is satisfied, the configured remote can be fetched, and redundant cleanup candidates are already merged to the freshly resolved `remote/baseBranch` commit. It discovers Guardian-root worktrees and non-protected, checked-out-nowhere local branches whose heads are ancestors of that base commit. At most 25 cleanup candidates can be applied from one plan.
 
+The candidate scan status is structured metadata. Invalid mode, base-unavailable, and stash-blocker preflights skip candidate discovery and must report skipped candidate scan status instead of completed zero-candidate evidence. A dirty primary worktree remains a blocker, but `mode: "plan"` may continue through read-only cleanup inventory discovery after base evidence exists and stash policy is satisfied; that blocked inventory can help the user see what will be eligible later, but it does not authorize dirty primary cleanup and must not include a `confirmToken`. Unexpected discovery failures report failed candidate scan status while preserving earlier preflight blockers.
+
 Run `mode: "apply"` only with the returned token after explicit confirmation. The token binds the resolved base commit and cleanup targets. Apply re-plans each target and delegates deletion to `guardian_delete_worktree`. It must not create commits, choose commit messages, merge protected branches, mutate stashes, force-delete branches, or run raw filesystem/Git cleanup. Any blocker fails closed and apply deletes nothing until a fresh plan has no blockers.
+
+Apply requires a fresh clean plan and a fresh no-blocker plan token. Skipped or incomplete candidate scans, dirty primary blockers, stash blockers, candidate blockers, and stale or missing tokens all block apply; none of those states permit cleanup from blocked inventory.
 
 ## `guardian_preserve` Policy
 
@@ -130,9 +134,11 @@ Run `mode: "plan"` first. It resolves exactly one target by `targetPath`, `sessi
 
 Apply recomputes the token from the normalized repo root, target kind, target path, worktree-listed state, branch or detached marker, HEAD, session identity/status, `deleteBranch`, `abandonUnmerged`, ancestry evidence, unmerged commits, and `allowIgnoredFiles`. Stale or missing tokens block.
 
-Apply refuses primary repo worktree deletion, current execution worktree deletion, dirty or untracked targets, protected-branch worktrees even when `deleteBranch` is false, detached HEADs, ignored files unless `allowIgnoredFiles: true` is present in both plan and apply, and repo stashes unless `allowStashIfUnrelated` is enabled. Passing the primary repo as `targetPath` remains blocked.
+Apply refuses primary repo worktree deletion, current execution worktree deletion, dirty or untracked targets by default, protected-branch worktrees even when `deleteBranch` is false, detached HEADs, ignored files unless `allowIgnoredFiles: true` is present in both plan and apply, and repo stashes unless `allowStashIfUnrelated` is enabled. Passing the primary repo as `targetPath` remains blocked.
 
-Apply creates a safety ref before non-force `git worktree remove <path>`. Branch deletion is opt-in with `deleteBranch: true`; by default it requires ancestry proof and uses non-force `git branch -d`.
+The only dirty-target exception is direct `guardian_delete_worktree` with `allowRedundantDirtyPaths: true` in both plan and apply. Guardian must fetch the configured remote, resolve `baseRef` and `baseRefOid`, and prove every dirty path already matches the fetched base tree before token generation. Eligible paths are limited to unstaged tracked modifications, unstaged tracked deletions, and untracked regular files. Staged changes, mixed statuses, renames, copies, conflicts, submodules, symlinks, directories, type changes, ignored files, unreadable paths, and non-redundant content block. Apply creates the normal `safetyRef`, creates a `dirtySnapshotRef`, cleans only proof-approved paths internally, rechecks the target status, then uses the same non-force worktree removal. `guardian_done` and `guardian_finish_workflow` remain fail-closed for dirty cleanup candidates and do not auto-pass this option.
+
+Apply creates a safety ref before non-force worktree removal. Branch deletion is opt-in with `deleteBranch: true`; by default it requires ancestry proof and uses non-force branch deletion.
 
 ## `guardian_delete_worktree` Orphan And Stale-Branch Policy
 

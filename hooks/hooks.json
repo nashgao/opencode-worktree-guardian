@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${PLUGIN_ROOT}/hooks/guardian-hook.ts\" hook pre-tool-use",
+            "command": "node \"${PLUGIN_ROOT}/codex/hooks/guardian-hook.ts\" hook pre-tool-use",
             "timeout": 10,
             "statusMessage": "WorktreeGuardian: Checking shell command"
           }
@@ -19,7 +19,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${PLUGIN_ROOT}/hooks/guardian-hook.ts\" hook post-tool-use",
+            "command": "node \"${PLUGIN_ROOT}/codex/hooks/guardian-hook.ts\" hook post-tool-use",
             "timeout": 10,
             "statusMessage": "WorktreeGuardian: Recording safe state"
           }

@@ -35,8 +35,15 @@ export function isGuardianWorktreeStatusPath(repoRoot: string, config: RecordLik
   return isInside(absoluteStatusPath, guardianRoot);
 }
 
-export async function statusEntries(repoRoot: string): Promise<StatusEntry[]> {
-  const { stdout } = await execFileAsync("git", ["-C", repoRoot, "status", "--porcelain=v1", "--untracked-files=all", "-z"], { maxBuffer: 10 * 1024 * 1024 });
+type StatusEntriesOptions = {
+  readonly includeIgnored?: boolean;
+};
+
+export async function statusEntries(repoRoot: string, options: StatusEntriesOptions = {}): Promise<StatusEntry[]> {
+  const statusArgs = options.includeIgnored === true
+    ? ["status", "--porcelain=v1", "--untracked-files=all", "--ignored", "-z"]
+    : ["status", "--porcelain=v1", "--untracked-files=all", "-z"];
+  const { stdout } = await execFileAsync("git", ["-C", repoRoot, ...statusArgs], { maxBuffer: 10 * 1024 * 1024 });
   if (!stdout) return [];
   const rawEntries = stdout.split("\0").filter(Boolean);
   const entries: StatusEntry[] = [];

@@ -6,11 +6,17 @@ export function formatGuardianFinishWorkflowOutput(rawResult: unknown) {
   const candidates = arrayValue(result.candidates);
   const blockers = arrayValue(result.blockers);
   const results = arrayValue(result.results);
+  const scanStatus = textValue(preflight.candidateScanStatus, "unknown");
   const lines = [
     `${result.ok === false ? "[FAIL]" : result.status === "planned" ? "[WARN]" : "[GOOD]"} guardian_finish_workflow ${textValue(result.status)}`,
     `[INFO] mode: ${textValue(preflight.mode)} | branch: ${textValue(preflight.currentBranch)} | baseRef: ${textValue(preflight.baseRef)} | baseRefOid: ${shortCommit(preflight.baseRefOid)}`,
-    `[INFO] candidates: ${candidates.length} | blockers: ${blockers.length} | maxCandidates: ${Number(preflight.maxCandidateCount ?? 0)} | dirty: ${Number(preflight.dirtyFileCount ?? 0)} | stashes: ${Number(preflight.stashCount ?? 0)}`,
   ];
+  if (scanStatus === "completed") {
+    lines.push(`[INFO] candidateScan: completed | candidates: ${Number(preflight.candidateCount ?? candidates.length)} | blockers: ${Number(preflight.blockerCount ?? blockers.length)} | maxCandidates: ${Number(preflight.maxCandidateCount ?? 0)} | dirty: ${Number(preflight.dirtyFileCount ?? 0)} | stashes: ${Number(preflight.stashCount ?? 0)}`);
+  } else {
+    const scanReason = scanStatus === "skipped" ? textValue(preflight.candidateScanSkippedReason) : textValue(preflight.candidateScanFailedReason);
+    lines.push(`[WARN] candidateScan: ${scanStatus} | reason: ${scanReason} | maxCandidates: ${Number(preflight.maxCandidateCount ?? 0)} | dirty: ${Number(preflight.dirtyFileCount ?? 0)} | stashes: ${Number(preflight.stashCount ?? 0)}`);
+  }
   const reason = textValue(result.reason, "");
   if (result.ok === false || reason) lines.push(`[FAIL] ${reason || "guardian_finish_workflow blocked"}`);
   if (typeof result.confirmToken === "string") lines.push(`[WARN] confirmToken: ${result.confirmToken}`);

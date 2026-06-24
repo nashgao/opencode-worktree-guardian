@@ -40,6 +40,23 @@ const expectedSlashNames = [
   "guardian-status",
   "guardian-unblock-finish",
 ] as const;
+const expectedCodexSkillNames = [
+  "guardian-delete-paths",
+  "guardian-delete-worktree",
+  "guardian-done",
+  "guardian-finish",
+  "guardian-finish-workflow",
+  "guardian-gc",
+  "guardian-hud",
+  "guardian-hygiene",
+  "guardian-preserve",
+  "guardian-recover",
+  "guardian-report",
+  "guardian-start",
+  "guardian-status",
+  "guardian-unblock-finish",
+  "worktree-guardian",
+] as const;
 const expectedCommandAssets = [
   "commands/done.md",
   "commands/delete-paths.md",
@@ -59,7 +76,7 @@ const expectedCodexAdapterFiles = [
   "codex/.codex-plugin/plugin.json",
   "codex/hooks/guardian-hook.ts",
   "codex/hooks/hooks.json",
-  "codex/skills/worktree-guardian/SKILL.md",
+  ...expectedCodexSkillNames.map((skillName) => `codex/skills/${skillName}/SKILL.md`),
 ] as const;
 const expectedPackagedCommandTools = [
   ["done", "guardian_done"],
@@ -183,6 +200,11 @@ test("public docs and package inventory stay aligned with guardian command surfa
     await fs.access(path.join(projectRoot, codexAdapterFile));
   }
 
+  for (const codexSkillName of expectedCodexSkillNames) {
+    const skill = await fs.readFile(path.join(projectRoot, "codex", "skills", codexSkillName, "SKILL.md"), "utf8");
+    assert.match(skill, new RegExp(`^---\\nname: ${codexSkillName}\\n`), `${codexSkillName} must have Codex skill frontmatter`);
+  }
+
   for (const [commandName, toolName] of expectedPackagedCommandTools) {
     const command = await fs.readFile(path.join(projectRoot, "commands", `${commandName}.md`), "utf8");
     assert.equal(command.includes(`\`${toolName}\``), true, `${commandName} must route to ${toolName}`);
@@ -224,7 +246,7 @@ test("packed artifact installs in a clean consumer and exposes plugin contract",
   assert.equal(packInfo.name, "opencode-worktree-guardian");
   assert.equal(packInfo.version, "0.1.0");
   assert.deepEqual(sortedPackPaths(packInfo.files, "commands/"), [...expectedCommandAssets].sort((left, right) => left.localeCompare(right)));
-  assert.deepEqual(sortedPackPaths(packInfo.files, "codex/"), expectedCodexAdapterFiles);
+  assert.deepEqual(sortedPackPaths(packInfo.files, "codex/"), [...expectedCodexAdapterFiles].sort((left, right) => left.localeCompare(right)));
   assert.equal(packInfo.files.some((file: { path: string }) => file.path === "src/index.ts"), true);
   assert.equal(packInfo.files.some((file: { path: string }) => file.path === "src/tui.ts"), true);
   const packedHooks = await fs.readFile(path.join(projectRoot, "codex", "hooks", "hooks.json"), "utf8");
@@ -302,6 +324,9 @@ test("packed artifact installs in a clean consumer and exposes plugin contract",
 
   for (const commandAsset of expectedCommandAssets) {
     await fs.access(path.join(consumer, "node_modules", "opencode-worktree-guardian", commandAsset));
+  }
+  for (const codexSkillName of expectedCodexSkillNames) {
+    await fs.access(path.join(consumer, "node_modules", "opencode-worktree-guardian", "codex", "skills", codexSkillName, "SKILL.md"));
   }
   await fs.access(path.join(consumer, "node_modules", "opencode-worktree-guardian", "skills", "worktree-guardian", "SKILL.md"));
 
