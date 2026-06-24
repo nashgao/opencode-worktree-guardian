@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
+import path from "node:path";
 import test from "node:test";
 import { DEFAULT_CONFIG } from "../src/config.ts";
 import plugin from "../src/index.ts";
@@ -35,6 +36,13 @@ function requireSession(session: GuardianSession | undefined): GuardianSession {
 
 function findSession(sessions: readonly GuardianSession[], sessionId: string): GuardianSession {
   return requireSession(sessions.find((session) => session.session_id === sessionId));
+}
+
+async function enableLazyAutoStart(repo: string) {
+  await fs.mkdir(path.join(repo, ".opencode"), { recursive: true });
+  await fs.writeFile(path.join(repo, ".opencode", "worktree-guardian.json"), JSON.stringify({ autoStartMode: "lazy" }));
+  await git(repo, ["add", ".opencode/worktree-guardian.json"]);
+  await git(repo, ["commit", "-m", "enable lazy guardian auto start"]);
 }
 
 test("exports the current OpenCode plugin object shape", () => {
@@ -190,7 +198,6 @@ test("default chat transform auto-starts and owns a worktree", async (t) => {
 });
 
 test("explicit autoStart=false disables default chat transform ownership", async (t) => {
-  const path = await import("node:path");
   const { git } = await import("./helpers.ts");
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
@@ -213,6 +220,77 @@ test("explicit autoStart=false disables default chat transform ownership", async
   assert.equal(records[0].invisibleStart, null);
   assert.equal(records[0].directory, repo);
   assert.equal(records[0].worktree, repo);
+});
+
+test("lazy auto-start does not create ownership during chat transform", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  await enableLazyAutoStart(repo);
+  const records: Array<LooseRecord> = [];
+  const sessionID = "ses_lazy_chat_transform";
+  const hooks = await plugin.server({ client: createClient(records), directory: repo, worktree: repo });
+
+  await hooks["experimental.chat.system.transform"](
+    { sessionID, taskName: "lazy chat transform" },
+    { system: [] },
+  );
+
+  const paths = await getGuardianPaths(repo);
+  const state = await readState(paths, { repoRoot: repo, config: { ...DEFAULT_CONFIG, autoStartMode: "lazy" } });
+  assert.equal(state.sessions[sessionID], undefined);
+  assert.equal(records[0].invisibleStart, null);
+});
+
+test("lazy auto-start leaves read-only commands on the primary worktree", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  await enableLazyAutoStart(repo);
+  const sessionID = "ses_lazy_readonly";
+  const hooks = await plugin.server({ directory: repo, worktree: repo, client: createClient([]) });
+
+  await hooks["tool.execute.before"](
+    { tool: "bash", sessionID, callID: "call_lazy_readonly" },
+    { args: { command: "git status --short" } },
+  );
+
+  const paths = await getGuardianPaths(repo);
+  const state = await readState(paths, { repoRoot: repo, config: { ...DEFAULT_CONFIG, autoStartMode: "lazy" } });
+  assert.equal(state.sessions[sessionID], undefined);
+});
+
+test("lazy auto-start creates ownership before direct file mutation routing", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  await enableLazyAutoStart(repo);
+  const sessionID = "ses_lazy_direct_file";
+  const hooks = await plugin.server({ directory: repo, worktree: repo, client: createClient([]) });
+  const output = { args: { filePath: path.join(repo, "src", "feature.ts"), content: "export {};\n" } };
+
+  await hooks["tool.execute.before"]({ tool: "write", sessionID, callID: "call_lazy_direct_file" }, output);
+
+  const paths = await getGuardianPaths(repo);
+  const state = await readState(paths, { repoRoot: repo, config: { ...DEFAULT_CONFIG, autoStartMode: "lazy" } });
+  const session = requireSession(state.sessions[sessionID]);
+  assert.equal(session.status, "active");
+  assert.notEqual(session.worktree_path, repo);
+  assert.equal(output.args.filePath, path.join(String(session.worktree_path), "src", "feature.ts"));
+});
+
+test("lazy auto-start creates ownership before mutating command routing", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  await enableLazyAutoStart(repo);
+  const sessionID = "ses_lazy_command";
+  const hooks = await plugin.server({ directory: repo, worktree: repo, client: createClient([]) });
+  const output: { args: { command: string; workdir?: string; cwd?: string } } = { args: { command: "touch lazy.txt" } };
+
+  await hooks["tool.execute.before"]({ tool: "bash", sessionID, callID: "call_lazy_command" }, output);
+
+  const paths = await getGuardianPaths(repo);
+  const state = await readState(paths, { repoRoot: repo, config: { ...DEFAULT_CONFIG, autoStartMode: "lazy" } });
+  const session = requireSession(state.sessions[sessionID]);
+  assert.equal(output.args.workdir, session.worktree_path);
+  assert.equal(output.args.cwd, session.worktree_path);
 });
 
 test("default chat transform does not recreate terminal session worktrees", async (t) => {

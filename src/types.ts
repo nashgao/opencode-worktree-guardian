@@ -5,6 +5,7 @@ export type MutableRecord = {
 };
 
 export type GuardianFinishMode = "preserve-only" | "push-branch" | "create-pr" | "merge-to-base";
+export type GuardianAutoStartMode = "eager" | "lazy";
 
 export type GuardianConfig = {
   readonly remote: string;
@@ -13,6 +14,7 @@ export type GuardianConfig = {
   readonly branchPrefix: string;
   readonly finishMode: GuardianFinishMode;
   readonly autoStart: boolean;
+  readonly autoStartMode: GuardianAutoStartMode;
   readonly autoFinish: boolean;
   readonly autoCleanup: boolean;
   readonly safetyRefRetentionDays: number;

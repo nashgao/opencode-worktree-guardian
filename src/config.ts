@@ -1,11 +1,12 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { GuardianConfig, GuardianFinishMode, LoadedGuardianConfig, LoadConfigOptions, RecordLike } from "./types.ts";
+import type { GuardianAutoStartMode, GuardianConfig, GuardianFinishMode, LoadedGuardianConfig, LoadConfigOptions, RecordLike } from "./types.ts";
 import { errorCode, isRecordLike } from "./types.ts";
 
 export const CONFIG_PATH = path.join(".opencode", "worktree-guardian.json");
 
 export const FINISH_MODES = new Set(["preserve-only", "push-branch", "create-pr", "merge-to-base"]);
+export const AUTO_START_MODES = new Set(["eager", "lazy"]);
 
 export const DEFAULT_CONFIG: GuardianConfig = Object.freeze({
   remote: "origin",
@@ -14,6 +15,7 @@ export const DEFAULT_CONFIG: GuardianConfig = Object.freeze({
   branchPrefix: "guardian/",
   finishMode: "create-pr",
   autoStart: true,
+  autoStartMode: "eager",
   autoFinish: false,
   autoCleanup: false,
   safetyRefRetentionDays: 30,
@@ -24,7 +26,7 @@ export const DEFAULT_CONFIG: GuardianConfig = Object.freeze({
   lockTimeoutMs: 5_000,
 });
 
-export type ConfigErrorKind = "unsupported_finish_mode";
+export type ConfigErrorKind = "unsupported_finish_mode" | "unsupported_auto_start_mode";
 export type ConfigBoundaryError = Error & { readonly configErrorKind: ConfigErrorKind };
 
 function configError(kind: ConfigErrorKind, message: string): ConfigBoundaryError {
@@ -39,10 +41,17 @@ function isGuardianFinishMode(value: unknown): value is GuardianFinishMode {
   return typeof value === "string" && FINISH_MODES.has(value);
 }
 
+function isGuardianAutoStartMode(value: unknown): value is GuardianAutoStartMode {
+  return typeof value === "string" && AUTO_START_MODES.has(value);
+}
+
 export function normalizeConfig(input: RecordLike = {}): GuardianConfig {
   const config = { ...DEFAULT_CONFIG, ...input };
   if (!isGuardianFinishMode(config.finishMode)) {
     throw configError("unsupported_finish_mode", `Unsupported worktree guardian finishMode: ${String(config.finishMode)}`);
+  }
+  if (!isGuardianAutoStartMode(config.autoStartMode)) {
+    throw configError("unsupported_auto_start_mode", `Unsupported worktree guardian autoStartMode: ${String(config.autoStartMode)}`);
   }
 
   const protectedBranches = uniqueStrings([
@@ -53,6 +62,7 @@ export function normalizeConfig(input: RecordLike = {}): GuardianConfig {
   return {
     ...config,
     autoStart: config.autoStart !== false,
+    autoStartMode: config.autoStartMode,
     autoFinish: config.autoFinish === true,
     autoCleanup: config.autoCleanup === true,
     allowStashIfUnrelated: config.allowStashIfUnrelated === true,
