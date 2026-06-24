@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import path from "node:path";
 import { loadConfig } from "../config.ts";
 import { getCurrentBranch } from "../git.ts";
 import { classifyGuardCommand, classifyNormalAgentGitCommand, classifyReadOnlyInspectionCommand, extractCommandText } from "../guards.ts";
@@ -19,7 +20,7 @@ import { canFallbackToNormalGit, getActualWorktree, pathExists, rememberSessionW
 
 async function tryInvisibleStart(input: GuardCommandPayload, context: HookContext, config: GuardianConfig) {
   const sessionId = getSessionId(input);
-  if (!config.autoStart || !sessionId || !context.directory) return null;
+  if (!config.autoStart || config.autoStartMode !== "eager" || !sessionId || !context.directory) return null;
   try {
     return await guardianStart({
       repoRoot: context.directory,
@@ -32,6 +33,51 @@ async function tryInvisibleStart(input: GuardCommandPayload, context: HookContex
   } catch (error) {
     return { ok: false, reason: errorMessage(error) };
   }
+}
+
+function isPathInside(parent: string, candidate: string) {
+  const relative = path.relative(path.resolve(parent), path.resolve(candidate));
+  return relative === "" || Boolean(relative) && !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
+function directFileMutationTargetsRepo(input: GuardCommandPayload, output: GuardCommandPayload, repoRoot: string | undefined) {
+  const pathArg = directFileMutationPathArg(input, output);
+  return Boolean(pathArg && repoRoot && isPathInside(repoRoot, pathArg.value));
+}
+
+async function tryLazyStart(input: GuardCommandPayload, output: GuardCommandPayload, context: HookContext, config: GuardianConfig | null, sessionWorktree: SessionWorktreeResult | null, command: unknown, readOnly: { readonly allowed: boolean }, guardBlocked: boolean, executionCwd: string, cache: Map<string, string>) {
+  const sessionId = getSessionId(input);
+  const shouldStart = config?.autoStart === true
+    && config.autoStartMode === "lazy"
+    && !guardBlocked
+    && Boolean(sessionId)
+    && Boolean(context.directory)
+    && sessionWorktree?.terminal !== true
+    && typeof sessionWorktree?.expectedWorktree !== "string"
+    && (directFileMutationTargetsRepo(input, output, context.directory) || Boolean(typeof command === "string" && command.length > 0 && !readOnly.allowed));
+  if (!shouldStart || !sessionId || !context.directory) return null;
+
+  const result = await guardianStart({
+    repoRoot: context.directory,
+    cwd: executionCwd,
+    sessionId,
+    taskName: input.taskName ?? "session",
+    createWorktree: true,
+    config,
+  });
+  rememberSessionWorktree(cache, sessionId, result);
+  if (result.ok !== true) return { result, sessionWorktree };
+
+  const actualWorktree = await resolveActualWorktreeOrPath(executionCwd);
+  const resolved = await resolveSessionWorktree({
+    repoRoot: context.directory,
+    cwd: executionCwd,
+    actualWorktree,
+    sessionId,
+    cache,
+    validateBinding: true,
+  });
+  return { result, sessionWorktree: resolved };
 }
 
 function createTools(planCache: PlanTokenCache) {
@@ -123,16 +169,23 @@ const WorktreeGuardianPlugin = {
           protectedBranchWorktreePaths: guardContext.protectedBranchWorktreePaths,
           currentBranch: guardContext.currentBranch,
         });
-        const readOnly = sessionWorktree?.ok === false ? classifyReadOnlyInspectionCommand(command) : { allowed: true, reason: null };
-        const normalAgentGit = sessionWorktree?.ok === false ? classifyNormalAgentGitCommand(command, {
+        const readOnly = classifyReadOnlyInspectionCommand(command);
+        const normalAgentGit = classifyNormalAgentGitCommand(command, {
           cwd: effectiveCwd,
           protectedBranches: guardContext.guardConfig?.protectedBranches,
           branchPrefix: guardContext.guardConfig?.branchPrefix,
           guardianBranches: guardContext.guardianBranches,
           protectedBranchWorktreePaths: guardContext.protectedBranchWorktreePaths,
           currentBranch: guardContext.currentBranch,
-        }) : { allowed: true, reason: null };
+        });
         let routed = false;
+        const lazyStart = await tryLazyStart(input, output, context, guardContext.guardConfig, sessionWorktree, command, readOnly, guard.blocked, effectiveCwd, sessionWorktreeCache);
+        if (lazyStart?.result.ok === false) {
+          if (input.callID) activeToolCalls.delete(input.callID);
+          await writeLog(client, createEvent("tool.execute.before", input, output, context, { guard, sessionWorktree, readOnly, normalAgentGit, routed, lazyStart: lazyStart.result }));
+          throw new Error(`Worktree Guardian blocked command: lazy auto-start failed: ${lazyStart.result.reason ?? "unknown reason"}. Use guardian_status to inspect the recorded worktree.`);
+        }
+        if (lazyStart?.sessionWorktree) sessionWorktree = lazyStart.sessionWorktree;
         const directFileRoute = await routeDirectFileMutation(input, output, sessionWorktree, directory, sessionWorktreeCache);
         if (directFileRoute.blocked) {
           if (input.callID) activeToolCalls.delete(input.callID);

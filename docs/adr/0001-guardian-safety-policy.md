@@ -56,7 +56,7 @@ When a session owns a valid Guardian worktree, normal safe mutating commands suc
 
 ## `guardian_start` Session And Worktree Ownership
 
-Guardian owns a session worktree after the chat-system hook creates or attaches one, unless repo config disables automatic ownership with `autoStart: false`. `guardian_start` is the explicit path to create or attach ownership before the hook has run.
+Guardian owns a session worktree after the chat-system hook creates or attaches one, unless repo config disables automatic ownership with `autoStart: false`. `autoStartMode: "eager"` is the default and creates ownership during chat-system setup. `autoStartMode: "lazy"` leaves read-only sessions on the current worktree and creates ownership before the first repo-local direct file mutation or command that is not proven read-only; after that creation, the normal recorded-worktree routing and finish rules apply. `guardian_start` is the explicit path to create or attach ownership before the hook has run.
 
 Ownership is proven by Guardian state or by token-bound target resolution, not by branch prefix alone. Explicit descriptive branch names are allowed when state or a token-bound target proves the exact branch/worktree binding.
 

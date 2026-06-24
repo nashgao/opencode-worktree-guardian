@@ -3,7 +3,7 @@ import type { GuardianConfig, GuardianToolInput } from "../types.ts";
 export function buildInvisiblePolicy(config: GuardianConfig) {
   return [
     "Worktree Guardian policy:",
-    "- Guardian auto-starts session worktree ownership by default; repo config autoStart=false disables automatic ownership.",
+    "- Guardian auto-starts session worktree ownership eagerly by default; repo config autoStartMode=lazy delays ownership until the first mutation-triggering tool, and autoStart=false disables automatic ownership.",
     "- Do not run raw destructive git cleanup, reset, stash mutation, force-push, protected branches mutation, worktree removal, or rm -rf against worktrees.",
     "- Finish normal Guardian work through guardian_done so Guardian can choose the safe lane; use guardian_finish only for explicit low-level session finishing.",
     "- Use guardian_status for read-only inspection and guardian_done for normal gated completion.",
