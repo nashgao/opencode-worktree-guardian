@@ -99,14 +99,14 @@ test("guardian_done all=true apply blocks a stale confirm token after a session 
   assert.match(apply.reason as string, /confirm token mismatch/);
 });
 
-test("guardian_done all=true finishes every clean session end to end", async (t) => {
-  const { base, repo } = await createRepoWithOrigin();
+test("guardian_done all=true finishes every clean session and fast-forwards local main", async (t) => {
+  const { base, repo, remote } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
   const a = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_all_e2e_a", taskName: "e2e a", createWorktree: true, config: DEFAULT_CONFIG });
   const b = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_all_e2e_b", taskName: "e2e b", createWorktree: true, config: DEFAULT_CONFIG });
   await commitInWorktree(a.session.worktree_path, "feat-a.txt", "a\n", "feat a");
   await commitInWorktree(b.session.worktree_path, "feat-b.txt", "b\n", "feat b");
-  await installMultiBranchFakeGh(t, { repo });
+  await installMultiBranchFakeGh(t, { repo, remote });
 
   const plan = await guardianDone({ repoRoot: repo, cwd: repo, all: true, mode: "plan" }) as LooseRecord;
   const apply = await guardianDone({ repoRoot: repo, cwd: repo, all: true, mode: "apply", confirm: true, confirmToken: plan.confirmToken, timestamp: "20260610T010101" }) as LooseRecord;
@@ -118,4 +118,10 @@ test("guardian_done all=true finishes every clean session end to end", async (t)
   assert.equal(results.every((entry) => entry.ok === true), true, JSON.stringify(results));
   assert.equal(await pathExists(a.session.worktree_path), false);
   assert.equal(await pathExists(b.session.worktree_path), false);
+  const mainSync = apply.mainSync as LooseRecord;
+  assert.equal(mainSync.ok, true, JSON.stringify(mainSync));
+  assert.equal(mainSync.fastForwarded, true, JSON.stringify(mainSync));
+  const localMain = (await git(repo, ["rev-parse", "main"])).stdout;
+  const remoteMain = (await git(repo, ["rev-parse", "origin/main"])).stdout;
+  assert.equal(localMain, remoteMain);
 });

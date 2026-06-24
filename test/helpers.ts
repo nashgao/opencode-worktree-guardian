@@ -196,12 +196,17 @@ fi
   return { logPath, url };
 }
 
-// Relies on land-clean invoking `pr create -> view -> merge` sequentially per session: create
-// records its --head branch to a file that view/merge replay. Merges use --no-ff so independent
-// session branches can all land on main.
-export async function installMultiBranchFakeGh(t: TestLifecycle, options: { readonly repo: string }) {
+// Merges on the remote via a separate clone, like real gh, so the primary repo's local base
+// branch is never moved and guardian's post-merge fast-forward is actually exercised. Relies on
+// land-clean calling `pr create -> view -> merge` sequentially per session: create records its
+// --head branch to a file that view/merge replay. Merges use --no-ff so independent branches land.
+export async function installMultiBranchFakeGh(t: TestLifecycle, options: { readonly repo: string; readonly remote: string }) {
   const binDir = await createTempDir("guardian-multi-gh-");
   const stateDir = await createTempDir("guardian-multi-gh-state-");
+  const mergerDir = await createTempDir("guardian-multi-gh-merger-");
+  await execFileAsync("git", ["clone", "--quiet", options.remote, mergerDir]);
+  await execFileAsync("git", ["-C", mergerDir, "config", "user.email", "guardian@example.test"]);
+  await execFileAsync("git", ["-C", mergerDir, "config", "user.name", "Guardian Test"]);
   const ghPath = path.join(binDir, "gh");
   const logPath = path.join(stateDir, "gh.log");
   const currentPath = path.join(stateDir, "current-branch");
@@ -226,9 +231,10 @@ elif [ "$1" = "pr" ] && [ "$sub" = "view" ]; then
   printf '{"number":1,"url":"https://github.example/acme/widget/pull/%s","headRefName":"%s","headRefOid":"%s"}\\n' "$branch" "$branch" "$oid"
 elif [ "$1" = "pr" ] && [ "$sub" = "merge" ]; then
   branch="$(cat "$GUARDIAN_TEST_CURRENT_BRANCH")"
-  git -C "$GUARDIAN_TEST_REPO" checkout main >/dev/null 2>&1
-  git -C "$GUARDIAN_TEST_REPO" merge --no-ff "$branch" -m "merge $branch" >/dev/null 2>&1
-  git -C "$GUARDIAN_TEST_REPO" push origin main >/dev/null 2>&1
+  git -C "$GUARDIAN_TEST_MERGER" fetch -q origin
+  git -C "$GUARDIAN_TEST_MERGER" checkout -q -B main origin/main
+  git -C "$GUARDIAN_TEST_MERGER" merge -q --no-ff "origin/$branch" -m "merge $branch"
+  git -C "$GUARDIAN_TEST_MERGER" push -q origin main
 else
   echo "unexpected gh invocation: $*" >&2
   exit 2
@@ -239,11 +245,13 @@ fi
   const originalEnv = {
     PATH: process.env.PATH,
     GUARDIAN_TEST_REPO: process.env.GUARDIAN_TEST_REPO,
+    GUARDIAN_TEST_MERGER: process.env.GUARDIAN_TEST_MERGER,
     GUARDIAN_TEST_GH_LOG: process.env.GUARDIAN_TEST_GH_LOG,
     GUARDIAN_TEST_CURRENT_BRANCH: process.env.GUARDIAN_TEST_CURRENT_BRANCH,
   };
   process.env.PATH = `${binDir}${path.delimiter}${process.env.PATH ?? ""}`;
   process.env.GUARDIAN_TEST_REPO = options.repo;
+  process.env.GUARDIAN_TEST_MERGER = mergerDir;
   process.env.GUARDIAN_TEST_GH_LOG = logPath;
   process.env.GUARDIAN_TEST_CURRENT_BRANCH = currentPath;
   t.after(() => {
