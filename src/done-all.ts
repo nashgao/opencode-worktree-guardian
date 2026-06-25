@@ -1,10 +1,12 @@
 import crypto from "node:crypto";
 import path from "node:path";
 import { loadConfig, normalizeConfig } from "./config.ts";
-import { fetchRemote, getDirtyFiles, getHeadCommit, getRefCommit, getRepoRoot, isAncestor, listWorktrees, runGit } from "./git.ts";
+import { fetchRemote, getDirtyFiles, getHeadCommit, getRefCommit, getRepoRoot } from "./git.ts";
 import { getGuardianPaths, readState } from "./state.ts";
 import { guardianDoneLandClean } from "./done-land-clean.ts";
+import { runCleanupSweep } from "./done-cleanup-sweep.ts";
 import { activeFeatureSessions, type FeatureSession } from "./done-feature-sessions.ts";
+import { syncLocalBase } from "./done-main-sync.ts";
 import { isRecordLike } from "./types.ts";
 import type { GuardianConfig } from "./types.ts";
 
@@ -63,41 +65,6 @@ async function classifySession(session: FeatureSession, protectedBranches: reado
   if (protectedBranches.includes(session.branch)) return { ...base, disposition: "blocked", reason: `session branch ${session.branch} is protected` };
   if (dirty.length > 0) return { ...base, disposition: "dirty-skipped", reason: `worktree has uncommitted changes; finish it individually with guardian_done branch=${session.branch} commitMessage=...` };
   return { ...base, disposition: "finishable" };
-}
-
-// Fail-soft: returns a report instead of throwing so a sync hiccup never undoes finished merges.
-// Fast-forwards the local base-branch worktree to the freshly fetched remote base. Skips (never
-// resets) when base is checked out nowhere, is dirty, or has diverged - no force, no merge commit.
-async function syncLocalBase(repoRoot: string, config: GuardianConfig): Promise<Record<string, unknown>> {
-  const remote = String(config.remote);
-  const baseBranch = String(config.baseBranch);
-  const baseRef = `${remote}/${baseBranch}`;
-  try {
-    await fetchRemote(repoRoot, remote);
-  } catch (error) {
-    return { ok: false, baseBranch, reason: "remote fetch failed", error: error instanceof Error ? error.message : String(error) };
-  }
-  let remoteOid: string;
-  try {
-    remoteOid = await getRefCommit(repoRoot, baseRef);
-  } catch (error) {
-    return { ok: false, baseBranch, reason: `could not resolve ${baseRef}`, error: error instanceof Error ? error.message : String(error) };
-  }
-  const baseWorktree = (await listWorktrees(repoRoot)).find((worktree) => worktree.branch === baseBranch);
-  if (!baseWorktree) return { ok: false, baseBranch, reason: `no worktree has ${baseBranch} checked out; skipped local fast-forward`, remoteHead: remoteOid };
-  const localOid = typeof baseWorktree.head === "string" ? baseWorktree.head : null;
-  if (localOid === remoteOid) return { ok: true, baseBranch, alreadySynced: true, head: remoteOid, worktreePath: baseWorktree.path };
-  const dirty = await getDirtyFiles(baseWorktree.path);
-  if (dirty.length > 0) return { ok: false, baseBranch, reason: `${baseBranch} worktree has uncommitted changes; skipped local fast-forward`, dirtyFileCount: dirty.length, worktreePath: baseWorktree.path };
-  if (localOid && !(await isAncestor(repoRoot, localOid, baseRef))) {
-    return { ok: false, baseBranch, reason: `local ${baseBranch} has diverged from ${baseRef}; skipped local fast-forward`, localHead: localOid, remoteHead: remoteOid, worktreePath: baseWorktree.path };
-  }
-  try {
-    await runGit(baseWorktree.path, ["merge", "--ff-only", baseRef]);
-  } catch (error) {
-    return { ok: false, baseBranch, reason: "git merge --ff-only failed", error: error instanceof Error ? error.message : String(error), worktreePath: baseWorktree.path };
-  }
-  return { ok: true, baseBranch, fastForwarded: true, from: localOid, to: remoteOid, worktreePath: baseWorktree.path };
 }
 
 // Repo-wide implementation-done batch: finish every active Guardian feature session
@@ -159,15 +126,16 @@ export async function guardianDoneAll(input: Record<string, unknown> = {}): Prom
       summary,
       sessions: plans,
       remaining,
-      nextAction: "guardian_done all=true mode=apply confirm=true",
+      nextAction: input.all === true ? "guardian_done all=true mode=apply confirm=true" : "guardian_done mode=apply confirm=true",
     };
   }
 
   if (input.confirm !== true) {
-    return { ok: false, status: "blocked", lane: "done-all", reason: "guardian_done all=true apply requires confirm=true before finishing every active session", summary, confirmToken, nextAction: "guardian_done all=true mode=apply confirm=true" };
+    return { ok: false, status: "blocked", lane: "done-all", reason: "guardian_done apply requires confirm=true before finishing every active session", summary, confirmToken, nextAction: input.all === true ? "guardian_done all=true mode=apply confirm=true" : "guardian_done mode=apply confirm=true" };
   }
   if (input.confirmToken !== confirmToken) {
-    return { ok: false, status: "blocked", lane: "done-all", reason: "confirm token mismatch; the active session set, base ref, or a worktree changed since plan. Re-run guardian_done all=true mode=plan and use the returned confirmToken", summary };
+    const planCommand = input.all === true ? "guardian_done all=true mode=plan" : "guardian_done mode=plan";
+    return { ok: false, status: "blocked", lane: "done-all", reason: `confirm token mismatch; the active session set, base ref, or a worktree changed since plan. Re-run ${planCommand} and use the returned confirmToken`, summary };
   }
 
   const results: Record<string, unknown>[] = [];
@@ -179,7 +147,7 @@ export async function guardianDoneAll(input: Record<string, unknown> = {}): Prom
     }
     try {
       const finish = await guardianDoneLandClean({
-        input: { ...input, mode: "apply", confirm: true },
+        input: { ...input, mode: "apply", confirm: true, skipPostFinishMaintenance: true },
         repoRoot,
         cwd: plan.worktree_path,
         sessionId: plan.session_id,
@@ -207,14 +175,17 @@ export async function guardianDoneAll(input: Record<string, unknown> = {}): Prom
   const failedCount = results.length - finishedCount;
   const hardFailure = failedCount > 0;
   const mainSync = await syncLocalBase(repoRoot, config);
+  const cleanupSweep = await runCleanupSweep(repoRoot, config, input);
+  const sweepFailure = cleanupSweep.ok === false;
   return {
-    ok: !hardFailure,
-    status: !hardFailure && remaining.length === 0 ? "finished" : "partial",
+    ok: !hardFailure && !sweepFailure,
+    status: !hardFailure && !sweepFailure && remaining.length === 0 ? "finished" : "partial",
     lane: "done-all",
     summary: { ...summary, finished: finishedCount, failed: failedCount },
     results,
     remaining,
     mainSync,
+    cleanupSweep,
     ...(remaining.length > 0 ? { remainingHint: "dirty or protected sessions were skipped; finish them individually with guardian_done branch=<branch> commitMessage=..." } : {}),
   };
 }

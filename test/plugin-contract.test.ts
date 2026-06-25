@@ -750,6 +750,37 @@ test("guardian_done tool execute treats empty optional strings as absent", async
   assert.doesNotMatch(result.output, /confirmToken|sessionId/);
 });
 
+test("guardian_done bare primary defaults to done-all despite context session id", async () => {
+  const { createRepoWithOrigin, git } = await import("./helpers.ts");
+  const { guardianStart } = await import("../src/tools.ts");
+  const { DEFAULT_CONFIG } = await import("../src/config.ts");
+  const path = await import("node:path");
+  const { base, repo } = await createRepoWithOrigin();
+  test.after(() => fs.rm(base, { recursive: true, force: true }));
+  const clean = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_contract_done_bare_clean", taskName: "contract done bare clean", createWorktree: true, config: DEFAULT_CONFIG });
+  const dirty = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_contract_done_bare_dirty", taskName: "contract done bare dirty", createWorktree: true, config: DEFAULT_CONFIG });
+  await fs.writeFile(path.join(clean.session.worktree_path, "contract-bare-clean.txt"), "clean\n");
+  await git(clean.session.worktree_path, ["add", "contract-bare-clean.txt"]);
+  await git(clean.session.worktree_path, ["commit", "-m", "contract bare clean"]);
+  await fs.writeFile(path.join(dirty.session.worktree_path, "contract-bare-dirty.txt"), "dirty\n");
+  const hooks = await plugin.server({ directory: repo, worktree: repo });
+  const { context } = createToolContext();
+  context.directory = repo;
+  context.worktree = repo;
+  context.sessionID = "ses_contract_done_bare_clean";
+  const execute = hooks.tool.guardian_done.execute;
+
+  const result = await runTool(execute, { repoRoot: repo, cwd: repo, mode: "plan" }, context);
+
+  assert.equal(result.metadata.status, "planned");
+  assert.equal(result.metadata.lane, "done-all");
+  assert.equal(typeof result.metadata.confirmToken, "string");
+  assert.match(result.output, /lane: done-all/);
+  assert.match(result.output, /summary: total=2 finishable=1 dirtySkipped=1 blocked=0/);
+  assert.match(result.output, /ses_contract_done_bare_clean/);
+  assert.match(result.output, /ses_contract_done_bare_dirty/);
+});
+
 
 test("guardian_done all=true tool execute renders token and session summary", async () => {
   const { createRepoWithOrigin, git } = await import("./helpers.ts");
@@ -794,6 +825,8 @@ test("guardian_done all=true readable partial output includes failures and remai
     summary: { total: 2, finishable: 1, dirtySkipped: 1, blocked: 0, finished: 0, failed: 1 },
     results: [{ session_id: "ses_failed", branch: "guardian/failed", ok: false, status: "blocked", reason: "gh pr create failed" }],
     remaining: [{ session_id: "ses_dirty", branch: "guardian/dirty", disposition: "dirty-skipped", reason: "worktree has uncommitted changes; finish it individually" }],
+    mainSync: { ok: true, baseBranch: "main", fastForwarded: true },
+    cleanupSweep: { ok: true, status: "cleaned", candidateCount: 1, cleanedCount: 1, failedCount: 0 },
     remainingHint: "dirty or protected sessions were skipped",
   });
 
@@ -804,6 +837,8 @@ test("guardian_done all=true readable partial output includes failures and remai
   assert.match(output, /gh pr create failed/);
   assert.match(output, /dirty or blocked sessions:/);
   assert.match(output, /ses_dirty/);
+  assert.match(output, /mainSync: ok=true baseBranch=main fastForwarded=true/);
+  assert.match(output, /cleanupSweep: ok=true status=cleaned candidates=1 cleaned=1 failed=0/);
   assert.match(output, /worktree has uncommitted changes/);
   assert.match(output, /dirty or protected sessions were skipped/);
 });
@@ -821,6 +856,29 @@ test("guardian_done all=true readable no-op output reports reason as info", () =
   assert.match(output, /guardian_done no-op/);
   assert.match(output, /\[INFO\] no active Guardian feature sessions to finish/);
   assert.doesNotMatch(output, /\[FAIL\]/);
+});
+
+test("guardian_done session-finish readable output counts top-level dirty files", () => {
+  const output = formatGuardianDoneOutput({
+    ok: true,
+    status: "planned",
+    lane: "session-finish",
+    branch: "guardian/default-done-workflow",
+    baseBranch: "main",
+    dirtyFiles: ["README.md", "src/done.ts"],
+    worktreePath: "/repo/.worktrees/repo/default-done-workflow",
+    head: "0123456789abcdef0123456789abcdef01234567",
+    nextAction: "guardian_done mode=apply confirm=true",
+    commitMessage: "feat: make guardian done finish all by default",
+  });
+
+  assert.match(output, /guardian_done planned/);
+  assert.match(output, /lane: session-finish/);
+  assert.match(output, /dirty: 2/);
+  assert.match(output, /dirty files:/);
+  assert.match(output, /README\.md/);
+  assert.match(output, /src\/done\.ts/);
+  assert.doesNotMatch(output, /dirty: 0/);
 });
 
 test("guardian_finish_workflow tool execute returns readable plan output with raw metadata", async () => {
