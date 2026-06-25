@@ -5,7 +5,7 @@ import test from "node:test";
 import { DEFAULT_CONFIG } from "../src/config.ts";
 import { guardianDone } from "../src/done.ts";
 import { guardianStart } from "../src/tools.ts";
-import { createRepoWithOrigin, git, installMultiBranchFakeGh } from "./helpers.ts";
+import { createRepoWithOrigin, git, installFakeGh, installMultiBranchFakeGh } from "./helpers.ts";
 
 type LooseRecord = Record<string, unknown>;
 
@@ -97,6 +97,32 @@ test("guardian_done all=true apply blocks a stale confirm token after a session 
   assert.equal(apply.ok, false);
   assert.equal(apply.status, "blocked");
   assert.match(apply.reason as string, /confirm token mismatch/);
+});
+
+test("guardian_done all=true cleans already-merged sessions without creating a PR", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const session = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_all_already_merged", taskName: "all already merged", createWorktree: true, config: DEFAULT_CONFIG });
+  await commitInWorktree(session.session.worktree_path, "feat-already.txt", "already\n", "feat already merged");
+  const head = (await git(session.session.worktree_path, ["rev-parse", "HEAD"])).stdout;
+  await git(repo, ["merge", "--ff-only", session.session.branch]);
+  await git(repo, ["push", "origin", "main"]);
+  const fakeGh = await installFakeGh(t, { repo, branch: session.session.branch, head });
+
+  const plan = await guardianDone({ repoRoot: repo, cwd: repo, all: true, mode: "plan" }) as LooseRecord;
+  const apply = await guardianDone({ repoRoot: repo, cwd: repo, all: true, mode: "apply", confirm: true, confirmToken: plan.confirmToken, timestamp: "20260624T121500" }) as LooseRecord;
+
+  assert.equal(apply.ok, true, JSON.stringify(apply));
+  assert.equal(apply.status, "finished");
+  const results = apply.results as LooseRecord[];
+  assert.equal(results.length, 1);
+  assert.equal(results[0].status, "already-landed-and-cleaned");
+  assert.equal(results[0].worktreeRemoved, true);
+  assert.equal(results[0].branchDeleted, true);
+  const log = await fs.readFile(fakeGh.logPath, "utf8").catch(() => "");
+  assert.equal(log, "");
+  assert.equal(await pathExists(session.session.worktree_path), false);
+  await assert.rejects(git(repo, ["rev-parse", "--verify", `refs/heads/${session.session.branch}`]));
 });
 
 test("guardian_done all=true finishes every clean session and fast-forwards local main", async (t) => {
