@@ -1,4 +1,6 @@
 import { guardianDeleteWorktree } from "./delete-worktree.ts";
+import { runCleanupSweep } from "./done-cleanup-sweep.ts";
+import { syncLocalBase } from "./done-main-sync.ts";
 import { createSafetyRef, fetchRemote, getCurrentBranch, getDirtyFiles, getHeadCommit, isAncestor, pushBranch, runGit } from "./git.ts";
 import { getOrCreatePullRequest, mergePullRequest } from "./done-github-pr.ts";
 import type { GuardianConfig, GuardianSession } from "./types.ts";
@@ -42,6 +44,30 @@ function sessionBranch(session: GuardianSession): string | null {
 
 function commitMessage(input: Record<string, unknown>): string {
   return typeof input.commitMessage === "string" ? input.commitMessage.trim() : "";
+}
+
+async function postFinishMaintenance(context: LandCleanContext): Promise<Record<string, unknown>> {
+  if (context.input.skipPostFinishMaintenance === true) return {};
+  const mainSync = await syncLocalBase(context.repoRoot, context.config);
+  const cleanupSweep = await runCleanupSweep(context.repoRoot, context.config, context.input);
+  return { mainSync, cleanupSweep };
+}
+
+function withMaintenanceOutcome(result: Record<string, unknown>, maintenance: Record<string, unknown>): Record<string, unknown> {
+  const cleanupSweep = maintenance.cleanupSweep;
+  const sweepOk = typeof cleanupSweep === "object" && cleanupSweep !== null && "ok" in cleanupSweep
+    ? (cleanupSweep as { readonly ok?: unknown }).ok
+    : undefined;
+  if (sweepOk === false) {
+    return {
+      ...result,
+      ...maintenance,
+      ok: false,
+      status: "partial",
+      reason: "session landed and cleaned, but post-finish cleanup sweep was blocked",
+    };
+  }
+  return { ...result, ...maintenance };
 }
 
 async function cleanupLandedSession(context: LandCleanContext, failurePrefix: string) {
@@ -148,7 +174,8 @@ export async function guardianDoneLandClean(context: LandCleanContext): Promise<
   if (await isAncestor(context.repoRoot, head, baseRef)) {
     const cleanup = await cleanupLandedSession(context, "session commit is already reachable from the remote base branch");
     if (cleanup.ok !== true) return cleanup;
-    return {
+    const maintenance = await postFinishMaintenance(context);
+    return withMaintenanceOutcome({
       ok: true,
       status: "already-landed-and-cleaned",
       action: "already-landed-clean",
@@ -159,7 +186,7 @@ export async function guardianDoneLandClean(context: LandCleanContext): Promise<
       cleanup,
       worktreeRemoved: cleanup.worktreeRemoved === true,
       branchDeleted: cleanup.branchDeleted === true,
-    };
+    }, maintenance);
   }
   await pushBranch(context.repoRoot, preflight.remote, preflight.branch);
   const prResult = await getOrCreatePullRequest(context.repoRoot, preflight.branch, preflight.baseBranch, context.sessionId);
@@ -176,7 +203,8 @@ export async function guardianDoneLandClean(context: LandCleanContext): Promise<
   }
   const cleanup = await cleanupLandedSession(context, "PR landed");
   if (cleanup.ok !== true) return { ...cleanup, pr: prResult.pr };
-  return {
+  const maintenance = await postFinishMaintenance(context);
+  return withMaintenanceOutcome({
     ok: true,
     status: "landed-and-cleaned",
     action: "land-and-clean",
@@ -190,5 +218,5 @@ export async function guardianDoneLandClean(context: LandCleanContext): Promise<
     cleanup,
     worktreeRemoved: cleanup.worktreeRemoved === true,
     branchDeleted: cleanup.branchDeleted === true,
-  };
+  }, maintenance);
 }

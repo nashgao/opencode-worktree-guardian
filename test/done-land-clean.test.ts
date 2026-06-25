@@ -120,3 +120,63 @@ test("guardian_done apply commits dirty session work before landing and cleanup"
   assert.doesNotMatch(worktrees, new RegExp(escapeRegExp(worktree)));
   await assert.rejects(git(repo, ["rev-parse", "--verify", `refs/heads/${branch}`]));
 });
+
+test("guardian_done active-session apply reports cleanup sweep plan without deleting unrelated candidates", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+
+  const staleBranch = "guardian/post-finish-clean-candidate";
+  await git(repo, ["checkout", "-b", staleBranch]);
+  await fs.writeFile(path.join(repo, "stale-candidate.txt"), "stale candidate\n", "utf8");
+  await git(repo, ["add", "stale-candidate.txt"]);
+  await git(repo, ["commit", "-m", "add stale cleanup candidate"]);
+  await git(repo, ["checkout", "main"]);
+  await git(repo, ["merge", "--no-ff", staleBranch, "-m", "merge stale cleanup candidate"]);
+  await git(repo, ["push", "origin", "main"]);
+  const staleWorktree = path.join(repo, ".worktrees", path.basename(repo), "post-finish-clean-candidate");
+  await git(repo, ["worktree", "add", staleWorktree, staleBranch]);
+  const sessionId = "land-clean-planned-maintenance";
+  const started = await guardianStart({
+    repoRoot: repo,
+    cwd: repo,
+    sessionId,
+    taskName: "partial maintenance",
+    createWorktree: true,
+    config: DEFAULT_CONFIG,
+  });
+  const session = requireRecord(started.session, "started.session");
+  const worktree = requireString(session.worktree_path, "started.session.worktree_path");
+  const branch = requireString(session.branch, "started.session.branch");
+  await fs.writeFile(path.join(worktree, "feature.txt"), "landed before partial maintenance\n", "utf8");
+  await git(worktree, ["add", "feature.txt"]);
+  await git(worktree, ["commit", "-m", "add partial maintenance fixture"]);
+  const head = (await git(worktree, ["rev-parse", "HEAD"])).stdout.trim();
+  await installFakeGh(t, { repo, branch, head });
+
+  const result = await guardianDone({
+    repoRoot: repo,
+    cwd: worktree,
+    sessionId,
+    mode: "apply",
+    confirm: true,
+    timestamp: "2026-06-19T00:00:00.000Z",
+    config: DEFAULT_CONFIG,
+  });
+
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(result.status, "landed-and-cleaned");
+  assert.equal(result.worktreeRemoved, true);
+  assert.equal(result.branchDeleted, true);
+  const cleanupSweep = requireRecord(result.cleanupSweep, "result.cleanupSweep");
+  assert.equal(cleanupSweep.ok, true);
+  assert.equal(cleanupSweep.status, "planned");
+  assert.equal(cleanupSweep.candidateCount, 1);
+  assert.equal(cleanupSweep.cleanedCount, 0);
+  assert.match(String(cleanupSweep.reason), /separate guardian_finish_workflow apply confirmation/);
+  await git(repo, ["fetch", "origin", "main"]);
+  await git(repo, ["merge-base", "--is-ancestor", head, "origin/main"]);
+  await assert.rejects(fs.access(worktree));
+  await assert.rejects(git(repo, ["rev-parse", "--verify", `refs/heads/${branch}`]));
+  await fs.access(staleWorktree);
+  await git(repo, ["rev-parse", "--verify", `refs/heads/${staleBranch}`]);
+});

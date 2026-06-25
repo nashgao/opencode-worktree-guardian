@@ -73,7 +73,7 @@ function formatGuardianDoneAllOutput(result: Record<string, unknown>) {
     `[INFO] lane: done-all | summary: ${formatDoneAllSummary(summary)}`,
   ];
   const reason = textValue(result.reason, "");
-  if (result.ok === false) lines.push(`[FAIL] ${reason || "guardian_done all=true blocked"}`);
+  if (result.ok === false) lines.push(`[FAIL] ${reason || "guardian_done blocked"}`);
   else if (reason) lines.push(`[INFO] ${reason}`);
   if (typeof result.confirmToken === "string") lines.push(`[WARN] confirmToken: ${result.confirmToken}`);
   if (typeof result.nextAction === "string") lines.push(`[INFO] nextAction: ${result.nextAction}`);
@@ -89,6 +89,14 @@ function formatGuardianDoneAllOutput(result: Record<string, unknown>) {
   if (remaining.length > 0) {
     lines.push("[WARN] dirty or blocked sessions:");
     for (const entry of remaining.slice(0, 8)) lines.push(formatDoneAllSession(entry));
+  }
+  const mainSync = recordValue(result.mainSync);
+  if (Object.keys(mainSync).length > 0) {
+    lines.push(`[INFO] mainSync: ok=${String(mainSync.ok === true)} baseBranch=${textValue(mainSync.baseBranch)} fastForwarded=${String(mainSync.fastForwarded === true)} alreadySynced=${String(mainSync.alreadySynced === true)} reason=${textValue(mainSync.reason, "")}`);
+  }
+  const cleanupSweep = recordValue(result.cleanupSweep);
+  if (Object.keys(cleanupSweep).length > 0) {
+    lines.push(`[INFO] cleanupSweep: ok=${String(cleanupSweep.ok === true)} status=${textValue(cleanupSweep.status)} candidates=${Number(cleanupSweep.candidateCount ?? 0)} cleaned=${Number(cleanupSweep.cleanedCount ?? 0)} failed=${Number(cleanupSweep.failedCount ?? 0)}`);
   }
   const hint = textValue(result.remainingHint, "");
   if (hint) lines.push(`[WARN] ${hint}`);
@@ -132,7 +140,7 @@ export function formatGuardianDoneOutput(rawResult: unknown) {
   const cleanup = recordValue(result.cleanup);
   const pr = recordValue(result.pr);
   const dirtySnapshot = recordValue(result.dirtySnapshot);
-  const dirtyPaths = arrayValue(dirtySnapshot.paths ?? preflight.dirtyFiles);
+  const dirtyPaths = arrayValue(dirtySnapshot.paths ?? preflight.dirtyFiles ?? result.dirtyFiles);
   const branch = preflight.currentBranch ?? result.branch;
   const baseBranch = preflight.baseBranch ?? result.baseBranch;
   const lines = [
@@ -147,6 +155,10 @@ export function formatGuardianDoneOutput(rawResult: unknown) {
   if (typeof result.head === "string") lines.push(`[INFO] head: ${shortCommit(result.head)}`);
   if (Object.keys(pr).length > 0) lines.push(`[INFO] pr: #${textValue(pr.number)} ${textValue(pr.url)} created=${String(result.prCreated === true)} adminBypass=${String(result.adminBypass === true)}`);
   if (Object.keys(cleanup).length > 0) lines.push(`[INFO] cleanup: ${textValue(cleanup.status)} worktreeRemoved=${String(cleanup.worktreeRemoved === true)} branchDeleted=${String(cleanup.branchDeleted === true)}`);
+  const mainSync = recordValue(result.mainSync);
+  if (Object.keys(mainSync).length > 0) lines.push(`[INFO] mainSync: ok=${String(mainSync.ok === true)} baseBranch=${textValue(mainSync.baseBranch)} fastForwarded=${String(mainSync.fastForwarded === true)} alreadySynced=${String(mainSync.alreadySynced === true)} reason=${textValue(mainSync.reason, "")}`);
+  const cleanupSweep = recordValue(result.cleanupSweep);
+  if (Object.keys(cleanupSweep).length > 0) lines.push(`[INFO] cleanupSweep: ok=${String(cleanupSweep.ok === true)} status=${textValue(cleanupSweep.status)} candidates=${Number(cleanupSweep.candidateCount ?? 0)} cleaned=${Number(cleanupSweep.cleanedCount ?? 0)} failed=${Number(cleanupSweep.failedCount ?? 0)}`);
   if (typeof result.commitMessage === "string") lines.push(`[INFO] commitMessage: ${result.commitMessage}`);
   if (typeof result.commit === "string") lines.push(`[INFO] commit: ${shortCommit(result.commit)}`);
   if (dirtyPaths.length > 0) {
