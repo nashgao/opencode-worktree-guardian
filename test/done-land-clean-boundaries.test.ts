@@ -59,6 +59,27 @@ test("guardian_done active-session plan is read-only and previews land-and-clean
   await assert.rejects(git(repo, ["merge-base", "--is-ancestor", head, "origin/main"]));
 });
 
+
+test("guardian_done cleans already-merged sessions without creating a PR", async (t) => {
+  const sessionId = "land-clean-already-merged";
+  const { repo, worktree, branch, head } = await createCommittedSession(sessionId, "already-merged");
+  await git(repo, ["merge", "--ff-only", branch]);
+  await git(repo, ["push", "origin", "main"]);
+  const fakeGh = await installFakeGh(t, { repo, branch, head });
+
+  const result = await guardianDone({ repoRoot: repo, cwd: worktree, sessionId, mode: "apply", confirm: true, config: DEFAULT_CONFIG, timestamp: "20260624T120000" });
+
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(result.status, "already-landed-and-cleaned");
+  assert.equal(result.worktreeRemoved, true);
+  assert.equal(result.branchDeleted, true);
+  const log = await fs.readFile(fakeGh.logPath, "utf8").catch(() => "");
+  assert.equal(log, "");
+  await assert.rejects(fs.access(worktree));
+  await assert.rejects(git(repo, ["rev-parse", "--verify", `refs/heads/${branch}`]));
+  assert.equal((await git(repo, ["merge-base", "--is-ancestor", head, "origin/main"]).then(() => true, () => false)), true);
+});
+
 test("guardian_done reuses an existing open PR before cleanup", async (t) => {
   const sessionId = "land-clean-existing-pr";
   const { repo, worktree, branch, head } = await createCommittedSession(sessionId, "existing-pr");

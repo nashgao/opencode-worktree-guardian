@@ -3,6 +3,7 @@ import fs, { readFile } from "node:fs/promises";
 import test from "node:test";
 import plugin from "../src/index.ts";
 import { formatGuardianHygieneOutput } from "../src/plugin/readable-output-cleanup.ts";
+import { formatGuardianDoneOutput } from "../src/plugin/readable-output-workflow.ts";
 import type { GuardianNativeToolReturn, GuardianToolInput, GuardianToolName, RecordLike } from "../src/types.ts";
 import { isMutableRecord, isRecordLike } from "../src/types.ts";
 import { createRepo, createTempDir, seedSession } from "./helpers.ts";
@@ -747,6 +748,79 @@ test("guardian_done tool execute treats empty optional strings as absent", async
   assert.equal(result.metadata.preflight.repoRoot, repo);
   assert.equal(result.metadata.preflight.currentWorktree, repo);
   assert.doesNotMatch(result.output, /confirmToken|sessionId/);
+});
+
+
+test("guardian_done all=true tool execute renders token and session summary", async () => {
+  const { createRepoWithOrigin, git } = await import("./helpers.ts");
+  const { guardianStart } = await import("../src/tools.ts");
+  const { DEFAULT_CONFIG } = await import("../src/config.ts");
+  const path = await import("node:path");
+  const { base, repo } = await createRepoWithOrigin();
+  test.after(() => fs.rm(base, { recursive: true, force: true }));
+  const clean = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_contract_done_all_clean", taskName: "contract done all clean", createWorktree: true, config: DEFAULT_CONFIG });
+  const dirty = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_contract_done_all_dirty", taskName: "contract done all dirty", createWorktree: true, config: DEFAULT_CONFIG });
+  await fs.writeFile(path.join(clean.session.worktree_path, "contract-clean.txt"), "clean\n");
+  await git(clean.session.worktree_path, ["add", "contract-clean.txt"]);
+  await git(clean.session.worktree_path, ["commit", "-m", "contract clean done all"]);
+  await fs.writeFile(path.join(dirty.session.worktree_path, "contract-dirty.txt"), "dirty\n");
+  const hooks = await plugin.server({ directory: repo, worktree: repo });
+  const { context } = createToolContext();
+  context.directory = repo;
+  context.worktree = repo;
+  const execute = hooks.tool.guardian_done.execute;
+
+  const result = await runTool(execute, { repoRoot: repo, cwd: repo, all: true, mode: "plan" }, context);
+
+  assert.equal(result.metadata.status, "planned");
+  assert.equal(result.metadata.lane, "done-all");
+  assert.equal(typeof result.metadata.confirmToken, "string");
+  assert.match(result.output, /guardian_done planned/);
+  assert.match(result.output, /lane: done-all/);
+  assert.match(result.output, /confirmToken:/);
+  assert.match(result.output, /summary: total=2 finishable=1 dirtySkipped=1 blocked=0/);
+  assert.match(result.output, /finishable sessions:/);
+  assert.match(result.output, /dirty or blocked sessions:/);
+  assert.match(result.output, /ses_contract_done_all_clean/);
+  assert.match(result.output, /ses_contract_done_all_dirty/);
+  assert.match(result.output, /worktree has uncommitted changes/);
+});
+
+test("guardian_done all=true readable partial output includes failures and remaining sessions", () => {
+  const output = formatGuardianDoneOutput({
+    ok: false,
+    status: "partial",
+    lane: "done-all",
+    summary: { total: 2, finishable: 1, dirtySkipped: 1, blocked: 0, finished: 0, failed: 1 },
+    results: [{ session_id: "ses_failed", branch: "guardian/failed", ok: false, status: "blocked", reason: "gh pr create failed" }],
+    remaining: [{ session_id: "ses_dirty", branch: "guardian/dirty", disposition: "dirty-skipped", reason: "worktree has uncommitted changes; finish it individually" }],
+    remainingHint: "dirty or protected sessions were skipped",
+  });
+
+  assert.match(output, /guardian_done partial/);
+  assert.match(output, /summary: total=2 finishable=1 dirtySkipped=1 blocked=0 finished=0 failed=1/);
+  assert.match(output, /finish results:/);
+  assert.match(output, /ses_failed/);
+  assert.match(output, /gh pr create failed/);
+  assert.match(output, /dirty or blocked sessions:/);
+  assert.match(output, /ses_dirty/);
+  assert.match(output, /worktree has uncommitted changes/);
+  assert.match(output, /dirty or protected sessions were skipped/);
+});
+
+test("guardian_done all=true readable no-op output reports reason as info", () => {
+  const output = formatGuardianDoneOutput({
+    ok: true,
+    status: "no-op",
+    lane: "done-all",
+    reason: "no active Guardian feature sessions to finish",
+    summary: { total: 0, finishable: 0, dirtySkipped: 0, blocked: 0 },
+    sessions: [],
+  });
+
+  assert.match(output, /guardian_done no-op/);
+  assert.match(output, /\[INFO\] no active Guardian feature sessions to finish/);
+  assert.doesNotMatch(output, /\[FAIL\]/);
 });
 
 test("guardian_finish_workflow tool execute returns readable plan output with raw metadata", async () => {

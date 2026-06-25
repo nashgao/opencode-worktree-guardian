@@ -44,6 +44,33 @@ function commitMessage(input: Record<string, unknown>): string {
   return typeof input.commitMessage === "string" ? input.commitMessage.trim() : "";
 }
 
+async function cleanupLandedSession(context: LandCleanContext, failurePrefix: string) {
+  const cleanupPlan = await guardianDeleteWorktree({
+    repoRoot: context.repoRoot,
+    cwd: context.repoRoot,
+    mode: "plan",
+    sessionId: context.sessionId,
+    deleteBranch: true,
+    timestamp: context.input.timestamp,
+    config: context.config,
+  });
+  if (cleanupPlan.ok !== true || typeof cleanupPlan.confirmToken !== "string") {
+    return { ok: false, status: "cleanup-blocked", reason: `${failurePrefix} but stale worktree cleanup could not be planned`, cleanup: cleanupPlan };
+  }
+  const cleanup = await guardianDeleteWorktree({
+    repoRoot: context.repoRoot,
+    cwd: context.repoRoot,
+    mode: "apply",
+    sessionId: context.sessionId,
+    deleteBranch: true,
+    confirmToken: cleanupPlan.confirmToken,
+    timestamp: context.input.timestamp,
+    config: context.config,
+  });
+  if (cleanup.ok !== true) return { ok: false, status: "cleanup-blocked", reason: `${failurePrefix} but stale worktree cleanup failed`, cleanup };
+  return cleanup;
+}
+
 async function landCleanPreflight(context: LandCleanContext): Promise<LandCleanPreflight> {
   const branch = sessionBranch(context.session) ?? await getCurrentBranch(context.cwd);
   if (!branch) return blocked("Guardian session has no branch to land", { sessionId: context.sessionId });
@@ -116,6 +143,24 @@ export async function guardianDoneLandClean(context: LandCleanContext): Promise<
     head = committed.head;
     commitSafetyRef = committed.safetyRef;
   }
+  await fetchRemote(context.repoRoot, preflight.remote);
+  const baseRef = `${preflight.remote}/${preflight.baseBranch}`;
+  if (await isAncestor(context.repoRoot, head, baseRef)) {
+    const cleanup = await cleanupLandedSession(context, "session commit is already reachable from the remote base branch");
+    if (cleanup.ok !== true) return cleanup;
+    return {
+      ok: true,
+      status: "already-landed-and-cleaned",
+      action: "already-landed-clean",
+      branch: preflight.branch,
+      head,
+      ...(commitSafetyRef ? { commit: head, commitMessage: message, commitSafetyRef, dirtyFiles: preflight.dirtyFiles } : {}),
+      baseRef,
+      cleanup,
+      worktreeRemoved: cleanup.worktreeRemoved === true,
+      branchDeleted: cleanup.branchDeleted === true,
+    };
+  }
   await pushBranch(context.repoRoot, preflight.remote, preflight.branch);
   const prResult = await getOrCreatePullRequest(context.repoRoot, preflight.branch, preflight.baseBranch, context.sessionId);
   if (!prResult.ok) return prResult.result;
@@ -126,33 +171,11 @@ export async function guardianDoneLandClean(context: LandCleanContext): Promise<
   if (!mergeResult.ok) return mergeResult.result;
 
   await fetchRemote(context.repoRoot, preflight.remote);
-  const baseRef = `${preflight.remote}/${preflight.baseBranch}`;
   if (!(await isAncestor(context.repoRoot, head, baseRef))) {
     return blocked("PR merge completed but the session commit is not reachable from the remote base branch", { pr: prResult.pr, head, baseRef });
   }
-  const cleanupPlan = await guardianDeleteWorktree({
-    repoRoot: context.repoRoot,
-    cwd: context.repoRoot,
-    mode: "plan",
-    sessionId: context.sessionId,
-    deleteBranch: true,
-    timestamp: context.input.timestamp,
-    config: context.config,
-  });
-  if (cleanupPlan.ok !== true || typeof cleanupPlan.confirmToken !== "string") {
-    return { ok: false, status: "cleanup-blocked", reason: "PR landed but stale worktree cleanup could not be planned", pr: prResult.pr, cleanup: cleanupPlan };
-  }
-  const cleanup = await guardianDeleteWorktree({
-    repoRoot: context.repoRoot,
-    cwd: context.repoRoot,
-    mode: "apply",
-    sessionId: context.sessionId,
-    deleteBranch: true,
-    confirmToken: cleanupPlan.confirmToken,
-    timestamp: context.input.timestamp,
-    config: context.config,
-  });
-  if (cleanup.ok !== true) return { ok: false, status: "cleanup-blocked", reason: "PR landed but stale worktree cleanup failed", pr: prResult.pr, cleanup };
+  const cleanup = await cleanupLandedSession(context, "PR landed");
+  if (cleanup.ok !== true) return { ...cleanup, pr: prResult.pr };
   return {
     ok: true,
     status: "landed-and-cleaned",
