@@ -87,7 +87,7 @@ The supported lanes are:
 
 The current worktree path, checked-out branch, protected-branch policy, dirty-file gates, and finish preflight are the recovery proof for an existing Guardian-root worktree. The old session id is not required for recovery and must not be the only way to finish a leftover Guardian worktree.
 
-Active-session apply must not clean up its own session until the PR merge has completed and the session commit is proven reachable from the freshly fetched remote base ref. Primary-main apply creates a pre-commit safety ref, commits only token-bound dirty paths, pushes normally to the configured remote/base branch, fetches, proves remote reachability, and returns a separate cleanup plan. The primary-main lane must not silently apply cleanup, force-push, mutate stashes, delete remote branches, merge PRs, or treat old primary/protected session records as ownership.
+Active-session apply must not clean up its own session until the PR merge has completed and the session commit is proven reachable from the freshly fetched remote base ref. Primary-main apply creates a pre-commit safety ref, commits only token-bound dirty paths, pushes normally to the configured remote/base branch, fetches, proves remote reachability, and returns a separate cleanup plan. The primary-main lane must not silently apply cleanup, force-push, mutate stashes, delete unrelated remote branches, merge PRs, or treat old primary/protected session records as ownership.
 
 In plugin flow, the internal plan token may be cached and reused only when session, repo, options, and dirty snapshot still match the plan. Blank token values and confirmation placeholders are treated as absent.
 

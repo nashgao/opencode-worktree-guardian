@@ -41,7 +41,7 @@ export function isGuardianWorktreeStatusPath(repoRoot: string, guardianRoot: str
 }
 
 export async function plannedCandidate(repoRoot: string, config: Record<string, unknown>, input: Record<string, unknown>): Promise<Record<string, unknown>> {
-  const plan = await guardianDeleteWorktree({ repoRoot, cwd: repoRoot, mode: "plan", deleteBranch: true, config, ...input });
+  const plan = await guardianDeleteWorktree({ repoRoot, cwd: repoRoot, mode: "plan", deleteBranch: true, ancestryBaseRef: `${String(config.remote)}/${String(config.baseBranch)}`, config, ...input });
   if (!plan.ok) return { ok: false, reason: plan.reason, plan };
   const preflight = plan.preflight as Record<string, unknown>;
   return {

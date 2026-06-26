@@ -65,7 +65,7 @@ export async function validateRedundantDirtyPreflight(context: DirtyPreflightCon
   if (dirtyFiles.length === 0) return null;
   if (input.allowRedundantDirtyPaths !== true) return blocked("worktree has uncommitted changes", { dirtyFiles, targetPath: entry.path }, preflight);
   const repoRoot = String(preflight.repoRoot);
-  const baseRef = session?.base_ref ?? `${String(config.remote)}/${String(config.baseBranch)}`;
+  const baseRef = typeof input.ancestryBaseRef === "string" ? input.ancestryBaseRef : session?.base_ref ?? `${String(config.remote)}/${String(config.baseBranch)}`;
   preflight.baseRef = baseRef;
   const base = await resolveRedundantDirtyBase(repoRoot, String(config.remote), baseRef);
   if (!base.ok) {

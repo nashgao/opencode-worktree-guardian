@@ -1,5 +1,8 @@
+import path from "node:path";
+import { expandWorktreeRoot } from "./config.ts";
 import { resolveBaseRef } from "./done-base-ref.ts";
 import { fetchRemote, getDirtyFiles, getRefCommit, isAncestor, listWorktrees, runGit } from "./git.ts";
+import { isInside } from "./workflow-candidates.ts";
 
 // Fail-soft: returns a report instead of throwing so a sync hiccup never undoes finished merges.
 // Fast-forwards the local base-branch worktree to the freshly fetched remote base. Skips (never
@@ -22,7 +25,8 @@ export async function syncLocalBase(repoRoot: string, config: Record<string, unk
   if (!baseWorktree) return { ok: false, baseBranch: localBaseBranch, baseRef, configuredBaseRef: base.configuredBaseRef, baseRefSource: base.source, reason: `no worktree has ${localBaseBranch} checked out; skipped local fast-forward`, remoteHead: remoteOid };
   const localOid = typeof baseWorktree.head === "string" ? baseWorktree.head : null;
   if (localOid === remoteOid) return { ok: true, baseBranch: localBaseBranch, baseRef, configuredBaseRef: base.configuredBaseRef, baseRefSource: base.source, alreadySynced: true, head: remoteOid, worktreePath: baseWorktree.path };
-  const dirty = await getDirtyFiles(baseWorktree.path);
+  const guardianRoot = path.resolve(repoRoot, expandWorktreeRoot(String(config.worktreeRoot), repoRoot));
+  const dirty = (await getDirtyFiles(baseWorktree.path)).filter((file) => !isInside(path.resolve(baseWorktree.path, file.replace(/\/$/, "")), guardianRoot));
   if (dirty.length > 0) return { ok: false, baseBranch: localBaseBranch, baseRef, configuredBaseRef: base.configuredBaseRef, baseRefSource: base.source, reason: `${localBaseBranch} worktree has uncommitted changes; skipped local fast-forward`, dirtyFileCount: dirty.length, worktreePath: baseWorktree.path };
   if (localOid && !(await isAncestor(repoRoot, localOid, baseRef))) {
     return { ok: false, baseBranch: localBaseBranch, baseRef, configuredBaseRef: base.configuredBaseRef, baseRefSource: base.source, reason: `local ${localBaseBranch} has diverged from ${baseRef}; skipped local fast-forward`, localHead: localOid, remoteHead: remoteOid, worktreePath: baseWorktree.path };

@@ -7,9 +7,10 @@ import { promisify } from "node:util";
 import { DEFAULT_CONFIG } from "../src/config.ts";
 import { syncLocalBase } from "../src/done-main-sync.ts";
 import { guardianFinishWorkflow } from "../src/workflow.ts";
-import { createRepoWithOrigin, createTempDir, git } from "./helpers.ts";
+import { createRepoWithOrigin, createTempDir, git, seedSession } from "./helpers.ts";
 
 const execFileAsync = promisify(execFile);
+const TRUST_GITLAB_CONFIG = { ...DEFAULT_CONFIG, trustedUpstreamRemotes: ["gitlab"] };
 
 type WorkflowResult = {
   readonly ok: boolean;
@@ -64,7 +65,7 @@ test("syncLocalBase fast-forwards main from its tracked upstream instead of conf
   t.after(() => fs.rm(base, { recursive: true, force: true }));
   const upstreamHead = await advanceGitlabMain(gitlab, "gitlab-only.txt");
 
-  const result = await syncLocalBase(repo, DEFAULT_CONFIG);
+  const result = await syncLocalBase(repo, TRUST_GITLAB_CONFIG);
 
   assert.equal(result.ok, true, JSON.stringify(result));
   assert.equal(result.baseRef, "gitlab/main");
@@ -88,7 +89,7 @@ test("guardian_finish_workflow cleans local branches merged to tracked upstream"
   await git(repo, ["checkout", "main"]);
   await mergeBranchToGitlabMain(gitlab, branch);
 
-  const plan = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "plan", config: DEFAULT_CONFIG }));
+  const plan = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "plan", config: TRUST_GITLAB_CONFIG }));
 
   assert.equal(plan.ok, true, JSON.stringify(plan));
   assert.equal(plan.status, "planned");
@@ -99,10 +100,57 @@ test("guardian_finish_workflow cleans local branches merged to tracked upstream"
   assert.equal(plan.candidates[0].branch, branch);
   assert.equal(plan.candidates[0].head, branchHead);
 
-  const apply = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "apply", confirmToken: plan.confirmToken, config: DEFAULT_CONFIG }));
+  const apply = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "apply", confirmToken: plan.confirmToken, config: TRUST_GITLAB_CONFIG }));
 
   assert.equal(apply.ok, true, JSON.stringify(apply));
   assert.equal(apply.status, "cleaned");
+  assert.equal(apply.results[0].branchDeleted, true);
+  await assert.rejects(() => git(repo, ["rev-parse", "--verify", branch]));
+});
+
+
+test("syncLocalBase blocks untrusted tracked upstream before fetch", async (t) => {
+  const { base, repo, gitlab } = await createRepoWithGitlabUpstream();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  await advanceGitlabMain(gitlab, "untrusted.txt");
+
+  await assert.rejects(() => syncLocalBase(repo, DEFAULT_CONFIG), /Untrusted upstream remote gitlab/);
+});
+
+test("guardian_finish_workflow cleans recorded worktrees using trusted effective upstream despite stale session base_ref", async (t) => {
+  const { base, repo, gitlab } = await createRepoWithGitlabUpstream();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const branch = "guardian/recorded-upstream-merged";
+  await git(repo, ["checkout", "-b", branch]);
+  await fs.writeFile(path.join(repo, "recorded-upstream.txt"), "merged recorded upstream\n");
+  await git(repo, ["add", "recorded-upstream.txt"]);
+  await git(repo, ["commit", "-m", "add recorded upstream branch"]);
+  const branchHead = (await git(repo, ["rev-parse", "HEAD"])).stdout;
+  await git(repo, ["push", "gitlab", branch]);
+  await git(repo, ["checkout", "main"]);
+  const worktree = path.join(repo, ".worktrees", path.basename(repo), "guardian-recorded-upstream-merged");
+  await fs.mkdir(path.dirname(worktree), { recursive: true });
+  await git(repo, ["worktree", "add", worktree, branch]);
+  await mergeBranchToGitlabMain(gitlab, branch);
+  await seedSession(repo, {
+    session_id: "ses_recorded_upstream",
+    status: "active",
+    branch,
+    worktree_path: worktree,
+    base_ref: "origin/main",
+    head_commit: branchHead,
+  }, TRUST_GITLAB_CONFIG);
+
+  const plan = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "plan", config: TRUST_GITLAB_CONFIG }));
+
+  assert.equal(plan.ok, true, JSON.stringify(plan));
+  assert.equal(plan.candidates.length, 1);
+  assert.equal(plan.candidates[0].branch, branch);
+
+  const apply = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "apply", confirmToken: plan.confirmToken, config: TRUST_GITLAB_CONFIG }));
+
+  assert.equal(apply.ok, true, JSON.stringify(apply));
+  assert.equal(apply.results[0].worktreeRemoved, true);
   assert.equal(apply.results[0].branchDeleted, true);
   await assert.rejects(() => git(repo, ["rev-parse", "--verify", branch]));
 });

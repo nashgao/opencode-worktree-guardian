@@ -69,6 +69,10 @@ async function loadDeleteContext(input: Record<string, unknown>, repoRoot: strin
   return { sessions, worktrees };
 }
 
+function ancestryBaseRef(input: Record<string, unknown>, config: Record<string, unknown>, session: GuardianSession | undefined): string {
+  return typeof input.ancestryBaseRef === "string" ? input.ancestryBaseRef : session?.base_ref ?? `${String(config.remote)}/${String(config.baseBranch)}`;
+}
+
 async function preflightBranchOnlyDeletion(input: Record<string, unknown>, config: Record<string, unknown>, preflight: Record<string, unknown>, worktrees: WorktreeEntry[], targetKind: "orphan-branch" | "stale-branch" | "merged-branch", session: GuardianSession | undefined, resolvedBranch: string | undefined, resolvedHead: string | undefined, ownershipProof: string | undefined, unresolvedReason: string) {
   const repoRoot = String(preflight.repoRoot);
   const deleteRequestedBranch = input.deleteBranch === true;
@@ -94,7 +98,7 @@ async function preflightBranchOnlyDeletion(input: Record<string, unknown>, confi
   const stashes = await listStashes(repoRoot);
   preflight.stashCount = stashes.length;
   if (stashes.length > 0 && config.allowStashIfUnrelated !== true) return blocked("stash inventory is non-empty", { stashes }, preflight);
-  const baseRef = session?.base_ref ?? `${String(config.remote)}/${String(config.baseBranch)}`;
+  const baseRef = ancestryBaseRef(input, config, session);
   const proven = await recordAncestryPreflight(repoRoot, head, baseRef, preflight);
   if (!proven && abandonUnmerged && preflight.unmergedCommitError) return blocked("unmerged commits could not be listed", { branch, head, baseRef, error: preflight.unmergedCommitError }, preflight);
   if (!proven && !abandonUnmerged) return blocked("branch head is not proven reachable from base ref", { branch, head, baseRef }, preflight);
@@ -163,7 +167,7 @@ async function preflightWorktreeDeletion(input: Record<string, unknown>, config:
   if (deleteRequestedBranch) {
     const head = entry.head ?? await getHeadCommit(entry.path);
     preflight.head = head;
-    const baseRef = session?.base_ref ?? `${String(config.remote)}/${String(config.baseBranch)}`;
+    const baseRef = ancestryBaseRef(input, config, session);
     const proven = await recordAncestryPreflight(repoRoot, head, baseRef, preflight);
     if (!proven && abandonUnmerged && preflight.unmergedCommitError) return blocked("unmerged commits could not be listed", { branch: entry.branch, head, baseRef, error: preflight.unmergedCommitError }, preflight);
     if (!proven && !abandonUnmerged) return blocked("branch head is not proven reachable from base ref", { branch: entry.branch, head, baseRef }, preflight);

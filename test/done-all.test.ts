@@ -151,5 +151,5 @@ test("guardian_done all=true finishes every clean session and fast-forwards loca
   const remoteMain = (await git(repo, ["rev-parse", "origin/main"])).stdout;
   assert.equal(localMain, remoteMain);
   const ghLog = await fs.readFile(fakeGh.logPath, "utf8");
-  assert.match(ghLog, /pr merge .*--delete-branch/);
+  assert.doesNotMatch(ghLog, /--delete-branch/);
 });

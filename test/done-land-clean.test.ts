@@ -67,7 +67,7 @@ test("guardian_done apply lands the session PR and removes its stale worktree an
   assert.match(log, /pr create/);
   assert.match(log, /pr merge/);
   assert.doesNotMatch(log, /--admin/);
-  assert.match(log, /--delete-branch/);
+  assert.doesNotMatch(log, /--delete-branch/);
 
   await git(repo, ["fetch", "origin", "main"]);
   await git(repo, ["merge-base", "--is-ancestor", head, "origin/main"]);

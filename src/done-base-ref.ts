@@ -16,6 +16,27 @@ function parseRemoteBranch(ref: string): { readonly remote: string; readonly bra
   return { remote: trimmed.slice(0, separator), branch: trimmed.slice(separator + 1) };
 }
 
+function isSafeGitName(value: string): boolean {
+  return value.length > 0 && !value.startsWith("-") && !value.includes("\0") && !value.includes("\n") && !value.includes("\r");
+}
+
+function isSafeRemoteBranch(value: string): boolean {
+  return isSafeGitName(value) && !value.startsWith("/") && !value.endsWith("/") && !value.includes("//") && !value.includes("..") && !value.includes("@{") && !/[\s~^:?*[\]\\]/.test(value);
+}
+
+function trustedUpstreamRemotes(config: Record<string, unknown>, configuredRemote: string): readonly string[] {
+  const extra = Array.isArray(config.trustedUpstreamRemotes) ? config.trustedUpstreamRemotes.filter((value): value is string => typeof value === "string") : [];
+  return [configuredRemote, ...extra];
+}
+
+function validateRemoteBranch(parsed: { readonly remote: string; readonly branch: string }, config: Record<string, unknown>, configuredRemote: string): void {
+  if (!isSafeGitName(parsed.remote)) throw new Error(`Unsafe upstream remote name: ${parsed.remote}`);
+  if (!isSafeRemoteBranch(parsed.branch)) throw new Error(`Unsafe upstream branch name: ${parsed.branch}`);
+  if (!trustedUpstreamRemotes(config, configuredRemote).includes(parsed.remote)) {
+    throw new Error(`Untrusted upstream remote ${parsed.remote}; add it to trustedUpstreamRemotes to use it as a Guardian base`);
+  }
+}
+
 export async function resolveBaseRef(repoRoot: string, config: Record<string, unknown>): Promise<BaseRefResolution> {
   const localBaseBranch = String(config.baseBranch);
   const configuredRemote = String(config.remote);
@@ -23,6 +44,7 @@ export async function resolveBaseRef(repoRoot: string, config: Record<string, un
   const upstream = await getBranchUpstream(repoRoot, localBaseBranch);
   const parsed = upstream ? parseRemoteBranch(upstream) : null;
   if (parsed) {
+    validateRemoteBranch(parsed, config, configuredRemote);
     return {
       localBaseBranch,
       remote: parsed.remote,
@@ -32,6 +54,7 @@ export async function resolveBaseRef(repoRoot: string, config: Record<string, un
       source: "upstream",
     };
   }
+  validateRemoteBranch({ remote: configuredRemote, branch: localBaseBranch }, { ...config, trustedUpstreamRemotes: [] }, configuredRemote);
   return {
     localBaseBranch,
     remote: configuredRemote,
