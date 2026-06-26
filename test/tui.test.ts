@@ -118,8 +118,8 @@ test("tui done prompt preserves primary-main token gates and separate cleanup", 
   assert.match(prompt.parts[0].text, /commitMessage/);
   assert.doesNotMatch(prompt.parts[0].text, /confirmToken/);
   assert.match(prompt.parts[0].text, /confirm=true/);
-  assert.match(prompt.parts[0].text, /cleanupPlan/);
-  assert.match(prompt.parts[0].text, /do not silently apply cleanup/);
+  assert.match(prompt.parts[0].text, /cleanupSweep/);
+  assert.match(prompt.parts[0].text, /remaining blockers/);
   assert.match(prompt.parts[0].text, /Never force-push/);
 });
 

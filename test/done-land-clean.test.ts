@@ -121,7 +121,7 @@ test("guardian_done apply commits dirty session work before landing and cleanup"
   await assert.rejects(git(repo, ["rev-parse", "--verify", `refs/heads/${branch}`]));
 });
 
-test("guardian_done active-session apply reports cleanup sweep plan without deleting unrelated candidates", async (t) => {
+test("guardian_done active-session apply cleans unrelated safe cleanup candidates", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
 
@@ -169,14 +169,13 @@ test("guardian_done active-session apply reports cleanup sweep plan without dele
   assert.equal(result.branchDeleted, true);
   const cleanupSweep = requireRecord(result.cleanupSweep, "result.cleanupSweep");
   assert.equal(cleanupSweep.ok, true);
-  assert.equal(cleanupSweep.status, "planned");
+  assert.equal(cleanupSweep.status, "cleaned");
   assert.equal(cleanupSweep.candidateCount, 1);
-  assert.equal(cleanupSweep.cleanedCount, 0);
-  assert.match(String(cleanupSweep.reason), /separate guardian_finish_workflow apply confirmation/);
+  assert.equal(cleanupSweep.cleanedCount, 1);
   await git(repo, ["fetch", "origin", "main"]);
   await git(repo, ["merge-base", "--is-ancestor", head, "origin/main"]);
   await assert.rejects(fs.access(worktree));
   await assert.rejects(git(repo, ["rev-parse", "--verify", `refs/heads/${branch}`]));
-  await fs.access(staleWorktree);
-  await git(repo, ["rev-parse", "--verify", `refs/heads/${staleBranch}`]);
+  await assert.rejects(fs.access(staleWorktree));
+  await assert.rejects(git(repo, ["rev-parse", "--verify", `refs/heads/${staleBranch}`]));
 });

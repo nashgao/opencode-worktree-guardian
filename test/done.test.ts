@@ -13,6 +13,7 @@ type LooseRecord = Record<string, unknown>;
 type DoneResult = LooseRecord & {
   readonly candidates: readonly { readonly branch?: string }[];
   readonly cleanupPlan: { readonly status?: unknown; readonly candidates: readonly { readonly branch?: string }[] };
+  readonly cleanupSweep: { readonly ok?: boolean; readonly status?: unknown; readonly candidateCount?: number; readonly cleanedCount?: number; readonly apply?: { readonly results?: readonly { readonly branch?: string; readonly worktreeRemoved?: boolean; readonly branchDeleted?: boolean }[] } };
   readonly commit: string;
   readonly confirmToken: string;
   readonly dirtyFiles?: readonly string[];
@@ -140,7 +141,7 @@ test("guardian_done blocks stale dirty-primary tokens after file content changes
   await assert.rejects(() => git(repo, ["rev-parse", "--verify", "refs/opencode-guardian/primary-main/main/20260609T010101"]));
 });
 
-test("guardian_done applies dirty primary-main publish and returns fresh cleanup plan", async (t) => {
+test("guardian_done applies dirty primary-main publish and cleans safe redundant candidates", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
   const candidate = await makeMergedCleanupCandidate(repo);
@@ -153,10 +154,15 @@ test("guardian_done applies dirty primary-main publish and returns fresh cleanup
   assert.equal(apply.status, "published");
   assert.equal(apply.lane, "primary-main-publish");
   assert.match(apply.safetyRef, /refs\/opencode-guardian\/primary-main\/main\/20260609T010101/);
-  assert.equal(apply.cleanupPlan.status, "planned");
-  assert.equal(apply.cleanupPlan.candidates.length, 1);
-  assert.equal(apply.cleanupPlan.candidates[0].branch, candidate.branch);
-  assert.equal(await pathExists(candidate.worktreePath), true);
+  assert.equal(apply.cleanupSweep.ok, true, JSON.stringify(apply.cleanupSweep));
+  assert.equal(apply.cleanupSweep.status, "cleaned");
+  assert.equal(apply.cleanupSweep.candidateCount, 1);
+  assert.equal(apply.cleanupSweep.cleanedCount, 1);
+  assert.equal(apply.cleanupSweep.apply?.results?.[0]?.branch, candidate.branch);
+  assert.equal(apply.cleanupSweep.apply?.results?.[0]?.worktreeRemoved, true);
+  assert.equal(apply.cleanupSweep.apply?.results?.[0]?.branchDeleted, true);
+  assert.equal(await pathExists(candidate.worktreePath), false);
+  await assert.rejects(() => git(repo, ["rev-parse", "--verify", candidate.branch]));
   const { stdout: remoteMain } = await git(repo, ["rev-parse", "origin/main"]);
   assert.equal(remoteMain, apply.commit);
 });

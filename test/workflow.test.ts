@@ -25,6 +25,7 @@ type WorkflowResult = {
   candidates: Array<Record<string, unknown>>;
   blockers: Array<Record<string, unknown>>;
   results: Array<Record<string, unknown>>;
+  remaining: Array<Record<string, unknown>>;
 };
 
 function workflowResult(result: Record<string, unknown>): WorkflowResult {
@@ -293,7 +294,7 @@ test("guardian_finish_workflow blocks stale workflow tokens after base ref advan
   assert.equal(await branchExists(repo, branch), true);
 });
 
-test("guardian_finish_workflow blocks dirty Guardian-root candidates and deletes nothing", async (t) => {
+test("guardian_finish_workflow cleans safe candidates while reporting dirty Guardian-root blockers", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
   const cleanBranch = "guardian/workflow-clean-candidate";
@@ -308,15 +309,31 @@ test("guardian_finish_workflow blocks dirty Guardian-root candidates and deletes
 
   const plan = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "plan" }));
 
-  assert.equal(plan.ok, false);
-  assert.equal(plan.status, "blocked");
+  assert.equal(plan.ok, true);
+  assert.equal(plan.status, "planned-partial");
+  assert.equal(typeof plan.confirmToken, "string");
   assert.equal(plan.candidates.length, 1);
   assert.equal(plan.blockers.length, 1);
   assert.match(String(plan.blockers[0].reason), /uncommitted changes/);
-  const apply = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "apply", confirmToken: "stale" }));
-  assert.equal(apply.ok, false);
+
+  const staleApply = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "apply", confirmToken: "stale" }));
+  assert.equal(staleApply.ok, false);
+  assert.match(String(staleApply.reason), /confirm token mismatch/);
   assert.equal(await pathExists(cleanPath), true);
   assert.equal(await branchExists(repo, cleanBranch), true);
+
+  const apply = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "apply", confirmToken: plan.confirmToken }));
+  assert.equal(apply.ok, false);
+  assert.equal(apply.status, "partial");
+  assert.equal(apply.results.length, 1);
+  assert.equal(apply.results[0].worktreeRemoved, true);
+  assert.equal(apply.results[0].branchDeleted, true);
+  assert.equal(apply.remaining.length, 1);
+  assert.match(String(apply.remaining[0].reason), /uncommitted changes/);
+  assert.equal(await pathExists(cleanPath), false);
+  assert.equal(await branchExists(repo, cleanBranch), false);
+  assert.equal(await pathExists(dirtyPath), true);
+  assert.equal(await branchExists(repo, dirtyBranch), true);
 });
 
 test("guardian_finish_workflow blocks redundant dirty Guardian-root candidates without opt-in", async (t) => {

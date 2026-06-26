@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import path from "node:path";
 import { createSafetyRef, fetchRemote, getCurrentBranch, getHeadCommit, getRefCommit, getRepoRoot, isAncestor, listStashes, runGit } from "./git.ts";
-import { guardianFinishWorkflow } from "./workflow.ts";
+import { runCleanupSweep } from "./done-cleanup-sweep.ts";
 import type { GuardianConfig, MutableRecord } from "./types.ts";
 import type { DirtySnapshot } from "./done-primary-snapshot.ts";
 import { dirtySnapshot } from "./done-primary-snapshot.ts";
@@ -124,6 +124,6 @@ export async function primaryMainDone(repoRoot: string, cwd: string, config: Gua
 
   const proven = await isAncestor(repoRoot, commit, `${String(config.remote)}/${String(config.baseBranch)}`);
   if (!proven) return blocked("published commit is not proven reachable from remote base", { safetyRef, commit }, preflight);
-  const cleanupPlan = await guardianFinishWorkflow({ repoRoot, cwd: repoRoot, mode: "plan", config });
-  return { ok: true, status: "published", lane: "primary-main-publish", branch, commit, safetyRef, preflight, cleanupPlan };
+  const cleanupSweep = await runCleanupSweep(repoRoot, config, input);
+  return { ok: cleanupSweep.ok === false ? false : true, status: cleanupSweep.ok === false ? "partial" : "published", ...(cleanupSweep.ok === false ? { reason: "published, but post-publish cleanup has remaining blockers" } : {}), lane: "primary-main-publish", branch, commit, safetyRef, preflight, cleanupSweep };
 }

@@ -105,9 +105,11 @@ export async function guardianFinishWorkflow(input: Record<string, unknown> = {}
   }
 
   if (preflightBlockers(preflight).length > 0) return blocked(dirtyPrimaryReason, { dirtyFiles: blockingDirtyFiles, candidates, blockers }, preflight);
-  if (blockers.length > 0) return blocked("cleanup blockers must be resolved before apply", { candidates, blockers }, preflight);
+  const hardBlocker = blockers.find((blocker) => blocker.kind === "candidate-bound");
+  if (hardBlocker) return blocked("cleanup candidate count exceeds bounded automation limit", { candidates, blockers }, preflight);
+  if (blockers.length > 0 && candidates.length === 0) return blocked("cleanup blockers must be resolved before apply", { candidates, blockers }, preflight);
   const confirmToken = createWorkflowToken(preflight, candidates);
-  if (mode === "plan") return { ok: true, status: "planned", confirmToken, preflight, candidates, blockers };
+  if (mode === "plan") return { ok: true, status: blockers.length > 0 ? "planned-partial" : "planned", confirmToken, preflight, candidates, blockers };
   if (input.confirmToken !== confirmToken) return blocked("confirm token mismatch; re-run mode=plan and use the returned confirmToken", { tokenMatched: false, candidates, blockers }, preflight);
 
   let baseSync: Record<string, unknown> | undefined;
@@ -131,5 +133,7 @@ export async function guardianFinishWorkflow(input: Record<string, unknown> = {}
   }
 
   const failedResults = results.filter((result) => result.ok !== true);
-  return { ok: failedResults.length === 0, status: failedResults.length === 0 ? "cleaned" : "partial", preflight, candidates, blockers, results, ...(baseSync ? { baseSync } : {}) };
+  const remaining = [...blockers, ...failedResults];
+  const ok = failedResults.length === 0 && blockers.length === 0;
+  return { ok, status: ok ? "cleaned" : "partial", ...(ok ? {} : { reason: "safe cleanup completed with remaining blockers" }), preflight, candidates, blockers, remaining, results, ...(baseSync ? { baseSync } : {}) };
 }
