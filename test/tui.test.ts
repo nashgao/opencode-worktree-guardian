@@ -114,6 +114,7 @@ test("tui done prompt preserves primary-main token gates and separate cleanup", 
   const prompt = runtime.prompts[0] as { parts: Array<{ text: string }> };
   assert.match(prompt.parts[0].text, /guardian_done/);
   assert.match(prompt.parts[0].text, /mode=plan/);
+  assert.match(prompt.parts[0].text, /continue to mode=apply confirm=true/);
   assert.match(prompt.parts[0].text, /commitMessage/);
   assert.doesNotMatch(prompt.parts[0].text, /confirmToken/);
   assert.match(prompt.parts[0].text, /confirm=true/);

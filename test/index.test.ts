@@ -465,7 +465,7 @@ test("/guardian slash commands rewrite to native tool instructions", async () =>
 
   const doneOutput = { parts: [] };
   await hooks["command.execute.before"]({ command: "/guardian done", sessionID: "ses_123", arguments: [] }, doneOutput);
-  assert.deepEqual(doneOutput.parts, [{ type: "text", text: "Use the guardian_done native tool. Run mode=plan first. From a clean primary branch, bare guardian_done plans the repo-wide done-all lane; after confirmation it lands finishable sessions, syncs local base, and reports redundant merged worktree/branch cleanup candidates for separate confirmation. Active session apply requires confirm=true; dirty sessions and dirty primary-main publishing require commitMessage. Admin bypass requires allowAdminBypass=true." }]);
+  assert.deepEqual(doneOutput.parts, [{ type: "text", text: "Use the guardian_done native tool. Run guardian_done with mode=plan first, inspect the selected lane, preflight, dirty files, and blockers, then continue to mode=apply confirm=true with the same options when the plan is safe and the user invoked the completion workflow. From a clean primary branch, bare guardian_done plans the repo-wide done-all lane; apply lands finishable sessions, syncs local base, and reports redundant merged worktree/branch cleanup candidates for separate confirmation. Active-session dirt and dirty primary-main publishing require commitMessage. Admin bypass requires allowAdminBypass=true." }]);
 });
 
 test("session idle auto-finish is opt-in and deduplicated", async () => {
