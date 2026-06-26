@@ -13,6 +13,6 @@ If the current directory is an existing Guardian-root worktree without an active
 
 If the lane is `primary-main-publish`, apply only after explicit user confirmation with the same explicit `commitMessage` and `confirm: true`; the plugin reuses the matching internal plan token when the plan is still fresh. The tool creates a safety ref before committing, pushes normally, proves the new commit is reachable from the configured remote base branch, then applies token-bound cleanup for safe redundant candidates while reporting dirty or protected leftovers. Do not raw-clean or bypass Guardian blockers.
 
-If the lane is `cleanup-only`, apply only after explicit confirmation with `confirm: true`; cleanup still uses the internal workflow token from the matching plan. Cleanup still runs through `guardian_finish_workflow` and `guardian_delete_worktree`.
+If the lane is `cleanup-only`, apply only after explicit confirmation with `confirm: true`; cleanup still uses the internal workflow token from the matching plan. Local worktree and stale-branch cleanup still runs through `guardian_finish_workflow` and `guardian_delete_worktree`; remote Guardian branch cleanup is limited to token-bound, merged refs on the resolved effective remote, deleted with an expected-head lease.
 
 Never force-push, mutate stashes, delete unrelated remote branches, run raw worktree removal, run raw branch deletion, or bypass Guardian preflights. Full policy: `docs/adr/0001-guardian-safety-policy.md`.

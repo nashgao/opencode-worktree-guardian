@@ -17,6 +17,7 @@ export type TryGitResult =
 export type GitStashEntry = { readonly name: string; readonly commit: string; readonly message: string };
 export type GitRefEntry = { readonly name: string; readonly commit: string; readonly date: string; readonly subject: string };
 export type GitBranchEntry = { readonly name: string; readonly commit: string };
+export type GitRemoteBranchEntry = { readonly remote: string; readonly branch: string; readonly ref: string; readonly commit: string };
 export type GitCommitEntry = { readonly commit: string; readonly subject: string };
 export type GitRecoveryCandidates = { readonly reflog: readonly (GitCommitEntry & { readonly selector: string })[]; readonly unreachable: readonly string[] };
 type CreateSafetyRefOptions = { readonly sessionId?: unknown; readonly branch?: unknown; readonly commit?: string; readonly timestamp?: unknown };
@@ -292,6 +293,10 @@ export async function fetchRemote(repoRoot: string, remote: string) {
   await runGit(repoRoot, ["fetch", remote]);
 }
 
+export async function fetchRemotePrune(repoRoot: string, remote: string) {
+  await runGit(repoRoot, ["fetch", "--prune", remote]);
+}
+
 export async function removeWorktree(repoRoot: string, worktreePath: string) {
   await runGit(repoRoot, ["worktree", "remove", worktreePath]);
 }
@@ -302,6 +307,24 @@ export async function deleteBranch(repoRoot: string, branch: string) {
 
 export async function abandonBranch(repoRoot: string, branch: string) {
   await runGit(repoRoot, ["branch", "-D", "--", branch]);
+}
+
+export async function deleteRemoteBranch(repoRoot: string, remote: string, branch: string, expectedHead: string) {
+  const ref = `refs/heads/${branch}`;
+  await runGit(repoRoot, ["push", remote, `--force-with-lease=${ref}:${expectedHead}`, `:${ref}`]);
+  await fetchRemotePrune(repoRoot, remote);
+}
+
+export async function listRemoteBranches(repoRoot: string, remote: string): Promise<GitRemoteBranchEntry[]> {
+  const result = await tryGit(repoRoot, ["for-each-ref", "--format=%(refname:short)%00%(objectname)", `refs/remotes/${remote}`]);
+  if (!result.ok || !result.stdout) return [];
+  return result.stdout.split("\n").flatMap((line: string) => {
+    const [ref, commit] = line.split("\0");
+    if (!ref || !commit || ref === remote || ref === `${remote}/HEAD`) return [];
+    const prefix = `${remote}/`;
+    if (!ref.startsWith(prefix)) return [];
+    return [{ remote, branch: ref.slice(prefix.length), ref, commit }];
+  });
 }
 
 export async function listBranches(repoRoot: string): Promise<GitBranchEntry[]> {

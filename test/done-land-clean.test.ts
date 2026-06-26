@@ -22,6 +22,11 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+async function remoteBranchExists(repo: string, branch: string): Promise<boolean> {
+  const result = await git(repo, ["ls-remote", "--heads", "origin", branch]);
+  return result.stdout.length > 0;
+}
+
 test("guardian_done apply lands the session PR and removes its stale worktree and branch", async (t) => {
   const { repo } = await createRepoWithOrigin();
   const sessionId = "land-clean-session";
@@ -170,12 +175,13 @@ test("guardian_done active-session apply cleans unrelated safe cleanup candidate
   const cleanupSweep = requireRecord(result.cleanupSweep, "result.cleanupSweep");
   assert.equal(cleanupSweep.ok, true);
   assert.equal(cleanupSweep.status, "cleaned");
-  assert.equal(cleanupSweep.candidateCount, 1);
-  assert.equal(cleanupSweep.cleanedCount, 1);
+  assert.equal(cleanupSweep.candidateCount, 2);
+  assert.equal(cleanupSweep.cleanedCount, 2);
   await git(repo, ["fetch", "origin", "main"]);
   await git(repo, ["merge-base", "--is-ancestor", head, "origin/main"]);
   await assert.rejects(fs.access(worktree));
   await assert.rejects(git(repo, ["rev-parse", "--verify", `refs/heads/${branch}`]));
+  assert.equal(await remoteBranchExists(repo, branch), false);
   await assert.rejects(fs.access(staleWorktree));
   await assert.rejects(git(repo, ["rev-parse", "--verify", `refs/heads/${staleBranch}`]));
 });

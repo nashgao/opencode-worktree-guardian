@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
 import { DEFAULT_CONFIG } from "../src/config.ts";
+import { createSafetyRef } from "../src/git.ts";
 import { syncLocalBase } from "../src/done-main-sync.ts";
 import { guardianFinishWorkflow } from "../src/workflow.ts";
 import { createRepoWithOrigin, createTempDir, git, seedSession } from "./helpers.ts";
@@ -79,12 +80,13 @@ test("syncLocalBase fast-forwards main from its tracked upstream instead of conf
 test("guardian_finish_workflow cleans local branches merged to tracked upstream", async (t) => {
   const { base, repo, gitlab } = await createRepoWithGitlabUpstream();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
-  const branch = "fix/upstream-merged";
+  const branch = "guardian/upstream-merged";
   await git(repo, ["checkout", "-b", branch]);
   await fs.writeFile(path.join(repo, "upstream-merged.txt"), "merged upstream\n");
   await git(repo, ["add", "upstream-merged.txt"]);
   await git(repo, ["commit", "-m", "add upstream merged branch"]);
   const branchHead = (await git(repo, ["rev-parse", "HEAD"])).stdout;
+  await createSafetyRef(repo, { sessionId: "upstream-merged", branch, commit: branchHead, timestamp: "20260610T060606" });
   await git(repo, ["push", "gitlab", branch]);
   await git(repo, ["checkout", "main"]);
   await mergeBranchToGitlabMain(gitlab, branch);
@@ -96,15 +98,16 @@ test("guardian_finish_workflow cleans local branches merged to tracked upstream"
   assert.equal(plan.preflight.baseRef, "gitlab/main");
   assert.equal(plan.preflight.configuredBaseRef, "origin/main");
   assert.equal(plan.preflight.baseRefSource, "upstream");
-  assert.equal(plan.candidates.length, 1);
-  assert.equal(plan.candidates[0].branch, branch);
-  assert.equal(plan.candidates[0].head, branchHead);
+  assert.equal(plan.candidates.length, 2);
+  assert.deepEqual(plan.candidates.map((candidate) => candidate.targetKind).sort(), ["remote-branch", "stale-branch"]);
+  assert.equal(plan.candidates.every((candidate) => candidate.branch === branch && candidate.head === branchHead), true);
 
   const apply = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "apply", confirmToken: plan.confirmToken, config: TRUST_GITLAB_CONFIG }));
 
   assert.equal(apply.ok, true, JSON.stringify(apply));
   assert.equal(apply.status, "cleaned");
-  assert.equal(apply.results[0].branchDeleted, true);
+  assert.equal(apply.results.some((result) => result.branchDeleted === true), true);
+  assert.equal(apply.results.some((result) => result.remoteBranchDeleted === true), true);
   await assert.rejects(() => git(repo, ["rev-parse", "--verify", branch]));
 });
 

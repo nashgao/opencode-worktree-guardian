@@ -4,7 +4,8 @@ import { loadConfig, normalizeConfig } from "./config.ts";
 import { fetchRemote, getDirtyFiles, getHeadCommit, getRefCommit, getRepoRoot } from "./git.ts";
 import { getGuardianPaths, readState } from "./state.ts";
 import { guardianDoneLandClean } from "./done-land-clean.ts";
-import { runCleanupSweep } from "./done-cleanup-sweep.ts";
+import { guardianFinishWorkflow } from "./workflow.ts";
+import { candidateTokenMaterial } from "./workflow-candidates.ts";
 import { activeFeatureSessions, type FeatureSession } from "./done-feature-sessions.ts";
 import { syncLocalBase } from "./done-main-sync.ts";
 import { isRecordLike } from "./types.ts";
@@ -34,7 +35,28 @@ function createDoneAllToken(material: Record<string, unknown>): string {
 // the resolved base commit, the policy that classified each session, and every session's identity,
 // live head, and dirty fingerprint. Any of these changing (session added/removed, base moved, a
 // finishable head advanced, a clean worktree went dirty) recomputes a different token and fails closed.
-function tokenMaterial(repoRoot: string, config: GuardianConfig, baseRef: string, baseRefOid: string | null, protectedBranches: readonly string[], plans: readonly SessionPlan[]): Record<string, unknown> {
+function cleanupPlanTokenMaterial(cleanupPlan: Record<string, unknown>): Record<string, unknown> {
+  const candidates = Array.isArray(cleanupPlan.candidates) ? cleanupPlan.candidates.filter((candidate): candidate is Record<string, unknown> => isRecordLike(candidate)) : [];
+  const blockers = Array.isArray(cleanupPlan.blockers) ? cleanupPlan.blockers.filter((blocker): blocker is Record<string, unknown> => isRecordLike(blocker)) : [];
+  return {
+    ok: cleanupPlan.ok === true,
+    status: typeof cleanupPlan.status === "string" ? cleanupPlan.status : null,
+    confirmToken: typeof cleanupPlan.confirmToken === "string" ? cleanupPlan.confirmToken : null,
+    candidates: candidates.map(candidateTokenMaterial),
+    blockers: blockers.map((blocker) => ({
+      kind: blocker.kind ?? null,
+      targetPath: blocker.targetPath ?? null,
+      branch: blocker.branch ?? null,
+      head: blocker.head ?? null,
+      targetKind: blocker.targetKind ?? null,
+      remote: blocker.remote ?? null,
+      remoteBranch: blocker.remoteBranch ?? null,
+      reason: blocker.reason ?? null,
+    })),
+  };
+}
+
+function tokenMaterial(repoRoot: string, config: GuardianConfig, baseRef: string, baseRefOid: string | null, protectedBranches: readonly string[], plans: readonly SessionPlan[], cleanupPlan: Record<string, unknown>): Record<string, unknown> {
   return {
     operation: "guardian_done_all/v1",
     repoRoot: path.resolve(repoRoot),
@@ -51,6 +73,7 @@ function tokenMaterial(repoRoot: string, config: GuardianConfig, baseRef: string
       dirtyFileCount: plan.dirtyFileCount,
       disposition: plan.disposition,
     })),
+    cleanupPlan: cleanupPlanTokenMaterial(cleanupPlan),
   };
 }
 
@@ -84,10 +107,6 @@ export async function guardianDoneAll(input: Record<string, unknown> = {}): Prom
   const state = await readState(await getGuardianPaths(repoRoot), { repoRoot, config });
   const sessions = await activeFeatureSessions(state, repoRoot, config);
 
-  if (sessions.length === 0) {
-    return { ok: true, status: "no-op", lane: "done-all", reason: "no active Guardian feature sessions to finish", summary: { total: 0, finishable: 0, dirtySkipped: 0, blocked: 0 }, sessions: [] };
-  }
-
   let baseRefOid: string | null = null;
   let baseRefFetched = false;
   try {
@@ -112,12 +131,36 @@ export async function guardianDoneAll(input: Record<string, unknown> = {}): Prom
     return { ok: false, status: "blocked", lane: "done-all", reason: `finishable session count ${finishable.length} exceeds maximum ${MAX_DONE_ALL_SESSIONS}`, summary, sessions: plans };
   }
 
-  const confirmToken = createDoneAllToken(tokenMaterial(repoRoot, config, baseRef, baseRefOid, protectedBranches, plans));
+  const cleanupExcludeBranches = plans.map((plan) => plan.branch).filter((branch): branch is string => typeof branch === "string" && branch.length > 0);
+  const cleanupPlan = await guardianFinishWorkflow({ repoRoot, cwd: repoRoot, mode: "plan", config, excludeBranches: cleanupExcludeBranches });
+  const cleanupCandidates = Array.isArray(cleanupPlan.candidates) ? cleanupPlan.candidates.length : 0;
+  const cleanupBlockers = Array.isArray(cleanupPlan.blockers) ? cleanupPlan.blockers.length : 0;
+  const cleanupHasApplyToken = typeof cleanupPlan.confirmToken === "string";
+  const cleanupBlocked = cleanupPlan.ok !== true || cleanupBlockers > 0 || (cleanupCandidates > 0 && !cleanupHasApplyToken);
+  if (cleanupBlocked) {
+    return {
+      ok: false,
+      status: "blocked",
+      lane: "done-all",
+      reason: cleanupCandidates > 0 && !cleanupHasApplyToken ? "cleanup plan has candidates but no apply token" : "cleanup plan has blockers; resolve them and re-plan before finishing all sessions",
+      baseRef,
+      baseRefOid,
+      baseRefFetched,
+      summary,
+      sessions: plans,
+      remaining,
+      cleanupPlan,
+      cleanupSummary: { candidates: cleanupCandidates, blockers: cleanupBlockers },
+    };
+  }
+  const confirmToken = createDoneAllToken(tokenMaterial(repoRoot, config, baseRef, baseRefOid, protectedBranches, plans, cleanupPlan));
 
   if (mode === "plan") {
+    const noSessionWork = plans.length === 0;
+    const noCleanupWork = cleanupCandidates === 0;
     return {
       ok: true,
-      status: "planned",
+      status: noSessionWork && noCleanupWork ? "no-op" : "planned",
       lane: "done-all",
       confirmToken,
       baseRef,
@@ -126,6 +169,7 @@ export async function guardianDoneAll(input: Record<string, unknown> = {}): Prom
       summary,
       sessions: plans,
       remaining,
+      cleanupPlan,
       nextAction: input.all === true ? "guardian_done all=true mode=apply confirm=true" : "guardian_done mode=apply confirm=true",
     };
   }
@@ -136,6 +180,30 @@ export async function guardianDoneAll(input: Record<string, unknown> = {}): Prom
   if (input.confirmToken !== confirmToken) {
     const planCommand = input.all === true ? "guardian_done all=true mode=plan" : "guardian_done mode=plan";
     return { ok: false, status: "blocked", lane: "done-all", reason: `confirm token mismatch; the active session set, base ref, or a worktree changed since plan. Re-run ${planCommand} and use the returned confirmToken`, summary };
+  }
+
+  const cleanupApply = cleanupCandidates > 0 && cleanupHasApplyToken
+    ? await guardianFinishWorkflow({ ...input, repoRoot, cwd: repoRoot, mode: "apply", confirmToken: cleanupPlan.confirmToken, config, excludeBranches: cleanupExcludeBranches })
+    : null;
+  const cleanupApplyResults = cleanupApply && Array.isArray(cleanupApply.results) ? cleanupApply.results : [];
+  const cleanupSweep = cleanupApply
+    ? {
+      ok: cleanupApply.ok === true,
+      status: cleanupApply.status === "cleaned" ? "cleaned" : "partial",
+      reason: cleanupApply.ok === true ? undefined : "cleanup sweep applied safe candidates with remaining blockers",
+      candidateCount: cleanupCandidates,
+      cleanedCount: cleanupApplyResults.filter((result) => isRecordLike(result) && result.ok === true).length,
+      failedCount: cleanupApplyResults.filter((result) => !isRecordLike(result) || result.ok !== true).length,
+      plan: cleanupPlan,
+      apply: cleanupApply,
+      remaining: cleanupApply.remaining ?? cleanupApply.blockers ?? [],
+    }
+    : cleanupCandidates > 0
+      ? { ok: false, status: "blocked", reason: "cleanup plan has candidates but no apply token", candidateCount: cleanupCandidates, plan: cleanupPlan }
+      : { ok: true, status: "no-op", candidateCount: 0, plan: cleanupPlan };
+  const sweepFailure = cleanupSweep.ok === false;
+  if (sweepFailure) {
+    return { ok: false, status: "partial", lane: "done-all", reason: "cleanup sweep failed before finishing sessions", summary: { ...summary, finished: 0, failed: 0 }, results: [], remaining, cleanupSweep };
   }
 
   const results: Record<string, unknown>[] = [];
@@ -175,8 +243,6 @@ export async function guardianDoneAll(input: Record<string, unknown> = {}): Prom
   const failedCount = results.length - finishedCount;
   const hardFailure = failedCount > 0;
   const mainSync = await syncLocalBase(repoRoot, config);
-  const cleanupSweep = await runCleanupSweep(repoRoot, config, input);
-  const sweepFailure = cleanupSweep.ok === false;
   return {
     ok: !hardFailure && !sweepFailure,
     status: !hardFailure && !sweepFailure && remaining.length === 0 ? "finished" : "partial",
