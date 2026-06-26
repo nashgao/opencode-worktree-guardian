@@ -1,5 +1,7 @@
 import path from "node:path";
 import { expandWorktreeRoot, loadConfig } from "./config.ts";
+import { configForResolvedBase, resolveBaseRef } from "./done-base-ref.ts";
+import { syncLocalBase } from "./done-main-sync.ts";
 import { guardianDeleteWorktree } from "./delete.ts";
 import { fetchRemote, getCurrentBranch, getDirtyFiles, getRefCommit, getRepoRoot, listStashes } from "./git.ts";
 import { candidateTokenMaterial, createWorkflowToken, discoverCandidates, isGuardianWorktreeStatusPath, MAX_WORKFLOW_CLEANUP_CANDIDATES } from "./workflow-candidates.ts";
@@ -26,13 +28,19 @@ export async function guardianFinishWorkflow(input: Record<string, unknown> = {}
   const repoRoot = typeof input.repoRoot === "string" ? input.repoRoot : await getRepoRoot(cwd);
   const { config } = input.config && typeof input.config === "object" ? { config: input.config as Record<string, unknown> } : await loadConfig(repoRoot);
   const mode = input.mode ?? "plan";
-  const baseRef = `${String(config.remote)}/${String(config.baseBranch)}`;
+  const resolvedBase = await resolveBaseRef(repoRoot, config);
+  const effectiveConfig = configForResolvedBase(config, resolvedBase);
+  const baseRef = resolvedBase.baseRef;
   const guardianRoot = path.resolve(repoRoot, expandWorktreeRoot(String(config.worktreeRoot), repoRoot));
   const preflight: Record<string, unknown> = {
     repoRoot: path.resolve(repoRoot),
     mode,
     remote: config.remote,
     baseBranch: config.baseBranch,
+    effectiveRemote: resolvedBase.remote,
+    effectiveBaseBranch: resolvedBase.remoteBranch,
+    baseRefSource: resolvedBase.source,
+    configuredBaseRef: resolvedBase.configuredBaseRef,
     baseRef,
     baseRefOid: null,
     baseRefFetched: false,
@@ -52,7 +60,7 @@ export async function guardianFinishWorkflow(input: Record<string, unknown> = {}
   }
 
   try {
-    await fetchRemote(repoRoot, String(config.remote));
+    await fetchRemote(repoRoot, resolvedBase.remote);
     preflight.baseRefFetched = true;
     preflight.baseRefOid = await getRefCommit(repoRoot, baseRef);
   } catch (error) {
@@ -85,7 +93,7 @@ export async function guardianFinishWorkflow(input: Record<string, unknown> = {}
   let candidates: Record<string, unknown>[];
   let blockers: Record<string, unknown>[];
   try {
-    const discovered = await discoverCandidates(repoRoot, cwd, config, preflight, input.allowIgnoredFiles === true);
+    const discovered = await discoverCandidates(repoRoot, cwd, effectiveConfig, preflight, input.allowIgnoredFiles === true);
     candidates = discovered.candidates;
     blockers = discovered.blockers;
     preflight.candidateScanStatus = "completed";
@@ -102,20 +110,26 @@ export async function guardianFinishWorkflow(input: Record<string, unknown> = {}
   if (mode === "plan") return { ok: true, status: "planned", confirmToken, preflight, candidates, blockers };
   if (input.confirmToken !== confirmToken) return blocked("confirm token mismatch; re-run mode=plan and use the returned confirmToken", { tokenMatched: false, candidates, blockers }, preflight);
 
+  let baseSync: Record<string, unknown> | undefined;
+  if (candidates.length > 0) {
+    baseSync = await syncLocalBase(repoRoot, config);
+    if (baseSync.ok !== true) return blocked("local base could not be fast-forwarded before cleanup", { baseSync, candidates, blockers }, preflight);
+  }
+
   const results = [];
   for (const candidate of candidates) {
     const targetKind = typeof candidate.targetKind === "string" ? candidate.targetKind : undefined;
     const targetPath = targetKind === "worktree" && typeof candidate.targetPath === "string" ? candidate.targetPath : undefined;
     const branch = targetKind !== "worktree" && typeof candidate.branch === "string" ? candidate.branch : undefined;
-    const plan = await guardianDeleteWorktree({ repoRoot, cwd: repoRoot, mode: "plan", targetPath, branch, deleteBranch: true, allowIgnoredFiles: input.allowIgnoredFiles === true, config });
+    const plan = await guardianDeleteWorktree({ repoRoot, cwd: repoRoot, mode: "plan", targetPath, branch, deleteBranch: true, allowIgnoredFiles: input.allowIgnoredFiles === true, config: effectiveConfig });
     if (!plan.ok) {
       results.push({ ...candidateTokenMaterial(candidate), ok: false, status: "blocked", reason: plan.reason });
       continue;
     }
-    const apply = await guardianDeleteWorktree({ repoRoot, cwd: repoRoot, mode: "apply", targetPath, branch, deleteBranch: true, allowIgnoredFiles: input.allowIgnoredFiles === true, confirmToken: plan.confirmToken, config });
+    const apply = await guardianDeleteWorktree({ repoRoot, cwd: repoRoot, mode: "apply", targetPath, branch, deleteBranch: true, allowIgnoredFiles: input.allowIgnoredFiles === true, confirmToken: plan.confirmToken, config: effectiveConfig });
     results.push({ ...candidateTokenMaterial(candidate), ok: apply.ok, status: apply.status, reason: apply.reason, worktreeRemoved: apply.worktreeRemoved, branchDeleted: apply.branchDeleted, safetyRef: apply.safetyRef });
   }
 
   const failedResults = results.filter((result) => result.ok !== true);
-  return { ok: failedResults.length === 0, status: failedResults.length === 0 ? "cleaned" : "partial", preflight, candidates, blockers, results };
+  return { ok: failedResults.length === 0, status: failedResults.length === 0 ? "cleaned" : "partial", preflight, candidates, blockers, results, ...(baseSync ? { baseSync } : {}) };
 }

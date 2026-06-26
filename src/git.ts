@@ -108,6 +108,11 @@ export async function getCurrentBranch(repoRoot: string) {
   return result.ok ? result.stdout : null;
 }
 
+export async function getBranchUpstream(repoRoot: string, branch: string) {
+  const result = await tryGit(repoRoot, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", `${branch}@{upstream}`]);
+  return result.ok && result.stdout ? result.stdout : null;
+}
+
 export async function getHeadCommit(repoRoot: string) {
   return (await runGit(repoRoot, ["rev-parse", "HEAD"])).stdout;
 }

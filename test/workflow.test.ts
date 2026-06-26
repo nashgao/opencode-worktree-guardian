@@ -220,6 +220,7 @@ test("guardian_finish_workflow scan skipped for invalid mode without completed c
 test("guardian_finish_workflow scan skipped for base-unavailable without completed candidate evidence", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
+  await git(repo, ["branch", "--unset-upstream", "main"]);
   const config = { ...DEFAULT_CONFIG, remote: "missing-origin" };
 
   const plan = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "plan", config }));

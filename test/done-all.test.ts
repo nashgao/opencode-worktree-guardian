@@ -132,7 +132,7 @@ test("guardian_done all=true finishes every clean session and fast-forwards loca
   const b = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_all_e2e_b", taskName: "e2e b", createWorktree: true, config: DEFAULT_CONFIG });
   await commitInWorktree(a.session.worktree_path, "feat-a.txt", "a\n", "feat a");
   await commitInWorktree(b.session.worktree_path, "feat-b.txt", "b\n", "feat b");
-  await installMultiBranchFakeGh(t, { repo, remote });
+  const fakeGh = await installMultiBranchFakeGh(t, { repo, remote });
 
   const plan = await guardianDone({ repoRoot: repo, cwd: repo, all: true, mode: "plan" }) as LooseRecord;
   const apply = await guardianDone({ repoRoot: repo, cwd: repo, all: true, mode: "apply", confirm: true, confirmToken: plan.confirmToken, timestamp: "20260610T010101" }) as LooseRecord;
@@ -150,4 +150,6 @@ test("guardian_done all=true finishes every clean session and fast-forwards loca
   const localMain = (await git(repo, ["rev-parse", "main"])).stdout;
   const remoteMain = (await git(repo, ["rev-parse", "origin/main"])).stdout;
   assert.equal(localMain, remoteMain);
+  const ghLog = await fs.readFile(fakeGh.logPath, "utf8");
+  assert.match(ghLog, /pr merge .*--delete-branch/);
 });

@@ -117,7 +117,7 @@ export async function getOrCreatePullRequest(repoRoot: string, branch: string, b
 }
 
 export async function mergePullRequest(repoRoot: string, pr: PullRequestInfo, head: string, allowAdminBypass: boolean): Promise<{ readonly ok: true } | { readonly ok: false; readonly result: Record<string, unknown> }> {
-  const args = ["pr", "merge", String(pr.number), "--merge", "--match-head-commit", head];
+  const args = ["pr", "merge", String(pr.number), "--merge", "--match-head-commit", head, "--delete-branch"];
   if (allowAdminBypass) args.push("--admin");
   const merged = await runGh(repoRoot, args);
   if (merged.ok) return { ok: true };
