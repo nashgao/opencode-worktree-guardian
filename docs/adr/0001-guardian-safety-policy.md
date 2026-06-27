@@ -16,6 +16,7 @@ The public native tools are:
 
 - `guardian_start`
 - `guardian_status`
+- `guardian_project_status`
 - `guardian_recover`
 - `guardian_report_html`
 - `guardian_done`
@@ -50,7 +51,9 @@ Agents must use Guardian-native tools for lifecycle and deletion work. A prompt,
 
 ## Read-Only And Normal Safe Git Allowances
 
-Read-only inventory and recovery surfaces are allowed through `guardian_status`, `guardian_recover`, and `guardian_hygiene` without `mode`. Their output is evidence only and does not authorize cleanup.
+Read-only inventory and recovery surfaces are allowed through `guardian_status`, `guardian_project_status`, `guardian_recover`, and `guardian_hygiene` without `mode`. Their output is evidence only and does not authorize cleanup.
+
+`guardian_project_status` reads roadmap, milestone review, plan, and ULW loop artifacts from explicit project roots or the current repo root. It does not establish project ownership, worktree ownership, or lifecycle authority. Its default call must not mutate Git, Guardian state, scanned repositories, or project artifacts. Its explicit `writeReport: true` report path is limited to `.git/opencode-guardian/project-report.html`.
 
 When a session owns a valid Guardian worktree, normal safe mutating commands such as `git add` and `git commit` may proceed through Guardian routing. Without recorded ownership, normal non-destructive commands may run in the current worktree, but destructive cleanup, reset, stash, force-push, worktree-removal, and protected-branch bypass guards still apply.
 

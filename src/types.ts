@@ -228,6 +228,7 @@ export const GUARDIAN_TOOL_NAMES = [
   "guardian_gc",
   "guardian_hygiene",
   "guardian_preserve",
+  "guardian_project_status",
   "guardian_recover",
   "guardian_report_html",
   "guardian_start",
@@ -259,6 +260,8 @@ export type PlanCacheToolArgs = MutableRecord & {
   allowCategories?: unknown;
   allowTracked?: unknown;
   allowRecursive?: unknown;
+  projectRoots?: unknown;
+  writeReport?: unknown;
   allowDirtyNestedGit?: unknown;
   commitMessage?: unknown;
   finishMode?: unknown;
