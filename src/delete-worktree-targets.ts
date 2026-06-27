@@ -104,10 +104,17 @@ async function staleBranchResolution(input: Record<string, unknown>, worktrees: 
   return undefined;
 }
 
+function configuredBranchPrefix(input: Record<string, unknown>): string {
+  const config = input.config;
+  if (config && typeof config === "object" && "branchPrefix" in config && typeof (config as { branchPrefix?: unknown }).branchPrefix === "string") return (config as { branchPrefix: string }).branchPrefix;
+  return "guardian/";
+}
+
 async function mergedBranchResolution(input: Record<string, unknown>, worktrees: WorktreeEntry[], repoRoot: string): Promise<TargetResolution | undefined> {
   const branch = branchFromInput(input);
   if (!branch || input.deleteBranch !== true) return undefined;
-  if (branch.startsWith("guardian/")) return undefined;
+  const branchPrefix = configuredBranchPrefix(input);
+  if (branchPrefix.length > 0 && branch.startsWith(branchPrefix)) return undefined;
   if (worktrees.some((worktree) => worktree.branch === branch)) return undefined;
   try {
     const head = await getBranchCommit(repoRoot, branch);

@@ -141,6 +141,19 @@ export async function guardianDone(input: Record<string, unknown> = {}): Promise
 
   if (currentSession && isActiveSession(currentSession) && typeof currentSession.worktree_path === "string") {
     if (!sessionId) return blocked("active Guardian session could not be matched to a session id", { lane: "session-finish" });
+    const sessionBranch = typeof currentSession.branch === "string" ? currentSession.branch : currentBranch;
+    if (samePath(currentSession.worktree_path, repoRoot) || sessionBranch && protectedBranches.includes(sessionBranch)) {
+      return blocked("active Guardian session is bound to the primary worktree or a protected branch; repair it before finishing", {
+        lane: "poisoned-primary-protected-session",
+        sessionId,
+        currentWorktree,
+        sessionWorktree: currentSession.worktree_path,
+        currentBranch,
+        sessionBranch,
+        baseBranch,
+        suggestedCommands: ["guardian_start createWorktree=true", "guardian_status"],
+      });
+    }
     if (!samePath(currentWorktree, currentSession.worktree_path)) {
       const snapshot = samePath(currentWorktree, repoRoot) ? await dirtySnapshot(repoRoot, config) : { paths: [] };
       if (snapshot.paths.length > 0) {
@@ -188,7 +201,7 @@ export async function guardianDone(input: Record<string, unknown> = {}): Promise
     if (!requestedSessionId && !requestedBranch) {
       const candidates = await activeFeatureSessions(state, repoRoot, config);
       if (candidates.length > 0) {
-        return selectSession("no Guardian session matches the current location; choose a feature session to finish, or run guardian_finish_workflow to sweep merged worktrees", candidates, { currentWorktree, currentBranch, baseBranch });
+        return guardianDoneAll({ ...input, repoRoot, cwd: repoRoot, config });
       }
     }
     const cleanup = await guardianFinishWorkflow({ ...input, repoRoot, cwd: repoRoot, config });

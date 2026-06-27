@@ -7,12 +7,13 @@ import { guardianDone } from "../src/done.ts";
 import { guardianFinish } from "../src/finish.ts";
 import { guardianStatus } from "../src/recover.ts";
 import { guardianStart } from "../src/tools.ts";
-import { createRepoWithOrigin, git } from "./helpers.ts";
+import { createRepoWithOrigin, git, seedSession } from "./helpers.ts";
 
 type LooseRecord = Record<string, unknown>;
 type DoneResult = LooseRecord & {
   readonly candidates: readonly { readonly branch?: string }[];
   readonly cleanupPlan: { readonly status?: unknown; readonly candidates: readonly { readonly branch?: string }[] };
+  readonly cleanupSweep: { readonly ok?: boolean; readonly status?: unknown; readonly candidateCount?: number; readonly cleanedCount?: number; readonly apply?: { readonly results?: readonly { readonly branch?: string; readonly worktreeRemoved?: boolean; readonly branchDeleted?: boolean }[] } };
   readonly commit: string;
   readonly confirmToken: string;
   readonly dirtyFiles?: readonly string[];
@@ -140,7 +141,7 @@ test("guardian_done blocks stale dirty-primary tokens after file content changes
   await assert.rejects(() => git(repo, ["rev-parse", "--verify", "refs/opencode-guardian/primary-main/main/20260609T010101"]));
 });
 
-test("guardian_done applies dirty primary-main publish and returns fresh cleanup plan", async (t) => {
+test("guardian_done applies dirty primary-main publish and cleans safe redundant candidates", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
   const candidate = await makeMergedCleanupCandidate(repo);
@@ -153,10 +154,15 @@ test("guardian_done applies dirty primary-main publish and returns fresh cleanup
   assert.equal(apply.status, "published");
   assert.equal(apply.lane, "primary-main-publish");
   assert.match(apply.safetyRef, /refs\/opencode-guardian\/primary-main\/main\/20260609T010101/);
-  assert.equal(apply.cleanupPlan.status, "planned");
-  assert.equal(apply.cleanupPlan.candidates.length, 1);
-  assert.equal(apply.cleanupPlan.candidates[0].branch, candidate.branch);
-  assert.equal(await pathExists(candidate.worktreePath), true);
+  assert.equal(apply.cleanupSweep.ok, true, JSON.stringify(apply.cleanupSweep));
+  assert.equal(apply.cleanupSweep.status, "cleaned");
+  assert.equal(apply.cleanupSweep.candidateCount, 1);
+  assert.equal(apply.cleanupSweep.cleanedCount, 1);
+  assert.equal(apply.cleanupSweep.apply?.results?.[0]?.branch, candidate.branch);
+  assert.equal(apply.cleanupSweep.apply?.results?.[0]?.worktreeRemoved, true);
+  assert.equal(apply.cleanupSweep.apply?.results?.[0]?.branchDeleted, true);
+  assert.equal(await pathExists(candidate.worktreePath), false);
+  await assert.rejects(() => git(repo, ["rev-parse", "--verify", candidate.branch]));
   const { stdout: remoteMain } = await git(repo, ["rev-parse", "origin/main"]);
   assert.equal(remoteMain, apply.commit);
 });
@@ -265,6 +271,37 @@ test("guardian_done blocks protected primary rescue scenarios outside base branc
   assert.deepEqual(result.suggestedCommands, ["guardian_start createWorktree=true", "guardian_status"]);
 });
 
+test("guardian_done blocks poisoned active session bound to protected primary worktree", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  await seedSession(repo, {
+    session_id: "ses_done_poisoned_primary",
+    status: "active",
+    branch: "main",
+    worktree_path: repo,
+    base_ref: "origin/main",
+    safety_refs: [],
+  });
+  await fs.writeFile(path.join(repo, "poisoned-primary.txt"), "must not publish through session-finish\n", "utf8");
+
+  const result = asDone(await guardianDone({
+    repoRoot: repo,
+    cwd: repo,
+    sessionId: "ses_done_poisoned_primary",
+    mode: "apply",
+    confirm: true,
+    commitMessage: "feat: should not publish poisoned primary",
+    config: DEFAULT_CONFIG,
+  }));
+
+  assert.equal(result.ok, false);
+  assert.equal(result.lane, "poisoned-primary-protected-session");
+  assert.match(result.reason, /primary worktree|protected branch/);
+  const remoteHead = (await git(repo, ["rev-parse", "origin/main"])).stdout;
+  const localHead = (await git(repo, ["rev-parse", "HEAD"])).stdout;
+  assert.equal(remoteHead, localHead);
+});
+
 test("guardian_done is a no-op after the session was already preserved", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
@@ -344,7 +381,7 @@ test("guardian_done previews a session targeted by branch name from the primary"
   assert.equal(result.worktreePath, started.session.worktree_path);
 });
 
-test("guardian_done lists active feature sessions to select when run bare from the primary", async (t) => {
+test("guardian_done defaults to batch finish when run bare from the primary", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
   const a = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_select_a", taskName: "select a", createWorktree: true, config: DEFAULT_CONFIG });
@@ -352,13 +389,16 @@ test("guardian_done lists active feature sessions to select when run bare from t
 
   const result = asDone(await guardianDone({ repoRoot: repo, cwd: repo }));
 
-  assert.equal(result.ok, false);
-  assert.equal(result.status, "needs-selection");
-  assert.equal(result.lane, "select-session");
-  const sessions = result.availableSessions as readonly { branch: string }[];
+  assert.equal(result.ok, true);
+  assert.equal(result.status, "planned");
+  assert.equal(result.lane, "done-all");
+  const summary = result.summary as Record<string, unknown>;
+  assert.equal(summary.total, 2);
+  assert.equal(summary.finishable, 2);
+  const sessions = result.sessions as readonly { branch: string }[];
   assert.deepEqual(sessions.map((session) => session.branch).sort(), [a.session.branch, b.session.branch].sort());
-  const commands = result.suggestedCommands as readonly string[];
-  assert.ok(commands.some((command) => command.includes(a.session.branch)));
+  assert.equal(typeof result.confirmToken, "string");
+  assert.equal(result.nextAction, "guardian_done mode=apply confirm=true");
 });
 
 test("guardian_done blocks with candidate sessions when the branch has no active session", async (t) => {

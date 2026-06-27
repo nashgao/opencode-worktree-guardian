@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { DEFAULT_CONFIG } from "../src/config.ts";
+import { createSafetyRef, deleteRemoteBranch } from "../src/git.ts";
 import { guardianFinishWorkflow } from "../src/workflow.ts";
 import { createRepoWithOrigin, git } from "./helpers.ts";
 
@@ -25,6 +26,7 @@ type WorkflowResult = {
   candidates: Array<Record<string, unknown>>;
   blockers: Array<Record<string, unknown>>;
   results: Array<Record<string, unknown>>;
+  remaining: Array<Record<string, unknown>>;
 };
 
 function workflowResult(result: Record<string, unknown>): WorkflowResult {
@@ -61,6 +63,11 @@ function pathExists(filePath: string) {
   return fs.access(filePath).then(() => true, () => false);
 }
 
+async function remoteBranchExists(repo: string, branch: string) {
+  const result = await git(repo, ["ls-remote", "--heads", "origin", branch]);
+  return result.stdout.length > 0;
+}
+
 test("guardian_finish_workflow plans and applies merged Guardian worktree cleanup", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
@@ -93,8 +100,9 @@ test("guardian_finish_workflow plans and applies merged Guardian worktree cleanu
 test("guardian_finish_workflow plans and applies merged local branch cleanup", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
-  const branch = "feature/workflow-merged-branch";
+  const branch = "guardian/workflow-merged-branch";
   const head = await createMergedBranch(repo, branch, "workflow-branch.txt");
+  await createSafetyRef(repo, { sessionId: "workflow-merged-branch", branch, commit: head, timestamp: "20260610T030303" });
 
   const plan = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "plan" }));
 
@@ -102,7 +110,7 @@ test("guardian_finish_workflow plans and applies merged local branch cleanup", a
   assert.equal(plan.status, "planned");
   assert.equal(plan.preflight.candidateCount, 1);
   assert.deepEqual(plan.candidates.map((candidate: Record<string, unknown>) => candidate.kind), ["branch"]);
-  assert.equal(plan.candidates[0].targetKind, "merged-branch");
+  assert.equal(plan.candidates[0].targetKind, "stale-branch");
   assert.equal(plan.candidates[0].branch, branch);
   assert.equal(plan.candidates[0].head, head);
 
@@ -220,6 +228,7 @@ test("guardian_finish_workflow scan skipped for invalid mode without completed c
 test("guardian_finish_workflow scan skipped for base-unavailable without completed candidate evidence", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
+  await git(repo, ["branch", "--unset-upstream", "main"]);
   const config = { ...DEFAULT_CONFIG, remote: "missing-origin" };
 
   const plan = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "plan", config }));
@@ -292,7 +301,7 @@ test("guardian_finish_workflow blocks stale workflow tokens after base ref advan
   assert.equal(await branchExists(repo, branch), true);
 });
 
-test("guardian_finish_workflow blocks dirty Guardian-root candidates and deletes nothing", async (t) => {
+test("guardian_finish_workflow cleans safe candidates while reporting dirty Guardian-root blockers", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
   const cleanBranch = "guardian/workflow-clean-candidate";
@@ -307,15 +316,21 @@ test("guardian_finish_workflow blocks dirty Guardian-root candidates and deletes
 
   const plan = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "plan" }));
 
-  assert.equal(plan.ok, false);
-  assert.equal(plan.status, "blocked");
+  assert.equal(plan.ok, true);
+  assert.equal(plan.status, "planned-partial");
+  assert.equal(plan.confirmToken, undefined);
   assert.equal(plan.candidates.length, 1);
   assert.equal(plan.blockers.length, 1);
   assert.match(String(plan.blockers[0].reason), /uncommitted changes/);
+
   const apply = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "apply", confirmToken: "stale" }));
   assert.equal(apply.ok, false);
+  assert.equal(apply.status, "blocked");
+  assert.match(String(apply.reason), /cleanup blockers must be resolved/);
   assert.equal(await pathExists(cleanPath), true);
   assert.equal(await branchExists(repo, cleanBranch), true);
+  assert.equal(await pathExists(dirtyPath), true);
+  assert.equal(await branchExists(repo, dirtyBranch), true);
 });
 
 test("guardian_finish_workflow blocks redundant dirty Guardian-root candidates without opt-in", async (t) => {
@@ -412,8 +427,11 @@ test("guardian_finish_workflow blocks mismatched confirm tokens", async (t) => {
 test("guardian_finish_workflow blocks cleanup batches over the candidate bound", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const head = (await git(repo, ["rev-parse", "main"])).stdout;
   for (let index = 0; index < 26; index += 1) {
-    await git(repo, ["branch", `feature/workflow-bound-${index}`, "main"]);
+    const branch = `guardian/workflow-bound-${index}`;
+    await git(repo, ["branch", branch, "main"]);
+    await createSafetyRef(repo, { sessionId: `workflow-bound-${index}`, branch, commit: head, timestamp: "20260610T040404" });
   }
 
   const plan = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "plan" }));
@@ -466,4 +484,153 @@ test("guardian_finish_workflow blocks merged worktrees with ignored files unless
   assert.equal(apply.results[0].branchDeleted, true);
   await assert.rejects(() => fs.access(worktreePath));
   await assert.rejects(() => git(repo, ["rev-parse", "--verify", branch]));
+});
+
+
+test("guardian_finish_workflow cleans merged remote Guardian branches", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const branch = "guardian/workflow-remote-merged";
+  const rescueBranch = "rescue/workflow-remote-merged";
+  const unmergedBranch = "guardian/workflow-remote-unmerged";
+  const head = await createMergedBranch(repo, branch, "workflow-remote-merged.txt");
+  await git(repo, ["push", "origin", branch]);
+  await git(repo, ["branch", "-d", branch]);
+  await createMergedBranch(repo, rescueBranch, "workflow-rescue-merged.txt");
+  await git(repo, ["push", "origin", rescueBranch]);
+  await git(repo, ["branch", "-d", rescueBranch]);
+  await createUnmergedBranch(repo, unmergedBranch, "workflow-remote-unmerged.txt");
+  await git(repo, ["push", "origin", unmergedBranch]);
+  await git(repo, ["branch", "-D", unmergedBranch]);
+  await git(repo, ["fetch", "origin"]);
+
+  const plan = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "plan" }));
+
+  assert.equal(plan.ok, true, JSON.stringify(plan));
+  assert.equal(plan.status, "planned");
+  assert.equal(plan.candidates.length, 1);
+  assert.equal(plan.candidates[0].kind, "remote-branch");
+  assert.equal(plan.candidates[0].targetKind, "remote-branch");
+  assert.equal(plan.candidates[0].remote, "origin");
+  assert.equal(plan.candidates[0].remoteBranch, branch);
+  assert.equal(plan.candidates[0].head, head);
+
+  const apply = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "apply", confirmToken: plan.confirmToken }));
+
+  assert.equal(apply.ok, true, JSON.stringify(apply));
+  assert.equal(apply.status, "cleaned");
+  assert.equal(apply.results.length, 1);
+  assert.equal(apply.results[0].remoteBranchDeleted, true);
+  assert.equal(await remoteBranchExists(repo, branch), false);
+  assert.equal(await remoteBranchExists(repo, rescueBranch), true);
+  assert.equal(await remoteBranchExists(repo, unmergedBranch), true);
+});
+
+
+test("guardian_finish_workflow keeps remote candidate when same-name local branch lacks ownership proof", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const branch = "guardian/workflow-same-name";
+  await createMergedBranch(repo, branch, "workflow-same-name.txt");
+  await git(repo, ["push", "origin", branch]);
+  await git(repo, ["fetch", "origin"]);
+
+  const plan = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "plan" }));
+
+  assert.equal(plan.ok, true, JSON.stringify(plan));
+  assert.equal(plan.candidates.length, 1);
+  assert.equal(plan.candidates[0].branch, branch);
+  assert.equal(plan.candidates[0].targetKind, "remote-branch");
+});
+
+test("guardian_finish_workflow cleans same-name local and remote Guardian branches when both are safe", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const branch = "guardian/workflow-same-name-owned";
+  const head = await createMergedBranch(repo, branch, "workflow-same-name-owned.txt");
+  await createSafetyRef(repo, { sessionId: "workflow-same-name-owned", branch, commit: head, timestamp: "20260610T070707" });
+  await git(repo, ["push", "origin", branch]);
+  await git(repo, ["fetch", "origin"]);
+
+  const plan = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "plan" }));
+
+  assert.equal(plan.ok, true, JSON.stringify(plan));
+  assert.equal(plan.candidates.length, 2);
+  assert.deepEqual(plan.candidates.map((candidate) => candidate.targetKind).sort(), ["remote-branch", "stale-branch"]);
+
+  const apply = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "apply", confirmToken: plan.confirmToken }));
+
+  assert.equal(apply.ok, true, JSON.stringify(apply));
+  assert.equal(apply.results.length, 2);
+  assert.equal(await branchExists(repo, branch), false);
+  assert.equal(await remoteBranchExists(repo, branch), false);
+});
+
+test("guardian_finish_workflow preserves merged local rescue branches by default", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const branch = "rescue/workflow-local-rescue";
+  await createMergedBranch(repo, branch, "workflow-local-rescue.txt");
+
+  const plan = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "plan" }));
+
+  assert.equal(plan.ok, true, JSON.stringify(plan));
+  assert.equal(plan.candidates.length, 0);
+  assert.equal(await branchExists(repo, branch), true);
+});
+
+
+test("guardian_finish_workflow requires ownership proof for configured-prefix local branches", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const branch = "agent/workflow-custom-prefix";
+  const head = await createMergedBranch(repo, branch, "workflow-custom-prefix.txt");
+  const config = { ...DEFAULT_CONFIG, branchPrefix: "agent/" };
+
+  const unproven = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "plan", config }));
+
+  assert.equal(unproven.ok, true, JSON.stringify(unproven));
+  assert.equal(unproven.candidates.length, 0);
+  assert.equal(await branchExists(repo, branch), true);
+
+  await createSafetyRef(repo, { sessionId: "workflow-custom-prefix", branch, commit: head, timestamp: "20260610T080808" });
+  const proven = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "plan", config }));
+
+  assert.equal(proven.ok, true, JSON.stringify(proven));
+  assert.equal(proven.candidates.length, 1);
+  assert.equal(proven.candidates[0].targetKind, "stale-branch");
+});
+
+test("guardian_finish_workflow ignores stale deleted remote tracking refs after prune", async (t) => {
+  const { base, repo, remote } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const branch = "guardian/workflow-stale-remote-tracking";
+  await createMergedBranch(repo, branch, "workflow-stale-remote-tracking.txt");
+  await git(repo, ["push", "origin", branch]);
+  await git(repo, ["branch", "-d", branch]);
+  await git(repo, ["fetch", "origin"]);
+  assert.equal(await remoteBranchExists(repo, branch), true);
+  await git(remote, ["update-ref", "-d", "refs/heads/" + branch]);
+
+  const plan = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "plan" }));
+
+  assert.equal(plan.ok, true, JSON.stringify(plan));
+  assert.equal(plan.candidates.some((candidate) => candidate.remoteBranch === branch), false);
+});
+
+test("deleteRemoteBranch blocks when remote branch advanced after discovery", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const branch = "guardian/workflow-remote-lease";
+  const oldHead = await createMergedBranch(repo, branch, "workflow-remote-lease.txt");
+  await git(repo, ["push", "origin", branch]);
+  await git(repo, ["checkout", branch]);
+  await fs.writeFile(path.join(repo, "workflow-remote-lease-advanced.txt"), "advanced\n");
+  await git(repo, ["add", "workflow-remote-lease-advanced.txt"]);
+  await git(repo, ["commit", "-m", "advance workflow remote lease"]);
+  await git(repo, ["push", "origin", branch]);
+  await git(repo, ["checkout", "main"]);
+
+  await assert.rejects(() => deleteRemoteBranch(repo, "origin", branch, oldHead));
+  assert.equal(await remoteBranchExists(repo, branch), true);
 });

@@ -44,8 +44,68 @@ export function formatGuardianFinishWorkflowOutput(rawResult: unknown) {
   return lines.join("\n");
 }
 
+function formatDoneAllSummary(summary: Record<string, unknown>): string {
+  const keys = ["total", "finishable", "dirtySkipped", "blocked", "finished", "failed"];
+  return keys
+    .filter((key) => summary[key] !== undefined)
+    .map((key) => `${key}=${Number(summary[key] ?? 0)}`)
+    .join(" ");
+}
+
+function formatDoneAllSession(entry: unknown): string {
+  const session = recordValue(entry);
+  const id = textValue(session.session_id);
+  const branch = textValue(session.branch);
+  const status = textValue(session.status ?? session.disposition);
+  const reason = textValue(session.reason, "");
+  const head = session.head ? ` head=${shortCommit(session.head)}` : "";
+  return `  - session=${id} branch=${branch} status=${status}${head}${reason ? ` reason=${reason}` : ""}`;
+}
+
+function formatGuardianDoneAllOutput(result: Record<string, unknown>) {
+  const summary = recordValue(result.summary);
+  const sessions = arrayValue(result.sessions);
+  const finishable = sessions.filter((entry) => textValue(recordValue(entry).disposition) === "finishable");
+  const remaining = arrayValue(result.remaining);
+  const results = arrayValue(result.results);
+  const lines = [
+    `${result.ok === false ? "[FAIL]" : result.status === "planned" ? "[WARN]" : "[GOOD]"} guardian_done ${textValue(result.status)}`,
+    `[INFO] lane: done-all | summary: ${formatDoneAllSummary(summary)}`,
+  ];
+  const reason = textValue(result.reason, "");
+  if (result.ok === false) lines.push(`[FAIL] ${reason || "guardian_done blocked"}`);
+  else if (reason) lines.push(`[INFO] ${reason}`);
+  if (typeof result.confirmToken === "string") lines.push(`[WARN] confirmToken: ${result.confirmToken}`);
+  if (typeof result.nextAction === "string") lines.push(`[INFO] nextAction: ${result.nextAction}`);
+  if (typeof result.baseRef === "string") lines.push(`[INFO] baseRef: ${result.baseRef} | baseRefOid: ${shortCommit(result.baseRefOid)}`);
+  if (finishable.length > 0) {
+    lines.push("[INFO] finishable sessions:");
+    for (const entry of finishable.slice(0, 8)) lines.push(formatDoneAllSession(entry));
+  }
+  if (results.length > 0) {
+    lines.push("[INFO] finish results:");
+    for (const entry of results.slice(0, 8)) lines.push(formatDoneAllSession(entry));
+  }
+  if (remaining.length > 0) {
+    lines.push("[WARN] dirty or blocked sessions:");
+    for (const entry of remaining.slice(0, 8)) lines.push(formatDoneAllSession(entry));
+  }
+  const mainSync = recordValue(result.mainSync);
+  if (Object.keys(mainSync).length > 0) {
+    lines.push(`[INFO] mainSync: ok=${String(mainSync.ok === true)} baseBranch=${textValue(mainSync.baseBranch)} fastForwarded=${String(mainSync.fastForwarded === true)} alreadySynced=${String(mainSync.alreadySynced === true)} reason=${textValue(mainSync.reason, "")}`);
+  }
+  const cleanupSweep = recordValue(result.cleanupSweep);
+  if (Object.keys(cleanupSweep).length > 0) {
+    lines.push(`[INFO] cleanupSweep: ok=${String(cleanupSweep.ok === true)} status=${textValue(cleanupSweep.status)} candidates=${Number(cleanupSweep.candidateCount ?? 0)} cleaned=${Number(cleanupSweep.cleanedCount ?? 0)} failed=${Number(cleanupSweep.failedCount ?? 0)}`);
+  }
+  const hint = textValue(result.remainingHint, "");
+  if (hint) lines.push(`[WARN] ${hint}`);
+  return lines.join("\n");
+}
+
 export function formatGuardianDoneOutput(rawResult: unknown) {
   const result = recordValue(rawResult);
+  if (result.lane === "done-all") return formatGuardianDoneAllOutput(result);
   if (result.ok !== false && result.status === "no-op" && result.lane === "already-preserved") {
     const lines = [
       "[GOOD] guardian_done no-op: session already preserved",
@@ -80,7 +140,7 @@ export function formatGuardianDoneOutput(rawResult: unknown) {
   const cleanup = recordValue(result.cleanup);
   const pr = recordValue(result.pr);
   const dirtySnapshot = recordValue(result.dirtySnapshot);
-  const dirtyPaths = arrayValue(dirtySnapshot.paths ?? preflight.dirtyFiles);
+  const dirtyPaths = arrayValue(dirtySnapshot.paths ?? preflight.dirtyFiles ?? result.dirtyFiles);
   const branch = preflight.currentBranch ?? result.branch;
   const baseBranch = preflight.baseBranch ?? result.baseBranch;
   const lines = [
@@ -95,6 +155,10 @@ export function formatGuardianDoneOutput(rawResult: unknown) {
   if (typeof result.head === "string") lines.push(`[INFO] head: ${shortCommit(result.head)}`);
   if (Object.keys(pr).length > 0) lines.push(`[INFO] pr: #${textValue(pr.number)} ${textValue(pr.url)} created=${String(result.prCreated === true)} adminBypass=${String(result.adminBypass === true)}`);
   if (Object.keys(cleanup).length > 0) lines.push(`[INFO] cleanup: ${textValue(cleanup.status)} worktreeRemoved=${String(cleanup.worktreeRemoved === true)} branchDeleted=${String(cleanup.branchDeleted === true)}`);
+  const mainSync = recordValue(result.mainSync);
+  if (Object.keys(mainSync).length > 0) lines.push(`[INFO] mainSync: ok=${String(mainSync.ok === true)} baseBranch=${textValue(mainSync.baseBranch)} fastForwarded=${String(mainSync.fastForwarded === true)} alreadySynced=${String(mainSync.alreadySynced === true)} reason=${textValue(mainSync.reason, "")}`);
+  const cleanupSweep = recordValue(result.cleanupSweep);
+  if (Object.keys(cleanupSweep).length > 0) lines.push(`[INFO] cleanupSweep: ok=${String(cleanupSweep.ok === true)} status=${textValue(cleanupSweep.status)} candidates=${Number(cleanupSweep.candidateCount ?? 0)} cleaned=${Number(cleanupSweep.cleanedCount ?? 0)} failed=${Number(cleanupSweep.failedCount ?? 0)}`);
   if (typeof result.commitMessage === "string") lines.push(`[INFO] commitMessage: ${result.commitMessage}`);
   if (typeof result.commit === "string") lines.push(`[INFO] commit: ${shortCommit(result.commit)}`);
   if (dirtyPaths.length > 0) {

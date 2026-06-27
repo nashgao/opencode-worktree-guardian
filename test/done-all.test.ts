@@ -4,13 +4,19 @@ import path from "node:path";
 import test from "node:test";
 import { DEFAULT_CONFIG } from "../src/config.ts";
 import { guardianDone } from "../src/done.ts";
+import { createSafetyRef } from "../src/git.ts";
 import { guardianStart } from "../src/tools.ts";
-import { createRepoWithOrigin, git, installMultiBranchFakeGh } from "./helpers.ts";
+import { createRepoWithOrigin, git, installFakeGh, installMultiBranchFakeGh } from "./helpers.ts";
 
 type LooseRecord = Record<string, unknown>;
 
 async function pathExists(target: string) {
   return fs.access(target).then(() => true, () => false);
+}
+
+async function remoteBranchExists(repo: string, branch: string) {
+  const result = await git(repo, ["ls-remote", "--heads", "origin", branch]);
+  return result.stdout.length > 0;
 }
 
 async function commitInWorktree(worktree: string, file: string, content: string, message: string) {
@@ -28,6 +34,27 @@ test("guardian_done all=true is a no-op when no active feature sessions exist", 
   assert.equal(result.ok, true);
   assert.equal(result.lane, "done-all");
   assert.equal(result.status, "no-op");
+});
+
+test("guardian_done all=true blocks cleanup-only blockers without an apply token", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  await fs.writeFile(path.join(repo, "dirty-primary.txt"), "dirty primary\n");
+
+  const plan = await guardianDone({ repoRoot: repo, cwd: repo, all: true, mode: "plan" }) as LooseRecord;
+
+  assert.equal(plan.ok, false, JSON.stringify(plan));
+  assert.equal(plan.status, "blocked");
+  assert.equal(plan.confirmToken, undefined);
+  assert.match(plan.reason as string, /cleanup plan has blockers/);
+  const cleanupPlan = plan.cleanupPlan as LooseRecord;
+  assert.equal(cleanupPlan.ok, false);
+
+  const apply = await guardianDone({ repoRoot: repo, cwd: repo, all: true, mode: "apply", confirm: true, confirmToken: "stale" }) as LooseRecord;
+
+  assert.equal(apply.ok, false, JSON.stringify(apply));
+  assert.equal(apply.status, "blocked");
+  assert.match(apply.reason as string, /cleanup plan has blockers/);
 });
 
 test("guardian_done all=true plans every active feature session", async (t) => {
@@ -99,6 +126,32 @@ test("guardian_done all=true apply blocks a stale confirm token after a session 
   assert.match(apply.reason as string, /confirm token mismatch/);
 });
 
+test("guardian_done all=true cleans already-merged sessions without creating a PR", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const session = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_all_already_merged", taskName: "all already merged", createWorktree: true, config: DEFAULT_CONFIG });
+  await commitInWorktree(session.session.worktree_path, "feat-already.txt", "already\n", "feat already merged");
+  const head = (await git(session.session.worktree_path, ["rev-parse", "HEAD"])).stdout;
+  await git(repo, ["merge", "--ff-only", session.session.branch]);
+  await git(repo, ["push", "origin", "main"]);
+  const fakeGh = await installFakeGh(t, { repo, branch: session.session.branch, head });
+
+  const plan = await guardianDone({ repoRoot: repo, cwd: repo, all: true, mode: "plan" }) as LooseRecord;
+  const apply = await guardianDone({ repoRoot: repo, cwd: repo, all: true, mode: "apply", confirm: true, confirmToken: plan.confirmToken, timestamp: "20260624T121500" }) as LooseRecord;
+
+  assert.equal(apply.ok, true, JSON.stringify(apply));
+  assert.equal(apply.status, "finished");
+  const results = apply.results as LooseRecord[];
+  assert.equal(results.length, 1);
+  assert.equal(results[0].status, "already-landed-and-cleaned");
+  assert.equal(results[0].worktreeRemoved, true);
+  assert.equal(results[0].branchDeleted, true);
+  const log = await fs.readFile(fakeGh.logPath, "utf8").catch(() => "");
+  assert.equal(log, "");
+  assert.equal(await pathExists(session.session.worktree_path), false);
+  await assert.rejects(git(repo, ["rev-parse", "--verify", `refs/heads/${session.session.branch}`]));
+});
+
 test("guardian_done all=true finishes every clean session and fast-forwards local main", async (t) => {
   const { base, repo, remote } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
@@ -106,7 +159,7 @@ test("guardian_done all=true finishes every clean session and fast-forwards loca
   const b = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_all_e2e_b", taskName: "e2e b", createWorktree: true, config: DEFAULT_CONFIG });
   await commitInWorktree(a.session.worktree_path, "feat-a.txt", "a\n", "feat a");
   await commitInWorktree(b.session.worktree_path, "feat-b.txt", "b\n", "feat b");
-  await installMultiBranchFakeGh(t, { repo, remote });
+  const fakeGh = await installMultiBranchFakeGh(t, { repo, remote });
 
   const plan = await guardianDone({ repoRoot: repo, cwd: repo, all: true, mode: "plan" }) as LooseRecord;
   const apply = await guardianDone({ repoRoot: repo, cwd: repo, all: true, mode: "apply", confirm: true, confirmToken: plan.confirmToken, timestamp: "20260610T010101" }) as LooseRecord;
@@ -124,4 +177,134 @@ test("guardian_done all=true finishes every clean session and fast-forwards loca
   const localMain = (await git(repo, ["rev-parse", "main"])).stdout;
   const remoteMain = (await git(repo, ["rev-parse", "origin/main"])).stdout;
   assert.equal(localMain, remoteMain);
+  const ghLog = await fs.readFile(fakeGh.logPath, "utf8");
+  assert.doesNotMatch(ghLog, /--delete-branch/);
+});
+
+
+
+test("guardian_done all=true applies preplanned cleanup before session merges advance base", async (t) => {
+  const { base, repo, remote } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const staleBranch = "guardian/done-all-preexisting-stale";
+  await git(repo, ["checkout", "-b", staleBranch]);
+  await fs.writeFile(path.join(repo, "done-all-preexisting-stale.txt"), "preexisting stale\n");
+  await git(repo, ["add", "done-all-preexisting-stale.txt"]);
+  await git(repo, ["commit", "-m", "add preexisting stale"]);
+  const staleHead = (await git(repo, ["rev-parse", staleBranch])).stdout;
+  await createSafetyRef(repo, { sessionId: "done-all-preexisting-stale", branch: staleBranch, commit: staleHead, timestamp: "20260610T090909" });
+  await git(repo, ["checkout", "main"]);
+  await git(repo, ["merge", "--no-ff", staleBranch, "-m", "merge preexisting stale"]);
+  await git(repo, ["push", "origin", "main"]);
+
+  const session = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_all_with_preexisting_cleanup", taskName: "with preexisting cleanup", createWorktree: true, config: DEFAULT_CONFIG });
+  await commitInWorktree(session.session.worktree_path, "feat-preexisting-cleanup.txt", "session work\n", "feat with preexisting cleanup");
+  await installMultiBranchFakeGh(t, { repo, remote });
+
+  const plan = await guardianDone({ repoRoot: repo, cwd: repo, all: true, mode: "plan" }) as LooseRecord;
+  const cleanupPlan = plan.cleanupPlan as LooseRecord;
+  assert.equal((cleanupPlan.candidates as LooseRecord[]).some((candidate) => candidate.branch === staleBranch), true);
+
+  const apply = await guardianDone({ repoRoot: repo, cwd: repo, all: true, mode: "apply", confirm: true, confirmToken: plan.confirmToken, timestamp: "20260610T101010" }) as LooseRecord;
+
+  assert.equal(apply.ok, true, JSON.stringify(apply));
+  assert.equal(apply.status, "finished");
+  assert.equal((apply.cleanupSweep as LooseRecord).cleanedCount, 1);
+  await assert.rejects(git(repo, ["rev-parse", "--verify", staleBranch]));
+  assert.equal(await pathExists(session.session.worktree_path), false);
+});
+
+test("guardian_done all=true does not clean post-finish candidates absent from plan", async (t) => {
+  const { base, repo, remote } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const session = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_all_post_finish_candidate", taskName: "post finish candidate", createWorktree: true, config: DEFAULT_CONFIG });
+  await commitInWorktree(session.session.worktree_path, "post-finish-candidate.txt", "post finish candidate\n", "feat post finish candidate");
+  const fakeGh = await installMultiBranchFakeGh(t, { repo, remote });
+
+  const plan = await guardianDone({ repoRoot: repo, cwd: repo, all: true, mode: "plan" }) as LooseRecord;
+  const cleanupPlan = plan.cleanupPlan as LooseRecord;
+  assert.equal(Array.isArray(cleanupPlan.candidates) ? cleanupPlan.candidates.length : 0, 0);
+
+  const apply = await guardianDone({ repoRoot: repo, cwd: repo, all: true, mode: "apply", confirm: true, confirmToken: plan.confirmToken, timestamp: "20260610T020202" }) as LooseRecord;
+
+  assert.equal(apply.ok, true, JSON.stringify(apply));
+  assert.equal(apply.status, "finished");
+  const cleanupSweep = apply.cleanupSweep as LooseRecord;
+  assert.equal(cleanupSweep.status, "no-op");
+  assert.equal(cleanupSweep.candidateCount, 0);
+  assert.equal(await remoteBranchExists(repo, session.session.branch), true);
+  const ghLog = await fs.readFile(fakeGh.logPath, "utf8");
+  assert.doesNotMatch(ghLog, /--delete-branch/);
+});
+
+
+test("guardian_done all=true cleans stale branches without active sessions", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const localBranch = "guardian/done-all-local-stale";
+  const remoteBranch = "guardian/done-all-remote-stale";
+  await git(repo, ["checkout", "-b", localBranch]);
+  await fs.writeFile(path.join(repo, "done-all-local-stale.txt"), "local stale\n");
+  await git(repo, ["add", "done-all-local-stale.txt"]);
+  await git(repo, ["commit", "-m", "add local stale"]);
+  const localHead = (await git(repo, ["rev-parse", localBranch])).stdout;
+  await createSafetyRef(repo, { sessionId: "done-all-local-stale", branch: localBranch, commit: localHead, timestamp: "20260610T050505" });
+  await git(repo, ["checkout", "main"]);
+  await git(repo, ["merge", "--no-ff", localBranch, "-m", "merge local stale"]);
+  await git(repo, ["push", "origin", "main"]);
+  await git(repo, ["checkout", "-b", remoteBranch]);
+  await fs.writeFile(path.join(repo, "done-all-remote-stale.txt"), "remote stale\n");
+  await git(repo, ["add", "done-all-remote-stale.txt"]);
+  await git(repo, ["commit", "-m", "add remote stale"]);
+  await git(repo, ["push", "origin", remoteBranch]);
+  await git(repo, ["checkout", "main"]);
+  await git(repo, ["merge", "--no-ff", remoteBranch, "-m", "merge remote stale"]);
+  await git(repo, ["push", "origin", "main"]);
+  await git(repo, ["branch", "-d", remoteBranch]);
+  await git(repo, ["fetch", "origin"]);
+
+  const plan = await guardianDone({ repoRoot: repo, cwd: repo, all: true, mode: "plan" }) as LooseRecord;
+
+  assert.equal(plan.ok, true, JSON.stringify(plan));
+  assert.equal(plan.status, "planned");
+  assert.equal((plan.summary as LooseRecord).total, 0);
+  const cleanupPlan = plan.cleanupPlan as LooseRecord;
+  assert.equal((cleanupPlan.candidates as LooseRecord[]).length, 2);
+
+  const apply = await guardianDone({ repoRoot: repo, cwd: repo, all: true, mode: "apply", confirm: true, confirmToken: plan.confirmToken }) as LooseRecord;
+
+  assert.equal(apply.ok, true, JSON.stringify(apply));
+  assert.equal(apply.status, "finished");
+  const cleanupSweep = apply.cleanupSweep as LooseRecord;
+  assert.equal(cleanupSweep.status, "cleaned");
+  assert.equal(cleanupSweep.cleanedCount, 2);
+  await assert.rejects(git(repo, ["rev-parse", "--verify", localBranch]));
+  assert.equal(await remoteBranchExists(repo, remoteBranch), false);
+});
+
+
+test("guardian_done all=true apply blocks cleanup candidates added after plan", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const branch = "guardian/done-all-token-drift";
+
+  const plan = await guardianDone({ repoRoot: repo, cwd: repo, all: true, mode: "plan" }) as LooseRecord;
+
+  assert.equal(plan.ok, true, JSON.stringify(plan));
+  assert.equal(plan.status, "no-op");
+  await git(repo, ["checkout", "-b", branch]);
+  await fs.writeFile(path.join(repo, "done-all-token-drift.txt"), "token drift\n");
+  await git(repo, ["add", "done-all-token-drift.txt"]);
+  await git(repo, ["commit", "-m", "add done-all token drift"]);
+  await git(repo, ["checkout", "main"]);
+  await git(repo, ["merge", "--no-ff", branch, "-m", "merge done-all token drift"]);
+  await git(repo, ["push", "origin", "main"]);
+
+  const apply = await guardianDone({ repoRoot: repo, cwd: repo, all: true, mode: "apply", confirm: true, confirmToken: plan.confirmToken }) as LooseRecord;
+
+  assert.equal(apply.ok, false, JSON.stringify(apply));
+  assert.equal(apply.status, "blocked");
+  assert.match(apply.reason as string, /confirm token mismatch/);
+  assert.equal(await pathExists(path.join(repo, ".git")), true);
+  await git(repo, ["rev-parse", "--verify", branch]);
 });

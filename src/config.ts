@@ -23,6 +23,7 @@ export const DEFAULT_CONFIG: GuardianConfig = Object.freeze({
   allowBaseWorktreePreserveReset: false,
   allowDirtyPaths: [],
   protectedBranches: ["main", "master", "develop", "production"],
+  trustedUpstreamRemotes: [],
   lockTimeoutMs: 5_000,
 });
 
@@ -69,6 +70,7 @@ export function normalizeConfig(input: RecordLike = {}): GuardianConfig {
     allowBaseWorktreePreserveReset: config.allowBaseWorktreePreserveReset === true,
     allowDirtyPaths: uniqueStrings(Array.isArray(input.allowDirtyPaths) ? input.allowDirtyPaths : []),
     protectedBranches,
+    trustedUpstreamRemotes: uniqueStrings(Array.isArray(input.trustedUpstreamRemotes) ? input.trustedUpstreamRemotes : []),
     lockTimeoutMs: typeof config.lockTimeoutMs === "number" && Number.isFinite(config.lockTimeoutMs) ? config.lockTimeoutMs : DEFAULT_CONFIG.lockTimeoutMs,
   };
 }
