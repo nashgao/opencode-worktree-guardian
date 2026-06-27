@@ -39,6 +39,12 @@ const COMMANDS = [
     prompt: "Use the guardian_preserve native tool to mark the current Guardian-owned session as terminal/preserved with a safety ref. Preserved worktrees are cleanup-eligible; do not treat preservation as a reason to retain disk state forever.",
   },
   {
+    name: "guardian-project-status",
+    title: "Guardian: Project Status",
+    description: "Inspect project roadmap, milestone, plan, and ULW evidence.",
+    prompt: "Use the guardian_project_status native tool to inspect project roadmap, milestone, plan, and ULW evidence. Treat the result as read-only evidence unless writeReport=true is explicitly requested.",
+  },
+  {
     name: "guardian-recover",
     title: "Guardian: Recover",
     description: "Inspect Guardian recovery refs, orphaned sessions, stashes, and evidence.",

@@ -13,6 +13,7 @@ const expectedSlashNames = [
   "guardian-hud",
   "guardian-hygiene",
   "guardian-preserve",
+  "guardian-project-status",
   "guardian-recover",
   "guardian-report",
   "guardian-start",
@@ -98,6 +99,22 @@ test("tui slash command dispatches a Guardian prompt in the current session", as
     sessionID: "ses_tui",
     directory: "/repo",
     parts: [{ type: "text", text: "Use the guardian_status native tool to inspect the current repository. Treat the result as read-only evidence." }],
+  });
+});
+
+test("tui project status prompt uses the read-only native tool", async () => {
+  const runtime = createApi();
+  await tui(runtime.api);
+  const command = runtime.layer?.commands.find((candidate) => candidate.slashName === "guardian-project-status");
+  assert.ok(command);
+
+  await command.run();
+
+  assert.equal(runtime.prompts.length, 1);
+  assert.deepEqual(runtime.prompts[0], {
+    sessionID: "ses_tui",
+    directory: "/repo",
+    parts: [{ type: "text", text: "Use the guardian_project_status native tool to inspect project roadmap, milestone, plan, and ULW evidence. Treat the result as read-only evidence unless writeReport=true is explicitly requested." }],
   });
 });
 

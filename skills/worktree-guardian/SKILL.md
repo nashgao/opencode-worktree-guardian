@@ -14,6 +14,7 @@ Canonical safety policy: [ADR 0001: Guardian Safety Policy](../../docs/adr/0001-
 
 - Do not run raw cleanup, reset, stash mutation, force-push, worktree removal, raw `git worktree add` outside Guardian-owned roots, raw branch deletion, or `rm -rf` against worktrees. Use the matching native Guardian tool.
 - Use `guardian_status` for read-only inventory.
+- Use `guardian_project_status` for read-only project intelligence evidence from roadmap, milestone review, `.omo/plans`, and `.omo/ulw-loop` artifacts. It does not establish ownership or approval to mutate. Only pass `writeReport: true` when the user explicitly asks for the static project report.
 - Use `guardian_done` for normal implementation completion. Prefer it over raw protected-branch push/merge commands or low-level finish tools unless the user explicitly asks for those tools.
 - Use `guardian_hygiene` for hygiene scan/plan/apply cleanup. With no `mode`, it scans only. For cleanup, first run `mode: "plan"`; inspect exact approved targets and blockers, get explicit user confirmation, then run `mode: "apply"` with `confirmDelete: true`.
 - Use `guardian_delete_paths` when the user intentionally wants exact files or directories deleted, including tracked source only with explicit `allowTracked: true`. Worktree deletion must use `guardian_delete_worktree`.

@@ -12,8 +12,12 @@ export { acquireStateLock, appendEvent, getGuardianPaths, readState, recordSessi
 export { guardianFinish } from "./finish.ts";
 export { guardianRecover, guardianStatus } from "./recover.ts";
 export { guardianReportHtml, renderGuardianReportHtml } from "./report.ts";
+export { buildProjectSnapshot, collectProjectSnapshot } from "./project/index.ts";
+export { guardianProjectStatus } from "./project/status-tool.ts";
+export { renderProjectReportHtml, writeProjectReport } from "./project/report.ts";
 export { buildInvisiblePolicy, collectKnownWorktreePaths, guardianPreserve, guardianStart, injectInvisiblePolicy, recordLastSafeState, resolveSessionWorktree, rewriteGuardianCommand, runGuardianTool } from "./tools.ts";
 export { guardianUnblockFinish } from "./unblock-finish.ts";
 export type * from "./types.ts";
+export type * from "./project/index.ts";
 
 export default WorktreeGuardianPlugin;

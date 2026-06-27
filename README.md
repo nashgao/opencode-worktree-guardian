@@ -75,6 +75,7 @@ Defaults are delivery-first, lifecycle-managed, and cleanup-conservative. `guard
 - `guardian_start`: create or attach the session to a guardian worktree.
 - `guardian_done`: plan or apply the safest implementation-done path for the current repository state. For an active recorded session, confirmed apply commits dirty session work only when `commitMessage` is explicit, pushes the branch, creates or reuses the PR, merges it, fetches, proves the session commit is reachable from `remote/baseBranch`, then removes the stale Guardian worktree and local branch. Admin bypass is never automatic; it requires explicit `allowAdminBypass: true`. `guardian_done` can also reattach an existing Guardian-root worktree with a fresh internal recovery session id when no active session owns it, routes clean primary-base cleanup to `guardian_finish_workflow`, and handles dirty protected primary `baseBranch` only with an explicit `commitMessage` plus explicit confirmation. Primary-main apply creates a safety ref before committing, pushes normally to the configured remote/base branch, proves the new commit is reachable, and returns a separate cleanup plan; that lane does not silently apply cleanup, force-push, mutate stashes, delete remote branches, or weaken worktree safety. Pass `all=true` to finish every active Guardian feature session in one gated plan/apply pass: `mode: "plan"` enumerates and classifies each session and returns a `confirmToken`, then `mode: "apply"` with `confirm: true` and that token lands each finishable session sequentially with per-session failure isolation. This batch is clean-only; dirty or protected sessions are skipped and reported under `remaining` for individual `guardian_done`, and apply fails closed with a token mismatch if the active session set, base ref, or any worktree changed since plan.
 - `guardian_status`: read-only inventory of sessions, worktrees, refs, stashes, dirty files. Its native tool output renders a terminal-readable summary, while `metadata` keeps the full structured result for automation.
+- `guardian_project_status`: read-only project intelligence snapshot from explicit project roots or the current repo root. It parses `definition/roadmap.md`, `.milestones/reviews/*impl-rating*.md|txt`, `.omo/plans/*.md`, and `.omo/ulw-loop/*/{goals.json,ledger.jsonl}` into structured metadata with warnings for malformed or skipped artifacts. The default call does not write files or mutate Guardian state. Passing `writeReport: true` writes only `.git/opencode-guardian/project-report.html` as static offline HTML.
 - `guardian_delete_paths`: safe exact path deletion for files and directories inside the repo. Run `mode: "plan"` first with explicit `paths`, inspect statuses and blockers, then apply through the plugin with `mode: "apply"` and `confirmDelete: true`; low-level direct calls also require the matching `confirmToken`. Tracked source deletion requires `allowTracked: true`; directory deletion requires `allowRecursive: true`. Worktree deletion remains separate and must use `guardian_delete_worktree`.
 - `guardian_delete_worktree`: safe explicit worktree deletion. Run `mode: "plan"` first to get a confirm token, then `mode: "apply"` with that token. It creates a safety ref before removal, uses non-force worktree removal, keeps the branch by default, and only uses non-force branch deletion when `deleteBranch: true` and ancestry is proven. Dirty or untracked target worktrees still block by default. The direct tool can proceed only when `allowRedundantDirtyPaths: true` is present in both plan and apply, every dirty path is an eligible unstaged tracked modification, unstaged tracked deletion, or untracked regular file, and Guardian proves that final path state already matches the fetched base tree. Apply snapshots that dirt to `dirtySnapshotRef`, cleans only proof-approved paths, rechecks status, then removes the worktree. Intentional unmerged local abandonment requires `deleteBranch: true` plus `abandonUnmerged: true` in both plan and apply.
 - `guardian_unblock_finish`: safe explicit finish-unblock helper. Run `mode: "plan"` first to get a confirm token, then `mode: "apply"` with that token. The first supported action, `commit-review-artifacts`, commits only `.milestones/reviews/*impl-rating-YYYYMMDD.md` or `.milestones/reviews/*impl-rating-YYYYMMDD.txt` review artifacts and refuses mixed source changes, renames/copies, and symlink artifacts. Descriptive branch names are allowed when the recorded session owns that exact branch/worktree binding. If the session is missing from Guardian state, plan and apply can resolve the current Guardian-root worktree or exactly one checked-out worktree under the configured Guardian worktree root from the same explicit `branch` or `worktreePath`, then attach a fresh internal recovery session id.
@@ -92,6 +93,7 @@ Defaults are delivery-first, lifecycle-managed, and cleanup-conservative. `guard
 When the TUI plugin entrypoint is enabled, Guardian registers these slash commands directly in OpenCode's command palette and slash command surface:
 
 - `/guardian-status`
+- `/guardian-project-status`
 - `/guardian-done`
 - `/guardian-start`
 - `/guardian-finish`
@@ -113,6 +115,7 @@ Each command submits a prompt to the current session telling the agent to use th
 The package also ships top-level `commands/*.md` assets for compatibility with hosts that support packaged markdown command discovery. Those hosts may register namespaced commands, for example:
 
 - `/opencode-worktree-guardian:status`
+- `/opencode-worktree-guardian:project-status`
 - `/opencode-worktree-guardian:done`
 - `/opencode-worktree-guardian:start`
 - `/opencode-worktree-guardian:finish`
@@ -135,6 +138,7 @@ Native OpenCode command discovery is separate from packaged plugin assets. User 
 The Codex adapter exposes the same command-style entry points as `$guardian-*` skills because Codex plugin discovery surfaces skills rather than OpenCode slash-command registrations:
 
 - `$guardian-status`
+- `$guardian-project-status`
 - `$guardian-done`
 - `$guardian-start`
 - `$guardian-finish`

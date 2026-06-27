@@ -13,6 +13,7 @@ Release checklist: [docs/release-checklist.md](../../../docs/release-checklist.m
 ## Commands
 
 - `guardian status` -> run `node <adapter-path> tool guardian_status '{}'`
+- `guardian project-status` -> run `node <adapter-path> tool guardian_project_status '{}'`
 - `guardian done` -> run `node <adapter-path> tool guardian_done '{"mode":"plan"}'` first. If the active session is dirty, include an explicit `commitMessage`; Guardian will not invent one. After explicit user confirmation, rerun with `{"mode":"apply","confirm":true}` plus the same plan options. Active-session apply commits dirty work when needed, lands the PR, proves the commit reached the remote base branch, then removes the stale worktree and local branch. Add `allowAdminBypass:true` only when the user explicitly approves a branch-protection bypass; do not copy or ask for the internal confirm token.
 - `guardian finish` -> prefer `guardian_done` for normal completion. Use `node <adapter-path> tool guardian_finish '{}'` only for explicit low-level session finishing when the user asks for that tool.
 - `guardian recover` -> run `node <adapter-path> tool guardian_recover '{}'`
@@ -26,4 +27,4 @@ For `guardian done`, `guardian_delete_paths`, `guardian_delete_worktree`, and `g
 
 Never replace Guardian workflows with raw `git reset --hard`, `git clean -fd`, `git worktree remove`, `git worktree prune`, `git branch -D`, `git stash drop`, `git stash clear`, or force-push commands.
 
-Use `guardian_hygiene` for hygiene cleanup, `guardian_delete_paths` for exact path/source deletion, `guardian_delete_worktree` for worktree deletion, and `guardian_done` for normal completion.
+Use `guardian_project_status` for project evidence snapshots, `guardian_hygiene` for hygiene cleanup, `guardian_delete_paths` for exact path/source deletion, `guardian_delete_worktree` for worktree deletion, and `guardian_done` for normal completion.
