@@ -109,12 +109,11 @@ export async function guardianFinishWorkflow(input: Record<string, unknown> = {}
   if (preflightBlockers(preflight).length > 0) return blocked(dirtyPrimaryReason, { dirtyFiles: blockingDirtyFiles, candidates, blockers }, preflight);
   const hardBlocker = blockers.find((blocker) => blocker.kind === "candidate-bound");
   if (hardBlocker) return blocked("cleanup candidate count exceeds bounded automation limit", { candidates, blockers }, preflight);
-  if (blockers.length > 0) {
-    if (mode === "plan" && candidates.length > 0) return { ok: true, status: "planned-partial", preflight, candidates, blockers };
+  if (blockers.length > 0 && candidates.length === 0) {
     return blocked("cleanup blockers must be resolved before apply", { candidates, blockers }, preflight);
   }
   const confirmToken = createWorkflowToken(preflight, candidates);
-  if (mode === "plan") return { ok: true, status: "planned", confirmToken, preflight, candidates, blockers };
+  if (mode === "plan") return { ok: true, status: blockers.length > 0 ? "planned-partial" : "planned", confirmToken, preflight, candidates, blockers };
   if (input.confirmToken !== confirmToken) return blocked("confirm token mismatch; re-run mode=plan and use the returned confirmToken", { tokenMatched: false, candidates, blockers }, preflight);
 
   let baseSync: Record<string, unknown> | undefined;

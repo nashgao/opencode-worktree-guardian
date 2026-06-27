@@ -62,6 +62,17 @@ function formatDoneAllSession(entry: unknown): string {
   return `  - session=${id} branch=${branch} status=${status}${head}${reason ? ` reason=${reason}` : ""}`;
 }
 
+function formatDoneAllRemaining(entry: unknown): string {
+  const remaining = recordValue(entry);
+  if (remaining.session_id !== undefined || remaining.disposition !== undefined || remaining.status !== undefined) return formatDoneAllSession(entry);
+  const kind = textValue(remaining.kind);
+  const branch = textValue(remaining.branch);
+  const path = textValue(remaining.targetPath);
+  const head = remaining.head ? ` head=${shortCommit(remaining.head)}` : "";
+  const reason = textValue(remaining.reason, "");
+  return `  - kind=${kind} branch=${branch} path=${path}${head}${reason ? ` reason=${reason}` : ""}`;
+}
+
 function formatGuardianDoneAllOutput(result: Record<string, unknown>) {
   const summary = recordValue(result.summary);
   const sessions = arrayValue(result.sessions);
@@ -87,8 +98,8 @@ function formatGuardianDoneAllOutput(result: Record<string, unknown>) {
     for (const entry of results.slice(0, 8)) lines.push(formatDoneAllSession(entry));
   }
   if (remaining.length > 0) {
-    lines.push("[WARN] dirty or blocked sessions:");
-    for (const entry of remaining.slice(0, 8)) lines.push(formatDoneAllSession(entry));
+    lines.push("[WARN] remaining repo blockers:");
+    for (const entry of remaining.slice(0, 8)) lines.push(formatDoneAllRemaining(entry));
   }
   const mainSync = recordValue(result.mainSync);
   if (Object.keys(mainSync).length > 0) {

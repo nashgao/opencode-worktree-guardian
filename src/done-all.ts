@@ -134,10 +134,19 @@ export async function guardianDoneAll(input: Record<string, unknown> = {}): Prom
   const cleanupExcludeBranches = plans.map((plan) => plan.branch).filter((branch): branch is string => typeof branch === "string" && branch.length > 0);
   const cleanupPlan = await guardianFinishWorkflow({ repoRoot, cwd: repoRoot, mode: "plan", config, excludeBranches: cleanupExcludeBranches });
   const cleanupCandidates = Array.isArray(cleanupPlan.candidates) ? cleanupPlan.candidates.length : 0;
-  const cleanupBlockers = Array.isArray(cleanupPlan.blockers) ? cleanupPlan.blockers.length : 0;
+  const cleanupBlockerRecords = Array.isArray(cleanupPlan.blockers) ? cleanupPlan.blockers.filter((blocker): blocker is Record<string, unknown> => isRecordLike(blocker)) : [];
+  const cleanupBlockers = cleanupBlockerRecords.length;
   const cleanupHasApplyToken = typeof cleanupPlan.confirmToken === "string";
-  const cleanupBlocked = cleanupPlan.ok !== true || cleanupBlockers > 0 || (cleanupCandidates > 0 && !cleanupHasApplyToken);
-  if (cleanupBlocked) {
+  const cleanupPreflight = isRecordLike(cleanupPlan.preflight) ? cleanupPlan.preflight : {};
+  const cleanupPreflightBlockers = Array.isArray(cleanupPreflight.blockers) ? cleanupPreflight.blockers.filter((blocker): blocker is string => typeof blocker === "string") : [];
+  const cleanupScanCompleted = cleanupPreflight.candidateScanStatus === "completed";
+  const cleanupHasCandidateBound = cleanupBlockerRecords.some((blocker) => blocker.kind === "candidate-bound");
+  const cleanupHasSafeWork = finishable.length > 0 || cleanupCandidates > 0 && cleanupHasApplyToken;
+  const cleanupHardBlocked = cleanupCandidates > 0 && !cleanupHasApplyToken
+    || cleanupHasCandidateBound
+    || cleanupPreflightBlockers.length > 0
+    || cleanupPlan.ok !== true && (!cleanupScanCompleted || !cleanupHasSafeWork);
+  if (cleanupHardBlocked) {
     return {
       ok: false,
       status: "blocked",
@@ -157,10 +166,11 @@ export async function guardianDoneAll(input: Record<string, unknown> = {}): Prom
 
   if (mode === "plan") {
     const noSessionWork = plans.length === 0;
-    const noCleanupWork = cleanupCandidates === 0;
+    const noCleanupWork = cleanupCandidates === 0 && cleanupBlockers === 0 && cleanupPlan.ok === true;
+    const willRemainPartial = remaining.length > 0 || cleanupBlockers > 0 || cleanupPlan.ok !== true;
     return {
       ok: true,
-      status: noSessionWork && noCleanupWork ? "no-op" : "planned",
+      status: noSessionWork && noCleanupWork ? "no-op" : willRemainPartial ? "planned-partial" : "planned",
       lane: "done-all",
       confirmToken,
       baseRef,
@@ -200,11 +210,9 @@ export async function guardianDoneAll(input: Record<string, unknown> = {}): Prom
     }
     : cleanupCandidates > 0
       ? { ok: false, status: "blocked", reason: "cleanup plan has candidates but no apply token", candidateCount: cleanupCandidates, plan: cleanupPlan }
-      : { ok: true, status: "no-op", candidateCount: 0, plan: cleanupPlan };
-  const sweepFailure = cleanupSweep.ok === false;
-  if (sweepFailure) {
-    return { ok: false, status: "partial", lane: "done-all", reason: "cleanup sweep failed before finishing sessions", summary: { ...summary, finished: 0, failed: 0 }, results: [], remaining, cleanupSweep };
-  }
+      : cleanupBlockers > 0 || cleanupPlan.ok !== true
+        ? { ok: false, status: "partial", reason: "cleanup blockers remain", candidateCount: 0, plan: cleanupPlan, remaining: cleanupPlan.blockers ?? [] }
+        : { ok: true, status: "no-op", candidateCount: 0, plan: cleanupPlan };
 
   const results: Record<string, unknown>[] = [];
   for (const plan of finishable) {
@@ -242,16 +250,19 @@ export async function guardianDoneAll(input: Record<string, unknown> = {}): Prom
   const finishedCount = results.filter((result) => result.ok === true).length;
   const failedCount = results.length - finishedCount;
   const hardFailure = failedCount > 0;
+  const cleanupRemaining = isRecordLike(cleanupSweep) && Array.isArray(cleanupSweep.remaining) ? cleanupSweep.remaining.filter((entry): entry is Record<string, unknown> => isRecordLike(entry)) : [];
+  const allRemaining = [...remaining, ...cleanupRemaining];
+  const repoFinished = !hardFailure && cleanupSweep.ok === true && allRemaining.length === 0;
   const mainSync = await syncLocalBase(repoRoot, config);
   return {
-    ok: !hardFailure && !sweepFailure,
-    status: !hardFailure && !sweepFailure && remaining.length === 0 ? "finished" : "partial",
+    ok: repoFinished,
+    status: repoFinished ? "finished" : "partial",
     lane: "done-all",
     summary: { ...summary, finished: finishedCount, failed: failedCount },
     results,
-    remaining,
+    remaining: allRemaining,
     mainSync,
     cleanupSweep,
-    ...(remaining.length > 0 ? { remainingHint: "dirty or protected sessions were skipped; finish them individually with guardian_done branch=<branch> commitMessage=..." } : {}),
+    ...(allRemaining.length > 0 ? { remainingHint: "safe work was applied; remaining entries need explicit cleanup or individual guardian_done handling before the repo is done" } : {}),
   };
 }

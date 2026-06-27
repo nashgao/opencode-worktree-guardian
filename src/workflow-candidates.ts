@@ -82,7 +82,7 @@ export async function discoverCandidates(repoRoot: string, cwd: string, config: 
     }
     const dirtyFiles = await getDirtyFiles(worktree.path);
     if (dirtyFiles.length > 0) {
-      blockers.push({ kind: "worktree", targetPath: worktree.path, branch: worktree.branch, reason: "worktree has uncommitted changes", dirtyFileCount: dirtyFiles.length });
+      blockers.push({ kind: "worktree", targetPath: worktree.path, branch: worktree.branch, head: worktree.head, reason: "worktree has uncommitted changes", dirtyFileCount: dirtyFiles.length });
       continue;
     }
     if (!(await isAncestor(repoRoot, worktree.head, baseRef))) {

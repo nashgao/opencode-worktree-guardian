@@ -25,6 +25,20 @@ async function commitInWorktree(worktree: string, file: string, content: string,
   await git(worktree, ["commit", "-m", message]);
 }
 
+async function createMergedGuardianWorktree(repo: string, branch: string, worktreeName: string, fileName: string) {
+  await git(repo, ["checkout", "-b", branch]);
+  await fs.writeFile(path.join(repo, fileName), `${branch}\n`);
+  await git(repo, ["add", fileName]);
+  await git(repo, ["commit", "-m", `add ${fileName}`]);
+  const head = (await git(repo, ["rev-parse", branch])).stdout;
+  await git(repo, ["checkout", "main"]);
+  await git(repo, ["merge", "--no-ff", branch, "-m", `merge ${branch}`]);
+  await git(repo, ["push", "origin", "main"]);
+  const worktreePath = path.join(repo, ".worktrees", path.basename(repo), worktreeName);
+  await git(repo, ["worktree", "add", worktreePath, branch]);
+  return { head, worktreePath };
+}
+
 test("guardian_done all=true is a no-op when no active feature sessions exist", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
@@ -212,6 +226,52 @@ test("guardian_done all=true applies preplanned cleanup before session merges ad
   assert.equal((apply.cleanupSweep as LooseRecord).cleanedCount, 1);
   await assert.rejects(git(repo, ["rev-parse", "--verify", staleBranch]));
   assert.equal(await pathExists(session.session.worktree_path), false);
+});
+
+test("guardian_done all=true progresses safe sessions and cleanup while reporting stale worktree blockers", async (t) => {
+  const { base, repo, remote } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const cleanBranch = "guardian/done-all-clean-stale-worktree";
+  const dirtyBranch = "guardian/done-all-dirty-stale-worktree";
+  const clean = await createMergedGuardianWorktree(repo, cleanBranch, "done-all-clean-stale-worktree", "done-all-clean-stale-worktree.txt");
+  const dirty = await createMergedGuardianWorktree(repo, dirtyBranch, "done-all-dirty-stale-worktree", "done-all-dirty-stale-worktree.txt");
+  await fs.writeFile(path.join(dirty.worktreePath, "dirty.txt"), "dirty\n");
+  const session = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_all_partial_cleanup", taskName: "partial cleanup", createWorktree: true, config: DEFAULT_CONFIG });
+  await commitInWorktree(session.session.worktree_path, "feat-partial-cleanup.txt", "session work\n", "feat partial cleanup");
+  await installMultiBranchFakeGh(t, { repo, remote });
+
+  const plan = await guardianDone({ repoRoot: repo, cwd: repo, all: true, mode: "plan" }) as LooseRecord;
+
+  assert.equal(plan.ok, true, JSON.stringify(plan));
+  assert.equal(plan.status, "planned-partial");
+  assert.equal(typeof plan.confirmToken, "string");
+  const cleanupPlan = plan.cleanupPlan as LooseRecord;
+  assert.equal(cleanupPlan.status, "planned-partial");
+  assert.equal(typeof cleanupPlan.confirmToken, "string");
+  assert.equal((cleanupPlan.candidates as LooseRecord[]).some((candidate) => candidate.branch === cleanBranch && candidate.head === clean.head), true);
+  assert.equal((cleanupPlan.blockers as LooseRecord[]).some((blocker) => blocker.branch === dirtyBranch && blocker.head === dirty.head), true);
+
+  const apply = await guardianDone({ repoRoot: repo, cwd: repo, all: true, mode: "apply", confirm: true, confirmToken: plan.confirmToken, timestamp: "20260610T111111" }) as LooseRecord;
+
+  assert.equal(apply.ok, false, JSON.stringify(apply));
+  assert.equal(apply.status, "partial");
+  const results = apply.results as LooseRecord[];
+  assert.equal(results.length, 1);
+  assert.equal(results[0].ok, true, JSON.stringify(results));
+  assert.equal(results[0].worktreeRemoved, true);
+  const cleanupSweep = apply.cleanupSweep as LooseRecord;
+  assert.equal(cleanupSweep.status, "partial");
+  assert.equal(cleanupSweep.cleanedCount, 1);
+  assert.equal(cleanupSweep.failedCount, 0);
+  const cleanupRemaining = cleanupSweep.remaining as LooseRecord[];
+  assert.equal(cleanupRemaining.length, 1);
+  assert.equal(cleanupRemaining[0].branch, dirtyBranch);
+  assert.match(String(cleanupRemaining[0].reason), /uncommitted changes/);
+  assert.equal(await pathExists(session.session.worktree_path), false);
+  assert.equal(await pathExists(clean.worktreePath), false);
+  await assert.rejects(git(repo, ["rev-parse", "--verify", cleanBranch]));
+  assert.equal(await pathExists(dirty.worktreePath), true);
+  await git(repo, ["rev-parse", "--verify", dirtyBranch]);
 });
 
 test("guardian_done all=true does not clean post-finish candidates absent from plan", async (t) => {

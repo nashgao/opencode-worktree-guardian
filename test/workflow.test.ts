@@ -318,17 +318,22 @@ test("guardian_finish_workflow cleans safe candidates while reporting dirty Guar
 
   assert.equal(plan.ok, true);
   assert.equal(plan.status, "planned-partial");
-  assert.equal(plan.confirmToken, undefined);
+  assert.equal(typeof plan.confirmToken, "string");
   assert.equal(plan.candidates.length, 1);
   assert.equal(plan.blockers.length, 1);
   assert.match(String(plan.blockers[0].reason), /uncommitted changes/);
 
-  const apply = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "apply", confirmToken: "stale" }));
+  const apply = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "apply", confirmToken: plan.confirmToken }));
   assert.equal(apply.ok, false);
-  assert.equal(apply.status, "blocked");
-  assert.match(String(apply.reason), /cleanup blockers must be resolved/);
-  assert.equal(await pathExists(cleanPath), true);
-  assert.equal(await branchExists(repo, cleanBranch), true);
+  assert.equal(apply.status, "partial");
+  assert.match(String(apply.reason), /safe cleanup completed/);
+  assert.equal(apply.results.length, 1);
+  assert.equal(apply.results[0].worktreeRemoved, true);
+  assert.equal(apply.results[0].branchDeleted, true);
+  assert.equal(apply.remaining.length, 1);
+  assert.match(String(apply.remaining[0].reason), /uncommitted changes/);
+  assert.equal(await pathExists(cleanPath), false);
+  assert.equal(await branchExists(repo, cleanBranch), false);
   assert.equal(await pathExists(dirtyPath), true);
   assert.equal(await branchExists(repo, dirtyBranch), true);
 });
