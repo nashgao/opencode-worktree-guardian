@@ -8,7 +8,7 @@ export function formatGuardianFinishWorkflowOutput(rawResult: unknown) {
   const results = arrayValue(result.results);
   const scanStatus = textValue(preflight.candidateScanStatus, "unknown");
   const lines = [
-    `${result.ok === false ? "[FAIL]" : result.status === "planned" ? "[WARN]" : "[GOOD]"} guardian_finish_workflow ${textValue(result.status)}`,
+    `${statusPrefix(result)} guardian_finish_workflow ${textValue(result.status)}`,
     `[INFO] mode: ${textValue(preflight.mode)} | branch: ${textValue(preflight.currentBranch)} | baseRef: ${textValue(preflight.baseRef)} | baseRefOid: ${shortCommit(preflight.baseRefOid)}`,
   ];
   if (scanStatus === "completed") {
@@ -44,6 +44,11 @@ export function formatGuardianFinishWorkflowOutput(rawResult: unknown) {
   return lines.join("\n");
 }
 
+function statusPrefix(result: Record<string, unknown>): "[FAIL]" | "[WARN]" | "[GOOD]" {
+  if (result.ok === false) return "[FAIL]";
+  return result.status === "planned" || result.status === "planned-partial" ? "[WARN]" : "[GOOD]";
+}
+
 function formatDoneAllSummary(summary: Record<string, unknown>): string {
   const keys = ["total", "finishable", "dirtySkipped", "blocked", "finished", "failed"];
   return keys
@@ -73,14 +78,28 @@ function formatDoneAllRemaining(entry: unknown): string {
   return `  - kind=${kind} branch=${branch} path=${path}${head}${reason ? ` reason=${reason}` : ""}`;
 }
 
+function formatCleanupPlanEntry(entry: unknown): string {
+  const item = recordValue(entry);
+  const kind = textValue(item.kind);
+  const targetKind = textValue(item.targetKind);
+  const branch = textValue(item.branch);
+  const path = textValue(item.targetPath);
+  const head = item.head ? ` head=${shortCommit(item.head)}` : "";
+  const reason = textValue(item.reason, "");
+  return `  - kind=${kind} targetKind=${targetKind} branch=${branch} path=${path}${head}${reason ? ` reason=${reason}` : ""}`;
+}
+
 function formatGuardianDoneAllOutput(result: Record<string, unknown>) {
   const summary = recordValue(result.summary);
   const sessions = arrayValue(result.sessions);
   const finishable = sessions.filter((entry) => textValue(recordValue(entry).disposition) === "finishable");
   const remaining = arrayValue(result.remaining);
   const results = arrayValue(result.results);
+  const cleanupPlan = recordValue(result.cleanupPlan);
+  const cleanupCandidates = arrayValue(cleanupPlan.candidates);
+  const cleanupBlockers = arrayValue(cleanupPlan.blockers);
   const lines = [
-    `${result.ok === false ? "[FAIL]" : result.status === "planned" ? "[WARN]" : "[GOOD]"} guardian_done ${textValue(result.status)}`,
+    `${statusPrefix(result)} guardian_done ${textValue(result.status)}`,
     `[INFO] lane: done-all | summary: ${formatDoneAllSummary(summary)}`,
   ];
   const reason = textValue(result.reason, "");
@@ -89,6 +108,17 @@ function formatGuardianDoneAllOutput(result: Record<string, unknown>) {
   if (typeof result.confirmToken === "string") lines.push(`[WARN] confirmToken: ${result.confirmToken}`);
   if (typeof result.nextAction === "string") lines.push(`[INFO] nextAction: ${result.nextAction}`);
   if (typeof result.baseRef === "string") lines.push(`[INFO] baseRef: ${result.baseRef} | baseRefOid: ${shortCommit(result.baseRefOid)}`);
+  if (Object.keys(cleanupPlan).length > 0) {
+    lines.push(`[INFO] cleanupPlan: ${textValue(cleanupPlan.status)} candidates=${cleanupCandidates.length} blockers=${cleanupBlockers.length}`);
+  }
+  if (cleanupCandidates.length > 0) {
+    lines.push("[INFO] cleanup candidates:");
+    for (const entry of cleanupCandidates.slice(0, 8)) lines.push(formatCleanupPlanEntry(entry));
+  }
+  if (cleanupBlockers.length > 0) {
+    lines.push("[WARN] cleanup blockers:");
+    for (const entry of cleanupBlockers.slice(0, 8)) lines.push(formatCleanupPlanEntry(entry));
+  }
   if (finishable.length > 0) {
     lines.push("[INFO] finishable sessions:");
     for (const entry of finishable.slice(0, 8)) lines.push(formatDoneAllSession(entry));
@@ -155,7 +185,7 @@ export function formatGuardianDoneOutput(rawResult: unknown) {
   const branch = preflight.currentBranch ?? result.branch;
   const baseBranch = preflight.baseBranch ?? result.baseBranch;
   const lines = [
-    `${result.ok === false ? "[FAIL]" : result.status === "planned" ? "[WARN]" : "[GOOD]"} guardian_done ${textValue(result.status)}`,
+    `${statusPrefix(result)} guardian_done ${textValue(result.status)}`,
     `[INFO] lane: ${textValue(result.lane)} | branch: ${textValue(branch)} | baseBranch: ${textValue(baseBranch)}`,
     `[INFO] dirty: ${dirtyPaths.length} | stashes: ${Number(preflight.stashCount ?? 0)} | safetyRef: ${textValue(result.safetyRef)}`,
   ];

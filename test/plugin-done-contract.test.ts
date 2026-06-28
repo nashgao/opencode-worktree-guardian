@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import test from "node:test";
 import plugin from "../src/index.ts";
+import { maybeInjectPlanConfirmToken, rememberPlanConfirmToken } from "../src/plugin/plan-token-cache.ts";
+import { formatGuardianOutput } from "../src/plugin/readable-output.ts";
 import { createToolContext, runTool } from "./plugin-contract-helpers.ts";
+import type { PlanCacheToolArgs, PlanTokenCache } from "../src/types.ts";
 
 test("guardian_done tool execute returns readable primary-main plan output with raw metadata", async () => {
   const { createRepoWithOrigin } = await import("./helpers.ts");
@@ -53,6 +56,41 @@ test("guardian_done plugin confirm reuses matching plan token for primary publis
   const { git } = await import("./helpers.ts");
   const { stdout: remoteMain } = await git(repo, ["rev-parse", "origin/main"]);
   assert.equal(remoteMain, apply.metadata.commit);
+});
+
+test("guardian_done plugin confirm reuses planned-partial tokens", () => {
+  const cache: PlanTokenCache = new Map();
+  const planArgs: PlanCacheToolArgs = { repoRoot: "/repo", cwd: "/repo", mode: "plan", allowIgnoredFiles: true };
+  const applyArgs: PlanCacheToolArgs = { repoRoot: "/repo", cwd: "/repo", mode: "apply", confirm: true, confirmToken: "", allowIgnoredFiles: true };
+
+  rememberPlanConfirmToken("guardian_done", planArgs, { ok: true, status: "planned-partial", confirmToken: "partial-token" }, cache);
+  maybeInjectPlanConfirmToken("guardian_done", applyArgs, cache);
+
+  assert.equal(applyArgs.confirmToken, "partial-token");
+});
+
+test("guardian_done readable done-all output includes cleanup plan details", () => {
+  const output = formatGuardianOutput("guardian_done", {
+    ok: true,
+    status: "planned-partial",
+    lane: "done-all",
+    confirmToken: "token",
+    summary: { total: 1, finishable: 1, dirtySkipped: 0, blocked: 0 },
+    sessions: [{ session_id: "ses_active", branch: "guardian/session-ses-active", disposition: "finishable", head: "1234567890abcdef" }],
+    cleanupPlan: {
+      ok: true,
+      status: "planned-partial",
+      candidates: [{ kind: "worktree", targetKind: "worktree", branch: "guardian/session-ses-old", targetPath: "/repo/.worktrees/repo/old", head: "abcdef1234567890" }],
+      blockers: [{ kind: "worktree", branch: "guardian/session-ses-blocked", targetPath: "/repo/.worktrees/repo/blocked", head: "fedcba0987654321", reason: "worktree branch is not proven reachable from base ref" }],
+    },
+  });
+
+  assert.match(output, /cleanupPlan: planned-partial candidates=1 blockers=1/);
+  assert.match(output, /^\[WARN\] guardian_done planned-partial/);
+  assert.match(output, /cleanup candidates:/);
+  assert.match(output, /branch=guardian\/session-ses-old/);
+  assert.match(output, /cleanup blockers:/);
+  assert.match(output, /branch=guardian\/session-ses-blocked/);
 });
 
 test("guardian_done tool execute treats empty optional strings as absent", async () => {

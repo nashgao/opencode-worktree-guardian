@@ -52,6 +52,10 @@ function shouldUseCachedPlanToken(name: GuardianToolName, toolArgs: PlanCacheToo
   return false;
 }
 
+function isCacheablePlanStatus(status: unknown): boolean {
+  return status === "planned" || status === "planned-partial";
+}
+
 export function maybeInjectPlanConfirmToken(name: GuardianToolName, toolArgs: PlanCacheToolArgs, planCache?: PlanTokenCache) {
   if (!planCache || !shouldUseCachedPlanToken(name, toolArgs)) return;
   if (typeof toolArgs.confirmToken === "string" && !isPlaceholderConfirmToken(toolArgs.confirmToken)) return;
@@ -61,7 +65,7 @@ export function maybeInjectPlanConfirmToken(name: GuardianToolName, toolArgs: Pl
 
 export function rememberPlanConfirmToken(name: GuardianToolName, toolArgs: PlanCacheToolArgs, result: { readonly ok?: unknown; readonly status?: unknown; readonly confirmToken?: unknown }, planCache?: PlanTokenCache) {
   if (!planCache) return;
-  if (toolArgs.mode !== "plan" || result.ok !== true || result.status !== "planned" || typeof result.confirmToken !== "string") return;
+  if (toolArgs.mode !== "plan" || result.ok !== true || !isCacheablePlanStatus(result.status) || typeof result.confirmToken !== "string") return;
   if (!["guardian_delete_paths", "guardian_hygiene", "guardian_done", "guardian_finish_workflow", "guardian_gc"].includes(name)) return;
   planCache.set(planCacheKey(name, toolArgs), result.confirmToken);
 }

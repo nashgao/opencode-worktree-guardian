@@ -30,7 +30,7 @@ const COMMANDS = [
     name: "guardian-finish-workflow",
     title: "Guardian: Finish Workflow",
     description: "Plan or apply implementation-done cleanup for redundant merged worktrees and branches.",
-    prompt: "Use the guardian_finish_workflow native tool. Run mode=plan first, inspect clean/synced preflight facts, cleanup candidates, blockers, and confirmToken, then apply only after explicit user confirmation with the fresh token. This workflow may remove redundant merged Guardian worktrees and ownership-proven local stale branches through Guardian gates, plus token-bound merged remote Guardian refs from the resolved effective remote using expected-head leases; it must not invent commits, merge protected branches, mutate stashes, run raw cleanup commands, or bypass guardian_finish/guardian_delete_worktree safety checks.",
+    prompt: "Use the guardian_finish_workflow native tool. Run mode=plan first, inspect clean/synced preflight facts, cleanup candidates, blockers, and confirmToken, then apply only after explicit user confirmation with the fresh token. This workflow may remove redundant merged Guardian worktrees and ownership-proven local stale branches through Guardian gates with exact expected-head local ref deletion, plus token-bound merged remote Guardian refs from the resolved effective remote using expected-head leases; it must not invent commits, merge protected branches, mutate stashes, run raw cleanup commands, or bypass guardian_finish/guardian_delete_worktree safety checks.",
   },
   {
     name: "guardian-preserve",
