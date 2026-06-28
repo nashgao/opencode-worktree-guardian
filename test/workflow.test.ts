@@ -532,20 +532,54 @@ test("guardian_finish_workflow cleans merged remote Guardian branches", async (t
 });
 
 
-test("guardian_finish_workflow keeps remote candidate when same-name local branch lacks ownership proof", async (t) => {
+test("guardian_finish_workflow cleans same-name local and remote Guardian branches with ancestry proof", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
   const branch = "guardian/workflow-same-name";
-  await createMergedBranch(repo, branch, "workflow-same-name.txt");
+  const head = await createMergedBranch(repo, branch, "workflow-same-name.txt");
   await git(repo, ["push", "origin", branch]);
   await git(repo, ["fetch", "origin"]);
 
   const plan = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "plan" }));
 
   assert.equal(plan.ok, true, JSON.stringify(plan));
+  assert.equal(plan.status, "planned");
+  assert.equal(plan.candidates.length, 2);
+  assert.deepEqual(plan.candidates.map((candidate) => candidate.targetKind).sort(), ["merged-branch", "remote-branch"]);
+  assert.equal(plan.candidates.some((candidate) => candidate.branch === branch && candidate.head === head), true);
+  assert.equal(plan.blockers.length, 0);
+
+  const apply = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "apply", confirmToken: plan.confirmToken }));
+
+  assert.equal(apply.ok, true, JSON.stringify(apply));
+  assert.equal(await branchExists(repo, branch), false);
+  assert.equal(await remoteBranchExists(repo, branch), false);
+});
+
+test("guardian_finish_workflow cleans unowned merged local Guardian branches with ancestry proof", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const branch = "guardian/workflow-unowned-merged-local";
+  const head = await createMergedBranch(repo, branch, "workflow-unowned-merged-local.txt");
+
+  const plan = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "plan" }));
+
+  assert.equal(plan.ok, true, JSON.stringify(plan));
+  assert.equal(plan.status, "planned");
   assert.equal(plan.candidates.length, 1);
+  assert.equal(plan.candidates[0].kind, "branch");
+  assert.equal(plan.candidates[0].targetKind, "merged-branch");
   assert.equal(plan.candidates[0].branch, branch);
-  assert.equal(plan.candidates[0].targetKind, "remote-branch");
+  assert.equal(plan.candidates[0].head, head);
+  assert.equal(plan.blockers.length, 0);
+
+  const apply = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "apply", confirmToken: plan.confirmToken }));
+
+  assert.equal(apply.ok, true, JSON.stringify(apply));
+  assert.equal(apply.results.length, 1);
+  assert.equal(apply.results[0].branchDeleted, true);
+  assert.equal(apply.results[0].worktreeRemoved, false);
+  assert.equal(await branchExists(repo, branch), false);
 });
 
 test("guardian_finish_workflow cleans same-name local and remote Guardian branches when both are safe", async (t) => {
@@ -585,7 +619,7 @@ test("guardian_finish_workflow preserves merged local rescue branches by default
 });
 
 
-test("guardian_finish_workflow requires ownership proof for configured-prefix local branches", async (t) => {
+test("guardian_finish_workflow cleans configured-prefix local branches with ancestry proof", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
   const branch = "agent/workflow-custom-prefix";
@@ -595,7 +629,12 @@ test("guardian_finish_workflow requires ownership proof for configured-prefix lo
   const unproven = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "plan", config }));
 
   assert.equal(unproven.ok, true, JSON.stringify(unproven));
-  assert.equal(unproven.candidates.length, 0);
+  assert.equal(unproven.status, "planned");
+  assert.equal(unproven.candidates.length, 1);
+  assert.equal(unproven.candidates[0].kind, "branch");
+  assert.equal(unproven.candidates[0].targetKind, "merged-branch");
+  assert.equal(unproven.candidates[0].branch, branch);
+  assert.equal(unproven.candidates[0].head, head);
   assert.equal(await branchExists(repo, branch), true);
 
   await createSafetyRef(repo, { sessionId: "workflow-custom-prefix", branch, commit: head, timestamp: "20260610T080808" });

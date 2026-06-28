@@ -1,6 +1,6 @@
 import path from "node:path";
 import { expandWorktreeRoot, loadConfig } from "./config.ts";
-import { abandonBranch, createSafetyRef, deleteBranch, getBranchCommit, getDirtyFiles, getHeadCommit, getIgnoredFiles, getRepoRoot, listStashes, listWorktrees, removeWorktree } from "./git.ts";
+import { abandonBranch, createSafetyRef, deleteBranchAtHead, getBranchCommit, getDirtyFiles, getHeadCommit, getIgnoredFiles, getRepoRoot, listStashes, listWorktrees, removeWorktree } from "./git.ts";
 import { applyRedundantDirtyCleanup, dirtyResultFields, sessionSafetyRefs, validateRedundantDirtyPreflight } from "./delete-worktree-dirty-runtime.ts";
 import { isSameOrInside, samePath } from "./filesystem-boundaries.ts";
 import { getGuardianPaths, readState, recordSession } from "./state.ts";
@@ -112,8 +112,12 @@ async function applyBranchOnlyDeletion(input: Record<string, unknown>, config: R
   const repoRoot = String(preflight.repoRoot);
   const safetyRef = await createSafetyRef(repoRoot, { sessionId: session?.session_id ?? (targetKind === "merged-branch" ? "merged-local-branch" : "orphan-guardian-branch"), branch, commit: head, timestamp: input.timestamp });
   preflight.safetyRef = safetyRef;
-  if (!proven && abandonUnmerged) await abandonBranch(repoRoot, branch);
-  else await deleteBranch(repoRoot, branch);
+  try {
+    if (!proven && abandonUnmerged) await abandonBranch(repoRoot, branch);
+    else await deleteBranchAtHead(repoRoot, branch, head);
+  } catch (error) {
+    return recordBranchOnlyDeletionFailure(repoRoot, config, preflight, session, targetKind, branch, head, safetyRef, abandonUnmerged, error);
+  }
   if (session?.session_id) {
     await recordSession(repoRoot, config, {
       ...session,
@@ -131,6 +135,15 @@ async function applyBranchOnlyDeletion(input: Record<string, unknown>, config: R
   }
   const actionPrefix = targetKind === "stale-branch" ? "stale-branch" : targetKind === "merged-branch" ? "merged-branch" : "orphan-branch";
   return withDeleteReport({ ok: true, status: !proven && abandonUnmerged ? "abandoned" : "deleted", targetPath: session?.worktree_path ?? null, branch, head, safetyRef, branchDeleted: true, worktreeRemoved: false, abandonUnmerged: !proven && abandonUnmerged }, preflight, { action: !proven && abandonUnmerged ? `${actionPrefix}-abandoned` : `${actionPrefix}-deleted`, worktreeRemoved: false });
+}
+
+async function recordBranchOnlyDeletionFailure(repoRoot: string, config: Record<string, unknown>, preflight: Record<string, unknown>, session: GuardianSession | undefined, targetKind: "orphan-branch" | "stale-branch" | "merged-branch", branch: string, head: string, safetyRef: string, abandonUnmerged: boolean, error: unknown) {
+  const branchDeleteError = errorMessage(error);
+  if (session?.session_id) {
+    await recordSession(repoRoot, config, { ...session, session_id: session.session_id, head_commit: head, safety_refs: [...(session.safety_refs ?? []), safetyRef], branch_delete_failed: true, branch_delete_error: branchDeleteError, abandon_unmerged: preflight.ancestryProven === false && abandonUnmerged, unmerged_commits: preflight.ancestryProven === false && abandonUnmerged ? preflight.unmergedCommits : undefined }, { event: { type: "guardian_delete_branch_only_failed", session_id: session.session_id, ref: safetyRef } });
+  }
+  const actionPrefix = targetKind === "stale-branch" ? "stale-branch" : targetKind === "merged-branch" ? "merged-branch" : "orphan-branch";
+  return withDeleteReport({ ok: false, status: "blocked", reason: "branch deletion failed", targetPath: session?.worktree_path ?? null, branch, head, safetyRef, branchDeleted: false, worktreeRemoved: false, error: branchDeleteError }, preflight, { action: `${actionPrefix}-delete-failed`, worktreeRemoved: false, branchDeleteError });
 }
 
 async function preflightWorktreeDeletion(input: Record<string, unknown>, config: Record<string, unknown>, preflight: Record<string, unknown>, entry: WorktreeEntry, session: GuardianSession | undefined, cwd: string) {
@@ -199,7 +212,7 @@ async function applyWorktreeDeletion(input: Record<string, unknown>, config: Rec
   if (deleteRequestedBranch) {
     try {
       if (preflight.ancestryProven === false && abandonUnmerged) await abandonBranch(repoRoot, branch);
-      else await deleteBranch(repoRoot, branch);
+      else await deleteBranchAtHead(repoRoot, branch, head);
       branchDeleted = true;
     } catch (error) {
       return recordPartialWorktreeDeletion(repoRoot, config, preflight, entry, session, head, safetyRef, abandonUnmerged, error);

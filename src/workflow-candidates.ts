@@ -43,7 +43,7 @@ export function isGuardianWorktreeStatusPath(repoRoot: string, guardianRoot: str
 }
 
 export async function plannedCandidate(repoRoot: string, config: Record<string, unknown>, input: Record<string, unknown>): Promise<Record<string, unknown>> {
-  const plan = await guardianDeleteWorktree({ repoRoot, cwd: repoRoot, mode: "plan", deleteBranch: true, ancestryBaseRef: `${String(config.remote)}/${String(config.baseBranch)}`, config, ...input });
+  const plan = await guardianDeleteWorktree({ repoRoot, cwd: repoRoot, mode: "plan", deleteBranch: true, allowMergedGuardianBranch: true, ancestryBaseRef: `${String(config.remote)}/${String(config.baseBranch)}`, config, ...input });
   if (!plan.ok) return { ok: false, reason: plan.reason, plan };
   const preflight = plan.preflight as Record<string, unknown>;
   return {
@@ -107,6 +107,7 @@ export async function discoverCandidates(repoRoot: string, cwd: string, config: 
     if (!(await isAncestor(repoRoot, branch.commit, baseRef))) continue;
     const candidate = await plannedCandidate(repoRoot, config, { branch: branch.name, allowIgnoredFiles });
     if (candidate.ok) candidates.push({ kind: "branch", ...candidate });
+    else blockers.push({ kind: "branch", branch: branch.name, head: branch.commit, reason: candidate.reason, plan: candidate.plan });
   }
 
   const remote = String(config.remote);

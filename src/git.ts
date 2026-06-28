@@ -305,6 +305,11 @@ export async function deleteBranch(repoRoot: string, branch: string) {
   await runGit(repoRoot, ["branch", "-d", "--", branch]);
 }
 
+export async function deleteBranchAtHead(repoRoot: string, branch: string, expectedHead: string) {
+  const ref = `refs/heads/${branch}`;
+  await runGit(repoRoot, ["update-ref", "-d", ref, expectedHead]);
+}
+
 export async function abandonBranch(repoRoot: string, branch: string) {
   await runGit(repoRoot, ["branch", "-D", "--", branch]);
 }

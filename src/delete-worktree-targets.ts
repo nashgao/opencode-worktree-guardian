@@ -114,7 +114,7 @@ async function mergedBranchResolution(input: Record<string, unknown>, worktrees:
   const branch = branchFromInput(input);
   if (!branch || input.deleteBranch !== true) return undefined;
   const branchPrefix = configuredBranchPrefix(input);
-  if (branchPrefix.length > 0 && branch.startsWith(branchPrefix)) return undefined;
+  if (branchPrefix.length > 0 && branch.startsWith(branchPrefix) && input.allowMergedGuardianBranch !== true) return undefined;
   if (worktrees.some((worktree) => worktree.branch === branch)) return undefined;
   try {
     const head = await getBranchCommit(repoRoot, branch);
