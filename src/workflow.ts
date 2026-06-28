@@ -116,10 +116,18 @@ export async function guardianFinishWorkflow(input: Record<string, unknown> = {}
   if (mode === "plan") return { ok: true, status: blockers.length > 0 ? "planned-partial" : "planned", confirmToken, preflight, candidates, blockers };
   if (input.confirmToken !== confirmToken) return blocked("confirm token mismatch; re-run mode=plan and use the returned confirmToken", { tokenMatched: false, candidates, blockers }, preflight);
 
+  const applyBlockers = [...blockers];
   let baseSync: Record<string, unknown> | undefined;
   if (candidates.length > 0) {
     baseSync = await syncLocalBase(repoRoot, config);
-    if (baseSync.ok !== true) return blocked("local base could not be fast-forwarded before cleanup", { baseSync, candidates, blockers }, preflight);
+    if (baseSync.ok !== true) {
+      applyBlockers.push({
+        kind: "base-sync",
+        status: "blocked",
+        reason: typeof baseSync.reason === "string" ? baseSync.reason : "local base could not be fast-forwarded before cleanup",
+        baseSync,
+      });
+    }
   }
 
   const results = [];
@@ -144,17 +152,17 @@ export async function guardianFinishWorkflow(input: Record<string, unknown> = {}
     }
     const targetPath = targetKind === "worktree" && typeof candidate.targetPath === "string" ? candidate.targetPath : undefined;
     const branch = targetKind !== "worktree" && typeof candidate.branch === "string" ? candidate.branch : undefined;
-    const plan = await guardianDeleteWorktree({ repoRoot, cwd: repoRoot, mode: "plan", targetPath, branch, deleteBranch: true, ancestryBaseRef: baseRef, allowIgnoredFiles: input.allowIgnoredFiles === true, config: effectiveConfig });
+    const plan = await guardianDeleteWorktree({ repoRoot, cwd: repoRoot, mode: "plan", targetPath, branch, deleteBranch: true, allowMergedGuardianBranch: true, ancestryBaseRef: baseRef, allowIgnoredFiles: input.allowIgnoredFiles === true, config: effectiveConfig });
     if (!plan.ok) {
       results.push({ ...candidateTokenMaterial(candidate), ok: false, status: "blocked", reason: plan.reason });
       continue;
     }
-    const apply = await guardianDeleteWorktree({ repoRoot, cwd: repoRoot, mode: "apply", targetPath, branch, deleteBranch: true, ancestryBaseRef: baseRef, allowIgnoredFiles: input.allowIgnoredFiles === true, confirmToken: plan.confirmToken, config: effectiveConfig });
+    const apply = await guardianDeleteWorktree({ repoRoot, cwd: repoRoot, mode: "apply", targetPath, branch, deleteBranch: true, allowMergedGuardianBranch: true, ancestryBaseRef: baseRef, allowIgnoredFiles: input.allowIgnoredFiles === true, confirmToken: plan.confirmToken, config: effectiveConfig });
     results.push({ ...candidateTokenMaterial(candidate), ok: apply.ok, status: apply.status, reason: apply.reason, worktreeRemoved: apply.worktreeRemoved, branchDeleted: apply.branchDeleted, safetyRef: apply.safetyRef });
   }
 
   const failedResults = results.filter((result) => result.ok !== true);
-  const remaining = [...blockers, ...failedResults];
-  const ok = failedResults.length === 0 && blockers.length === 0;
+  const remaining = [...applyBlockers, ...failedResults];
+  const ok = failedResults.length === 0 && applyBlockers.length === 0;
   return { ok, status: ok ? "cleaned" : "partial", ...(ok ? {} : { reason: "safe cleanup completed with remaining blockers" }), preflight, candidates, blockers, remaining, results, ...(baseSync ? { baseSync } : {}) };
 }

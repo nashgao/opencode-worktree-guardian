@@ -132,7 +132,7 @@ export async function guardianDoneAll(input: Record<string, unknown> = {}): Prom
   }
 
   const cleanupExcludeBranches = plans.map((plan) => plan.branch).filter((branch): branch is string => typeof branch === "string" && branch.length > 0);
-  const cleanupPlan = await guardianFinishWorkflow({ repoRoot, cwd: repoRoot, mode: "plan", config, excludeBranches: cleanupExcludeBranches });
+  const cleanupPlan = await guardianFinishWorkflow({ repoRoot, cwd: repoRoot, mode: "plan", config, excludeBranches: cleanupExcludeBranches, allowIgnoredFiles: input.allowIgnoredFiles === true });
   const cleanupCandidates = Array.isArray(cleanupPlan.candidates) ? cleanupPlan.candidates.length : 0;
   const cleanupBlockerRecords = Array.isArray(cleanupPlan.blockers) ? cleanupPlan.blockers.filter((blocker): blocker is Record<string, unknown> => isRecordLike(blocker)) : [];
   const cleanupBlockers = cleanupBlockerRecords.length;

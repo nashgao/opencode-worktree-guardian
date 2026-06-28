@@ -356,9 +356,11 @@ test("guardian_done all=true apply blocks cleanup candidates added after plan", 
   await fs.writeFile(path.join(repo, "done-all-token-drift.txt"), "token drift\n");
   await git(repo, ["add", "done-all-token-drift.txt"]);
   await git(repo, ["commit", "-m", "add done-all token drift"]);
+  const head = (await git(repo, ["rev-parse", branch])).stdout;
   await git(repo, ["checkout", "main"]);
   await git(repo, ["merge", "--no-ff", branch, "-m", "merge done-all token drift"]);
   await git(repo, ["push", "origin", "main"]);
+  await createSafetyRef(repo, { sessionId: "done-all-token-drift", branch, commit: head, timestamp: "20260610T101010" });
 
   const apply = await guardianDone({ repoRoot: repo, cwd: repo, all: true, mode: "apply", confirm: true, confirmToken: plan.confirmToken }) as LooseRecord;
 
