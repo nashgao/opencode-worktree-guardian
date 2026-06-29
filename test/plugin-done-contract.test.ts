@@ -35,6 +35,40 @@ test("guardian_done tool execute returns readable primary-main plan output with 
   assert.match(result.output, /contract-done.txt/);
 });
 
+test("guardian_done tool direct preserve-only plan is read-only", async (t) => {
+  const { createRepoWithOrigin, git } = await import("./helpers.ts");
+  const path = await import("node:path");
+  const { guardianStatus } = await import("../src/recover.ts");
+  const { guardianStart } = await import("../src/tools.ts");
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_contract_done_plan_preserve", taskName: "contract done plan preserve", createWorktree: true });
+  const worktree = started.session.worktree_path;
+  await fs.writeFile(path.join(worktree, "contract-plan-preserve.txt"), "contract plan preserve\n");
+  await git(worktree, ["add", "contract-plan-preserve.txt"]);
+  await git(worktree, ["commit", "-m", "add contract plan preserve work"]);
+  const hooks = await plugin.server({ directory: repo, worktree: repo });
+  const { context, metadataCalls } = createToolContext();
+  context.directory = worktree;
+  context.worktree = worktree;
+  const execute = hooks.tool.guardian_done.execute;
+
+  const result = await runTool(execute, { repoRoot: repo, cwd: worktree, sessionId: "ses_contract_done_plan_preserve", mode: "plan", finishMode: "preserve-only", timestamp: "20260609T070707" }, context);
+
+  assert.equal(result.metadata.status, "planned");
+  assert.equal(result.metadata.lane, "session-finish");
+  assert.equal(result.metadata.safetyRef, undefined);
+  assert.deepEqual(metadataCalls, [{ title: "guardian_done" }]);
+  assert.match(result.output, /guardian_done planned/);
+  assert.match(result.output, /lane: session-finish/);
+  assert.match(result.output, /guardian_done mode=apply confirm=true finishMode=preserve-only/);
+  const status = await guardianStatus({ repoRoot: repo });
+  assert.equal(status.activeSessions.some((session: Record<string, unknown>) => session.session_id === "ses_contract_done_plan_preserve"), true);
+  assert.equal(status.safetyRefs.length, 0);
+  const { stdout: refs } = await git(repo, ["for-each-ref", "--format=%(refname)", "refs/opencode-guardian"]);
+  assert.equal(refs, "");
+});
+
 test("guardian_done plugin confirm reuses matching plan token for primary publish", async () => {
   const { createRepoWithOrigin } = await import("./helpers.ts");
   const path = await import("node:path");
