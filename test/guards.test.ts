@@ -6,7 +6,13 @@ import test from "node:test";
 import { classifyGuardCommand, classifyNormalAgentGitCommand, classifyReadOnlyInspectionCommand, extractCommandText, tokenizeCommand } from "../src/guards.ts";
 
 const blocked = [
+  "git reset",
   "git reset --hard",
+  "git reset --keep origin/main",
+  "git reset --merge origin/main",
+  "git reset --soft HEAD~1",
+  "git reset origin/main",
+  "git reset -- README.md",
   "git clean -fd",
   "git clean --force -d",
   "git branch -d feature",

@@ -122,7 +122,7 @@ test("hook still blocks destructive recorded session commands instead of routing
 
   await assert.rejects(
     () => hooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_destructive", callID: "call" }, output),
-    /git reset --hard is blocked/,
+    /raw git reset is blocked/,
   );
   assert.equal(output.args.workdir, undefined);
 });

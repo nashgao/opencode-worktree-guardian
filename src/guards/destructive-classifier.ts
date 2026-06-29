@@ -102,8 +102,8 @@ function classifyGit(segment: CommandSegment, options: GuardOptions = {}): Guard
   const { subcommand, rest, normalized, gitCwd, workTree, configs } = parsed;
   const bypass = protectedBranchBypass(normalized, subcommand, rest, options, gitCwd, workTree, configs);
   if (bypass) return bypass;
-  if (subcommand === "reset" && rest.includes("--hard")) {
-    return block("git reset --hard is blocked because it can discard session work", normalized);
+  if (subcommand === "reset") {
+    return block("raw git reset is blocked because it can discard or hide session work; use Guardian-native cleanup", normalized);
   }
   if (subcommand === "clean" && hasForceCleanFlag(rest) && !hasDryRunFlag(rest)) {
     return block("destructive git clean variants are blocked", normalized);
