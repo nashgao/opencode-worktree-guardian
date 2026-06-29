@@ -108,22 +108,29 @@ export const publicDriftScanEntries = ["README.md", "docs", "commands", "skills"
 
 export type RunOptions = Omit<ExecFileOptions, "env"> & {
   readonly env?: NodeJS.ProcessEnv;
+  readonly coverage?: "inherit" | "suppress";
 };
 
+const coverageEnvNames = ["NODE_V8_COVERAGE", "OPENCODE_WORKTREE_GUARDIAN_COVERAGE_RUN", "NODE_COMPILE_CACHE"] as const;
+
 export async function run(command: string, args: readonly string[], options: RunOptions = {}) {
-  const env = {
+  const { coverage = "inherit", env: optionEnv, ...execOptions } = options;
+  const env: NodeJS.ProcessEnv = {
     ...process.env,
     CI: "true",
     GIT_TERMINAL_PROMPT: "0",
     npm_config_audit: "false",
     npm_config_fund: "false",
-    ...options.env,
+    ...optionEnv,
   };
+  if (coverage === "suppress") {
+    for (const name of coverageEnvNames) env[name] = "";
+  }
   const { stdout, stderr } = await execFileAsync(command, args, {
     maxBuffer: 20 * 1024 * 1024,
     timeout: defaultRunTimeoutMs,
     killSignal: "SIGTERM",
-    ...options,
+    ...execOptions,
     env,
   });
   const stdoutText = typeof stdout === "string" ? stdout : stdout.toString("utf8");
