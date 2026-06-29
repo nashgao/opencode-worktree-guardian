@@ -73,6 +73,10 @@ function ancestryBaseRef(input: Record<string, unknown>, config: Record<string, 
   return typeof input.ancestryBaseRef === "string" ? input.ancestryBaseRef : session?.base_ref ?? `${String(config.remote)}/${String(config.baseBranch)}`;
 }
 
+function deleteBranchWasSpecified(input: Record<string, unknown>): boolean {
+  return Object.hasOwn(input, "deleteBranch");
+}
+
 async function preflightBranchOnlyDeletion(input: Record<string, unknown>, config: Record<string, unknown>, preflight: Record<string, unknown>, worktrees: WorktreeEntry[], targetKind: "orphan-branch" | "stale-branch" | "merged-branch", session: GuardianSession | undefined, resolvedBranch: string | undefined, resolvedHead: string | undefined, ownershipProof: string | undefined, unresolvedReason: string) {
   const repoRoot = String(preflight.repoRoot);
   const deleteRequestedBranch = input.deleteBranch === true;
@@ -116,7 +120,8 @@ async function applyBranchOnlyDeletion(input: Record<string, unknown>, config: R
     if (!proven && abandonUnmerged) await abandonBranch(repoRoot, branch);
     else await deleteBranchAtHead(repoRoot, branch, head);
   } catch (error) {
-    return recordBranchOnlyDeletionFailure(repoRoot, config, preflight, session, targetKind, branch, head, safetyRef, abandonUnmerged, error);
+    if (error instanceof Error) return recordBranchOnlyDeletionFailure(repoRoot, config, preflight, session, targetKind, branch, head, safetyRef, abandonUnmerged, error);
+    throw error;
   }
   if (session?.session_id) {
     await recordSession(repoRoot, config, {
@@ -177,17 +182,20 @@ async function preflightWorktreeDeletion(input: Record<string, unknown>, config:
   const stashes = await listStashes(repoRoot);
   preflight.stashCount = stashes.length;
   if (stashes.length > 0 && config.allowStashIfUnrelated !== true) return blocked("stash inventory is non-empty", { stashes }, preflight);
+  const head = entry.head ?? await getHeadCommit(entry.path);
+  preflight.head = head;
+  const baseRef = ancestryBaseRef(input, config, session);
+  const proven = await recordAncestryPreflight(repoRoot, head, baseRef, preflight);
+  const implicitRetainWouldStrandBranch = !deleteRequestedBranch && !deleteBranchWasSpecified(input) && !proven;
   if (deleteRequestedBranch) {
-    const head = entry.head ?? await getHeadCommit(entry.path);
-    preflight.head = head;
-    const baseRef = ancestryBaseRef(input, config, session);
-    const proven = await recordAncestryPreflight(repoRoot, head, baseRef, preflight);
     if (!proven && abandonUnmerged && preflight.unmergedCommitError) return blocked("unmerged commits could not be listed", { branch: entry.branch, head, baseRef, error: preflight.unmergedCommitError }, preflight);
     if (!proven && !abandonUnmerged) return blocked("branch head is not proven reachable from base ref", { branch: entry.branch, head, baseRef }, preflight);
   }
   const confirmToken = createConfirmToken(preflight);
+  if (implicitRetainWouldStrandBranch && input.mode === "plan") return blocked("deleteBranch was not specified and the branch head is not proven reachable from base ref; pass deleteBranch=false to keep the branch, or deleteBranch=true with abandonUnmerged=true to abandon it", { branch: entry.branch, head, baseRef }, preflight);
   if (input.mode === "plan") return withDeleteReport({ ok: true, status: "planned", confirmToken }, preflight, { action: "planned" });
   if (input.confirmToken !== confirmToken) return blocked("confirm token mismatch; re-run mode=plan and use the returned confirmToken", { tokenMatched: false }, preflight);
+  if (implicitRetainWouldStrandBranch) return blocked("deleteBranch was not specified and the branch head is not proven reachable from base ref; pass deleteBranch=false to keep the branch, or deleteBranch=true with abandonUnmerged=true to abandon it", { branch: entry.branch, head, baseRef }, preflight);
   return applyWorktreeDeletion(input, config, preflight, entry, session);
 }
 
@@ -206,7 +214,8 @@ async function applyWorktreeDeletion(input: Record<string, unknown>, config: Rec
   try {
     await removeWorktree(repoRoot, entry.path);
   } catch (error) {
-    return recordWorktreeRemovalFailure(repoRoot, config, preflight, entry, session, head, safetyRef, error);
+    if (error instanceof Error) return recordWorktreeRemovalFailure(repoRoot, config, preflight, entry, session, head, safetyRef, error);
+    throw error;
   }
   let branchDeleted = false;
   if (deleteRequestedBranch) {
@@ -215,7 +224,8 @@ async function applyWorktreeDeletion(input: Record<string, unknown>, config: Rec
       else await deleteBranchAtHead(repoRoot, branch, head);
       branchDeleted = true;
     } catch (error) {
-      return recordPartialWorktreeDeletion(repoRoot, config, preflight, entry, session, head, safetyRef, abandonUnmerged, error);
+      if (error instanceof Error) return recordPartialWorktreeDeletion(repoRoot, config, preflight, entry, session, head, safetyRef, abandonUnmerged, error);
+      throw error;
     }
   }
   if (session?.session_id) {

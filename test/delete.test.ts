@@ -492,13 +492,13 @@ test("allowIgnoredFiles permits explicit deletion of ignored-only target files",
   assert.equal(blocked.ok, false);
   assert.match(blocked.reason, /ignored files/);
 
-  const plan = await deleteWorktree({ repoRoot: repo, cwd: repo, mode: "plan", sessionId: "ses_delete_allow_ignored", allowIgnoredFiles: true, config: DEFAULT_CONFIG, timestamp: "20260601T150000" });
+  const plan = await deleteWorktree({ repoRoot: repo, cwd: repo, mode: "plan", sessionId: "ses_delete_allow_ignored", deleteBranch: false, allowIgnoredFiles: true, config: DEFAULT_CONFIG, timestamp: "20260601T150000" });
   assert.equal(plan.ok, true);
   assert.equal(plan.status, "planned");
   assert.equal(plan.preflight.allowIgnoredFiles, true);
   assert.deepEqual(plan.preflight.ignoredFiles, [".claude/", "data/"]);
 
-  const result = await deleteWorktree({ repoRoot: repo, cwd: repo, mode: "apply", sessionId: "ses_delete_allow_ignored", allowIgnoredFiles: true, confirmToken: plan.confirmToken, config: DEFAULT_CONFIG, timestamp: "20260601T150000" });
+  const result = await deleteWorktree({ repoRoot: repo, cwd: repo, mode: "apply", sessionId: "ses_delete_allow_ignored", deleteBranch: false, allowIgnoredFiles: true, confirmToken: plan.confirmToken, config: DEFAULT_CONFIG, timestamp: "20260601T150000" });
 
   assert.equal(result.ok, true);
   assert.equal(result.status, "deleted");
@@ -606,6 +606,36 @@ test("deleteBranch=true requires ancestry proof before any removal", async () =>
   assert.equal((await worktreePaths(repo)).includes(start.session.worktree_path), true);
   assert.equal(await branchExists(repo, "guardian/delete-unmerged"), true);
   assert.equal((await guardianStatus({ repoRoot: repo, config: DEFAULT_CONFIG })).safetyRefs.length, 0);
+});
+
+test("implicit worktree-only deletion blocks before stranding an unmerged branch", async () => {
+  const { base, repo } = await createRepoWithOrigin();
+  test.after(() => fs.rm(base, { recursive: true, force: true }));
+  const branch = "guardian/delete-implicit-retain-unmerged";
+  const sessionId = "ses_delete_implicit_retain_unmerged";
+  const start = await createGuardianWorktree(repo, sessionId, "implicit retain unmerged", branch);
+  await fs.writeFile(path.join(start.session.worktree_path, "feature.txt"), "unmerged but retained\n");
+  await git(start.session.worktree_path, ["add", "feature.txt"]);
+  await git(start.session.worktree_path, ["commit", "-m", "unmerged retained branch"]);
+  const { stdout: head } = await git(start.session.worktree_path, ["rev-parse", "HEAD"]);
+
+  const blocked = await deleteWorktree({ repoRoot: repo, cwd: repo, mode: "plan", sessionId, config: DEFAULT_CONFIG });
+
+  assert.equal(blocked.ok, false);
+  assert.match(blocked.reason, /deleteBranch was not specified/);
+  assert.equal(blocked.preflight.ancestryProven, false);
+  assert.equal(blocked.preflight.unmergedCommitCount, 1);
+  assert.deepEqual(blocked.preflight.unmergedCommits, [{ commit: head, subject: "unmerged retained branch" }]);
+  assert.equal((await worktreePaths(repo)).includes(start.session.worktree_path), true);
+  assert.equal(await branchExists(repo, branch), true);
+  assert.equal((await guardianStatus({ repoRoot: repo, config: DEFAULT_CONFIG })).safetyRefs.length, 0);
+
+  const explicitRetain = await deleteWorktree({ repoRoot: repo, cwd: repo, mode: "plan", sessionId, deleteBranch: false, config: DEFAULT_CONFIG });
+  assert.equal(explicitRetain.ok, true);
+  assert.equal(explicitRetain.status, "planned");
+  assert.equal(explicitRetain.preflight.deleteBranch, false);
+  assert.equal(explicitRetain.preflight.ancestryProven, false);
+  assert.equal(explicitRetain.preflight.unmergedCommitCount, 1);
 });
 
 test("abandonUnmerged=true plans and applies explicit unmerged worktree abandon", async () => {
