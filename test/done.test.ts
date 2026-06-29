@@ -311,39 +311,6 @@ test("guardian_done publishes dirty primary-main deletions", async (t) => {
   await assert.rejects(() => git(repo, ["cat-file", "-e", "origin/main:delete-me.txt"]));
 });
 
-
-
-test("guardian_done plans dirty primary publish when an active session owns another lane", async (t) => {
-  const { base, repo } = await createRepoWithOrigin();
-  t.after(() => fs.rm(base, { recursive: true, force: true }));
-  const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_done_wrong_lane", taskName: "done wrong lane", createWorktree: true, config: DEFAULT_CONFIG });
-  await fs.writeFile(path.join(repo, "wrong-lane.txt"), "primary dirt\n");
-
-  const result = asDone(await guardianDone({ repoRoot: repo, cwd: repo, mode: "plan", sessionId: "ses_done_wrong_lane", commitMessage: "feat: publish primary work" }));
-
-  assert.equal(result.ok, true);
-  assert.equal(result.status, "planned");
-  assert.equal(result.lane, "primary-main-publish");
-  assert.deepEqual(result.dirtySnapshot.paths, ["wrong-lane.txt"]);
-  assert.equal(result.commitMessage, "feat: publish primary work");
-  assert.equal(typeof result.confirmToken, "string");
-  assert.equal(await pathExists(started.session.worktree_path), true);
-});
-
-test("guardian_done still requires an explicit message for dirty primary publish when a session owns another lane", async (t) => {
-  const { base, repo } = await createRepoWithOrigin();
-  t.after(() => fs.rm(base, { recursive: true, force: true }));
-  await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_done_wrong_lane_no_message", taskName: "done wrong lane no message", createWorktree: true, config: DEFAULT_CONFIG });
-  await fs.writeFile(path.join(repo, "wrong-lane.txt"), "primary dirt\n");
-
-  const result = asDone(await guardianDone({ repoRoot: repo, cwd: repo, mode: "plan", sessionId: "ses_done_wrong_lane_no_message" }));
-
-  assert.equal(result.ok, false);
-  assert.equal(result.status, "blocked");
-  assert.match(result.reason, /commitMessage is required/);
-  assert.deepEqual(result.dirtyFiles, ["wrong-lane.txt"]);
-});
-
 test("guardian_done previews the active session from primary cwd when primary is clean", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));

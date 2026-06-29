@@ -76,9 +76,10 @@ export function resolveDoneTarget(options: ResolveDoneTargetOptions): DoneTarget
   if (sessionId) {
     const session = inventory.sessions.find((candidate) => candidate.sessionId === sessionId);
     if (session) return sessionDecision(session, sessionTarget(inventory, session.sessionId));
+    if (inventory.currentWorktree !== inventory.repoRoot) return { kind: "reattach" };
   }
 
-  if (inventory.currentSessionId) {
+  if (!branch && inventory.currentSessionId) {
     const currentSession = inventory.sessions.find((session) => session.sessionId === inventory.currentSessionId);
     if (currentSession) return sessionDecision(currentSession, sessionTarget(inventory, currentSession.sessionId));
   }
