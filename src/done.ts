@@ -1,3 +1,4 @@
+import fs from "node:fs/promises";
 import { loadConfig, normalizeConfig } from "./config.ts";
 import { guardianFinish } from "./finish.ts";
 import { getHeadCommit, getRepoRoot } from "./git.ts";
@@ -92,6 +93,10 @@ function withSelectedTarget(result: Record<string, unknown>, selectedTarget: Don
   return selectedTarget ? { ...result, selectedTarget } : result;
 }
 
+async function realPathOrOriginal(value: string): Promise<string> {
+  return fs.realpath(value).catch(() => value);
+}
+
 async function runSessionTarget(
   decision: Extract<DoneTargetDecision, { readonly kind: "session-finish" }>,
   input: Record<string, unknown>,
@@ -160,8 +165,10 @@ function requestedPoisonedSessionBlocker(inventory: DoneWorkInventory, requested
 }
 
 export async function guardianDone(input: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
-  const cwd = typeof input.cwd === "string" ? input.cwd : typeof input.repoRoot === "string" ? input.repoRoot : process.cwd();
-  const repoRoot = typeof input.repoRoot === "string" ? input.repoRoot : await getRepoRoot(cwd);
+  const rawCwd = typeof input.cwd === "string" ? input.cwd : typeof input.repoRoot === "string" ? input.repoRoot : process.cwd();
+  const cwd = await realPathOrOriginal(rawCwd);
+  const rawRepoRoot = typeof input.repoRoot === "string" ? input.repoRoot : await getRepoRoot(cwd);
+  const repoRoot = await realPathOrOriginal(rawRepoRoot);
   const config = isRecordLike(input.config) ? normalizeConfig(input.config) : (await loadConfig(repoRoot)).config;
   const requestedMode = input.mode ?? "plan";
   if (requestedMode !== "plan" && requestedMode !== "apply") return { ok: false, status: "blocked", reason: "mode must be plan or apply", mode: requestedMode };
@@ -192,7 +199,7 @@ export async function guardianDone(input: Record<string, unknown> = {}): Promise
     case "done-all":
       return guardianDoneAll({ ...input, repoRoot, cwd: repoRoot, config });
     case "cleanup-only": {
-      const cleanup = await guardianFinishWorkflow({ ...input, repoRoot, cwd: repoRoot, config });
+      const cleanup = await guardianFinishWorkflow({ ...input, repoRoot, cwd: repoRoot, config, abandonUnmerged: true });
       return { ...cleanup, lane: "cleanup-only" };
     }
     case "reattach":

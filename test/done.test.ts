@@ -5,22 +5,26 @@ import test from "node:test";
 import { DEFAULT_CONFIG } from "../src/config.ts";
 import { guardianDone } from "../src/done.ts";
 import { guardianFinish } from "../src/finish.ts";
+import { createSafetyRef } from "../src/git.ts";
 import { guardianStatus } from "../src/recover.ts";
 import { guardianStart } from "../src/tools.ts";
+import { isRecordLike } from "../src/types.ts";
 import { createRepoWithOrigin, git, seedSession } from "./helpers.ts";
 
 type LooseRecord = Record<string, unknown>;
 type DoneResult = LooseRecord & {
-  readonly candidates: readonly { readonly branch?: string }[];
+  readonly candidates: readonly { readonly branch?: string; readonly plan?: LooseRecord }[];
   readonly cleanupPlan: { readonly status?: unknown; readonly candidates: readonly { readonly branch?: string }[] };
   readonly cleanupSweep: { readonly ok?: boolean; readonly status?: unknown; readonly candidateCount?: number; readonly cleanedCount?: number; readonly apply?: { readonly results?: readonly { readonly branch?: string; readonly worktreeRemoved?: boolean; readonly branchDeleted?: boolean }[] } };
   readonly commit: string;
   readonly confirmToken: string;
   readonly dirtyFiles?: readonly string[];
   readonly dirtySnapshot: { readonly paths: readonly string[] };
+  readonly finalPostflight?: LooseRecord;
   readonly nextAction: string;
   readonly preflight: Record<string, unknown>;
   readonly reason: string;
+  readonly results: readonly LooseRecord[];
   readonly safetyRef: string;
 };
 
@@ -30,6 +34,14 @@ function asDone(result: LooseRecord): DoneResult {
 
 async function pathExists(filePath: string) {
   return fs.access(filePath).then(() => true, () => false);
+}
+
+async function branchExists(repo: string, branch: string) {
+  return git(repo, ["rev-parse", "--verify", branch]).then(() => true, () => false);
+}
+
+function macVarAlias(filePath: string) {
+  return filePath.startsWith("/private/var/") ? filePath.replace(/^\/private\/var\//, "/var/") : filePath;
 }
 
 async function guardianRefNames(repo: string) {
@@ -215,6 +227,45 @@ test("guardian_done cleanup-only blocks redundant dirty cleanup candidates", asy
   assert.equal(result.status, "blocked");
   assert.match(result.reason, /cleanup blockers/);
   assert.equal(await pathExists(candidate.worktreePath), true);
+});
+
+test("guardian_done cleanup-only abandons stale unmerged Guardian branches with safety proof", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const branch = "guardian/done-stale-abandon";
+  await git(repo, ["checkout", "-b", branch]);
+  await fs.writeFile(path.join(repo, "done-stale-abandon.txt"), "stale unmerged\n");
+  await git(repo, ["add", "done-stale-abandon.txt"]);
+  await git(repo, ["commit", "-m", "add stale unmerged done cleanup"]);
+  const { stdout: head } = await git(repo, ["rev-parse", "HEAD"]);
+  await git(repo, ["checkout", "main"]);
+  await createSafetyRef(repo, { sessionId: "manual-smoke", branch, commit: head, timestamp: "20260629T010101" });
+  const aliasRepo = macVarAlias(repo);
+
+  const plan = asDone(await guardianDone({ repoRoot: aliasRepo, cwd: aliasRepo, mode: "plan", timestamp: "20260629T010101" }));
+
+  assert.equal(plan.ok, true, JSON.stringify(plan));
+  assert.equal(plan.lane, "cleanup-only");
+  assert.equal(plan.status, "planned");
+  assert.equal(plan.candidates.length, 1);
+  assert.equal(plan.candidates[0].branch, branch);
+  const planRecord = isRecordLike(plan.candidates[0].plan) ? plan.candidates[0].plan : {};
+  const planPreflight = isRecordLike(planRecord.preflight) ? planRecord.preflight : {};
+  assert.equal(planPreflight.abandonUnmerged, true);
+  assert.equal(await branchExists(repo, branch), true);
+
+  const apply = asDone(await guardianDone({ repoRoot: aliasRepo, cwd: aliasRepo, mode: "apply", confirm: true, confirmToken: plan.confirmToken, timestamp: "20260629T010101" }));
+
+  assert.equal(apply.ok, true, JSON.stringify(apply));
+  assert.equal(apply.status, "cleaned");
+  assert.equal(apply.lane, "cleanup-only");
+  assert.equal(apply.results.length, 1);
+  assert.equal(apply.results[0].status, "abandoned");
+  assert.equal(apply.results[0].branchDeleted, true);
+  assert.equal(apply.results[0].abandonUnmerged, true);
+  assert.equal(await branchExists(repo, branch), false);
+  const finalPostflight = apply.finalPostflight as LooseRecord;
+  assert.equal(finalPostflight.ok, true);
 });
 
 test("guardian_done plans dirty primary-main publish with token-bound dirty files", async (t) => {

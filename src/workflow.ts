@@ -5,6 +5,7 @@ import { syncLocalBase } from "./done-main-sync.ts";
 import { guardianDeleteWorktree } from "./delete.ts";
 import { createSafetyRef, deleteRemoteBranch, fetchRemotePrune, getCurrentBranch, getDirtyFiles, getRefCommit, getRepoRoot, listStashes } from "./git.ts";
 import { runFinalCleanupPostflight } from "./final-postflight.ts";
+import { isRecordLike } from "./types.ts";
 import { candidateTokenMaterial, createWorkflowToken, discoverCandidates, isGuardianWorktreeStatusPath, MAX_WORKFLOW_CLEANUP_CANDIDATES } from "./workflow-candidates.ts";
 
 function blocked(reason: string, details: Record<string, unknown> = {}, preflight?: Record<string, unknown>): Record<string, unknown> {
@@ -118,7 +119,7 @@ export async function guardianFinishWorkflow(input: Record<string, unknown> = {}
   try {
     const excludedBranches = Array.isArray(input.excludeBranches) ? input.excludeBranches.filter((branch): branch is string => typeof branch === "string") : [];
     preflight.excludedBranches = excludedBranches;
-    const discovered = await discoverCandidates(repoRoot, cwd, effectiveConfig, preflight, input.allowIgnoredFiles === true, excludedBranches);
+    const discovered = await discoverCandidates(repoRoot, cwd, effectiveConfig, preflight, input.allowIgnoredFiles === true, excludedBranches, input.abandonUnmerged === true);
     candidates = discovered.candidates;
     blockers = discovered.blockers;
     preflight.candidateScanStatus = "completed";
@@ -181,20 +182,35 @@ export async function guardianFinishWorkflow(input: Record<string, unknown> = {}
     }
     const targetPath = targetKind === "worktree" && typeof candidate.targetPath === "string" ? candidate.targetPath : undefined;
     const branch = targetKind !== "worktree" && typeof candidate.branch === "string" ? candidate.branch : undefined;
-    const plan = await guardianDeleteWorktree({ repoRoot, cwd: repoRoot, mode: "plan", targetPath, branch, deleteBranch: true, allowMergedGuardianBranch: true, ancestryBaseRef: baseRef, allowIgnoredFiles: input.allowIgnoredFiles === true, config: effectiveConfig });
+    const abandonUnmerged = candidate.abandonUnmerged === true;
+    const plan = await guardianDeleteWorktree({ repoRoot, cwd: repoRoot, mode: "plan", targetPath, branch, deleteBranch: true, allowMergedGuardianBranch: !abandonUnmerged, ancestryBaseRef: baseRef, allowIgnoredFiles: input.allowIgnoredFiles === true, abandonUnmerged, config: effectiveConfig });
     if (!plan.ok) {
       results.push({ ...candidateTokenMaterial(candidate), ok: false, status: "blocked", reason: plan.reason });
       continue;
     }
-    const apply = await guardianDeleteWorktree({ repoRoot, cwd: repoRoot, mode: "apply", targetPath, branch, deleteBranch: true, allowMergedGuardianBranch: true, ancestryBaseRef: baseRef, allowIgnoredFiles: input.allowIgnoredFiles === true, confirmToken: plan.confirmToken, config: effectiveConfig });
-    results.push({ ...candidateTokenMaterial(candidate), ok: apply.ok, status: apply.status, reason: apply.reason, worktreeRemoved: apply.worktreeRemoved, branchDeleted: apply.branchDeleted, safetyRef: apply.safetyRef });
+    const apply = await guardianDeleteWorktree({ repoRoot, cwd: repoRoot, mode: "apply", targetPath, branch, deleteBranch: true, allowMergedGuardianBranch: !abandonUnmerged, ancestryBaseRef: baseRef, allowIgnoredFiles: input.allowIgnoredFiles === true, abandonUnmerged, confirmToken: plan.confirmToken, config: effectiveConfig });
+    const applyPreflight = isRecordLike(apply.preflight) ? apply.preflight : {};
+    results.push({ ...candidateTokenMaterial(candidate), ok: apply.ok, status: apply.status, reason: apply.reason, worktreeRemoved: apply.worktreeRemoved, branchDeleted: apply.branchDeleted, safetyRef: apply.safetyRef, abandonUnmerged: apply.abandonUnmerged, unmergedCommits: applyPreflight.unmergedCommits });
   }
 
   const failedResults = results.filter((result) => result.ok !== true);
   const remaining = [...applyBlockers, ...failedResults];
   const requiredCommits = results
     .filter((result) => result.ok === true && typeof result.head === "string")
-    .map((result) => ({ commit: String(result.head), source: typeof result.branch === "string" ? result.branch : "cleanup-candidate", reason: "cleanup deleted a branch or worktree that must be present on final base" }));
+    .map((result) => ({
+      commit: String(result.head),
+      source: typeof result.branch === "string" ? result.branch : "cleanup-candidate",
+      reason: result.abandonUnmerged === true ? "cleanup intentionally abandoned an unmerged Guardian-owned branch" : "cleanup deleted a branch or worktree that must be present on final base",
+      ...(result.abandonUnmerged === true
+        ? {
+          discardConfirmed: true,
+          discardEvidence: {
+            safetyRef: result.safetyRef,
+            unmergedCommits: result.unmergedCommits,
+          },
+        }
+        : {}),
+    }));
   const finalPostflight = input.skipFinalPostflight === true ? { ok: true, status: "skipped", reason: "internal cleanup sweep skips final postflight" } : await runFinalCleanupPostflight({ repoRoot, config, requiredCommits });
   const postflightRemaining = finalPostflight.ok === true ? [] : [{ kind: "final-postflight", status: "blocked", reason: finalPostflight.reason ?? "final cleanup postflight failed", finalPostflight }];
   const allRemaining = [...remaining, ...postflightRemaining];

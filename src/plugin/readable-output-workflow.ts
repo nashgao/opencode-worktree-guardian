@@ -24,7 +24,8 @@ export function formatGuardianFinishWorkflowOutput(rawResult: unknown) {
     lines.push("[INFO] cleanup candidates:");
     for (const entry of candidates.slice(0, 8)) {
       const candidate = recordValue(entry);
-      lines.push(`  - kind=${textValue(candidate.kind)} targetKind=${textValue(candidate.targetKind)} branch=${textValue(candidate.branch)} path=${textValue(candidate.targetPath)} head=${shortCommit(candidate.head)}`);
+      const abandon = candidate.abandonUnmerged === true ? " abandonUnmerged=true" : "";
+      lines.push(`  - kind=${textValue(candidate.kind)} targetKind=${textValue(candidate.targetKind)} branch=${textValue(candidate.branch)} path=${textValue(candidate.targetPath)} head=${shortCommit(candidate.head)}${abandon}`);
     }
   }
   if (blockers.length > 0) {
@@ -38,7 +39,8 @@ export function formatGuardianFinishWorkflowOutput(rawResult: unknown) {
     lines.push("[INFO] cleanup results:");
     for (const entry of results.slice(0, 8)) {
       const item = recordValue(entry);
-      lines.push(`  - status=${textValue(item.status)} branch=${textValue(item.branch)} worktreeRemoved=${String(item.worktreeRemoved === true)} branchDeleted=${String(item.branchDeleted === true)}`);
+      const abandon = item.abandonUnmerged === true ? " abandonUnmerged=true" : "";
+      lines.push(`  - status=${textValue(item.status)} branch=${textValue(item.branch)} worktreeRemoved=${String(item.worktreeRemoved === true)} branchDeleted=${String(item.branchDeleted === true)}${abandon}`);
     }
   }
   return lines.join("\n");
@@ -85,8 +87,9 @@ function formatCleanupPlanEntry(entry: unknown): string {
   const branch = textValue(item.branch);
   const path = textValue(item.targetPath);
   const head = item.head ? ` head=${shortCommit(item.head)}` : "";
+  const abandon = item.abandonUnmerged === true ? " abandonUnmerged=true" : "";
   const reason = textValue(item.reason, "");
-  return `  - kind=${kind} targetKind=${targetKind} branch=${branch} path=${path}${head}${reason ? ` reason=${reason}` : ""}`;
+  return `  - kind=${kind} targetKind=${targetKind} branch=${branch} path=${path}${head}${abandon}${reason ? ` reason=${reason}` : ""}`;
 }
 
 function formatDirtyTarget(entry: unknown): string {
@@ -194,6 +197,8 @@ export function formatGuardianDoneOutput(rawResult: unknown) {
   const preflight = recordValue(result.preflight);
   const cleanupPlan = recordValue(result.cleanupPlan);
   const cleanup = recordValue(result.cleanup);
+  const candidates = arrayValue(result.candidates);
+  const results = arrayValue(result.results);
   const pr = recordValue(result.pr);
   const dirtySnapshot = recordValue(result.dirtySnapshot);
   const selectedTarget = recordValue(result.selectedTarget);
@@ -227,6 +232,18 @@ export function formatGuardianDoneOutput(rawResult: unknown) {
   }
   if (Object.keys(cleanupPlan).length > 0) {
     lines.push(`[INFO] cleanupPlan: ${textValue(cleanupPlan.status)} candidates=${arrayValue(cleanupPlan.candidates).length} blockers=${arrayValue(cleanupPlan.blockers).length}`);
+  }
+  if (candidates.length > 0) {
+    lines.push("[INFO] cleanup candidates:");
+    for (const entry of candidates.slice(0, 8)) lines.push(formatCleanupPlanEntry(entry));
+  }
+  if (results.length > 0) {
+    lines.push("[INFO] cleanup results:");
+    for (const entry of results.slice(0, 8)) {
+      const item = recordValue(entry);
+      const abandon = item.abandonUnmerged === true ? " abandonUnmerged=true" : "";
+      lines.push(`  - status=${textValue(item.status)} branch=${textValue(item.branch)} worktreeRemoved=${String(item.worktreeRemoved === true)} branchDeleted=${String(item.branchDeleted === true)}${abandon}`);
+    }
   }
   const suggestions = arrayValue(result.suggestedCommands);
   if (suggestions.length > 0) {

@@ -82,7 +82,7 @@ export async function guardianDoneAll(input: Record<string, unknown> = {}): Prom
   }
 
   const cleanupExcludeBranches = plans.map((plan) => plan.branch).filter((branch): branch is string => typeof branch === "string" && branch.length > 0);
-  const cleanupPlan = await guardianFinishWorkflow({ repoRoot, cwd: repoRoot, mode: "plan", config, excludeBranches: cleanupExcludeBranches, allowIgnoredFiles: input.allowIgnoredFiles === true });
+  const cleanupPlan = await guardianFinishWorkflow({ repoRoot, cwd: repoRoot, mode: "plan", config, excludeBranches: cleanupExcludeBranches, allowIgnoredFiles: input.allowIgnoredFiles === true, abandonUnmerged: true });
   const cleanupCandidates = Array.isArray(cleanupPlan.candidates) ? cleanupPlan.candidates.length : 0;
   const cleanupBlockerRecords = Array.isArray(cleanupPlan.blockers) ? cleanupPlan.blockers.filter((blocker): blocker is Record<string, unknown> => isRecordLike(blocker)) : [];
   const cleanupBlockers = cleanupBlockerRecords.length;
@@ -143,7 +143,7 @@ export async function guardianDoneAll(input: Record<string, unknown> = {}): Prom
   }
 
   const cleanupApply = cleanupCandidates > 0 && cleanupHasApplyToken
-    ? await guardianFinishWorkflow({ ...input, repoRoot, cwd: repoRoot, mode: "apply", confirmToken: cleanupPlan.confirmToken, config, excludeBranches: cleanupExcludeBranches, skipFinalPostflight: true })
+    ? await guardianFinishWorkflow({ ...input, repoRoot, cwd: repoRoot, mode: "apply", confirmToken: cleanupPlan.confirmToken, config, excludeBranches: cleanupExcludeBranches, skipFinalPostflight: true, abandonUnmerged: true })
     : null;
   const cleanupSweep = preSessionCleanupSweep({ cleanupPlan, cleanupCandidates, cleanupBlockers, cleanupApply });
 

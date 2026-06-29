@@ -58,7 +58,7 @@ export async function plannedCandidate(repoRoot: string, config: Record<string, 
   };
 }
 
-export async function discoverCandidates(repoRoot: string, cwd: string, config: Record<string, unknown>, preflight: Record<string, unknown>, allowIgnoredFiles = false, excludedBranches: readonly string[] = []): Promise<{ readonly candidates: Record<string, unknown>[]; readonly blockers: Record<string, unknown>[] }> {
+export async function discoverCandidates(repoRoot: string, cwd: string, config: Record<string, unknown>, preflight: Record<string, unknown>, allowIgnoredFiles = false, excludedBranches: readonly string[] = [], allowAbandonUnmerged = false): Promise<{ readonly candidates: Record<string, unknown>[]; readonly blockers: Record<string, unknown>[] }> {
   const baseRef = `${String(config.remote)}/${String(config.baseBranch)}`;
   const guardianRoot = path.resolve(repoRoot, expandWorktreeRoot(String(config.worktreeRoot), repoRoot));
   const currentWorktree = await getRepoRoot(cwd);
@@ -107,9 +107,14 @@ export async function discoverCandidates(repoRoot: string, cwd: string, config: 
     if (branchPrefix.length === 0 || !branch.name.startsWith(branchPrefix)) continue;
     if (checkedOutBranches.has(branch.name)) continue;
     if ((config.protectedBranches as string[]).includes(branch.name)) continue;
-    if (!(await isAncestor(repoRoot, branch.commit, baseRef))) continue;
-    const candidate = await plannedCandidate(repoRoot, config, { branch: branch.name, allowIgnoredFiles });
-    if (candidate.ok) candidates.push({ kind: "branch", ...candidate });
+    const ancestryProven = await isAncestor(repoRoot, branch.commit, baseRef);
+    if (!ancestryProven && !allowAbandonUnmerged) continue;
+    const candidate = await plannedCandidate(repoRoot, config, {
+      branch: branch.name,
+      allowIgnoredFiles,
+      ...(ancestryProven ? {} : { abandonUnmerged: true, allowMergedGuardianBranch: false }),
+    });
+    if (candidate.ok) candidates.push({ kind: "branch", abandonUnmerged: !ancestryProven, ...candidate });
     else blockers.push({ kind: "branch", branch: branch.name, head: branch.commit, reason: candidate.reason, plan: candidate.plan });
   }
 
