@@ -45,6 +45,15 @@ function useDirectFinishMode(input: Record<string, unknown>) {
   return typeof input.finishMode === "string" && input.finishMode !== "create-pr";
 }
 
+function directFinishApplyBlocker(input: Record<string, unknown>, mode: "plan" | "apply") {
+  if (mode !== "apply" || input.confirm === true) return null;
+  const finishMode = typeof input.finishMode === "string" ? input.finishMode : "configured finish mode";
+  return blocked("guardian_done direct finish apply requires confirm=true", {
+    lane: "session-finish",
+    nextAction: `guardian_done mode=apply confirm=true finishMode=${finishMode}`,
+  });
+}
+
 function preservedSessionForWorktree(
   state: Awaited<ReturnType<typeof readState>>,
   currentWorktree: string,
@@ -108,8 +117,9 @@ export async function guardianDone(input: Record<string, unknown> = {}): Promise
   const cwd = typeof input.cwd === "string" ? input.cwd : typeof input.repoRoot === "string" ? input.repoRoot : process.cwd();
   const repoRoot = typeof input.repoRoot === "string" ? input.repoRoot : await getRepoRoot(cwd);
   const config = isRecordLike(input.config) ? normalizeConfig(input.config) : (await loadConfig(repoRoot)).config;
-  const mode = input.mode ?? "plan";
-  if (mode !== "plan" && mode !== "apply") return { ok: false, status: "blocked", reason: "mode must be plan or apply", mode };
+  const requestedMode = input.mode ?? "plan";
+  if (requestedMode !== "plan" && requestedMode !== "apply") return { ok: false, status: "blocked", reason: "mode must be plan or apply", mode: requestedMode };
+  const mode = requestedMode;
 
   if (input.all === true) return guardianDoneAll({ ...input, repoRoot, config });
 
@@ -168,14 +178,18 @@ export async function guardianDone(input: Record<string, unknown> = {}): Promise
         });
       }
       if (useDirectFinishMode(input)) {
-        const finish = await guardianFinish({ ...input, repoRoot, cwd: currentSession.worktree_path, sessionId, config });
+        const applyBlocker = directFinishApplyBlocker(input, mode);
+        if (applyBlocker) return applyBlocker;
+        const finish = await guardianFinish({ ...input, mode, repoRoot, cwd: currentSession.worktree_path, sessionId, config });
         return { ...finish, lane: "session-finish" };
       }
       const result = await guardianDoneLandClean({ input: { ...input, mode }, repoRoot, cwd: currentSession.worktree_path, sessionId, session: currentSession, config });
       return { ...result, lane: "session-finish" };
     }
     if (useDirectFinishMode(input)) {
-      const finish = await guardianFinish({ ...input, repoRoot, cwd: currentWorktree, sessionId, config });
+      const applyBlocker = directFinishApplyBlocker(input, mode);
+      if (applyBlocker) return applyBlocker;
+      const finish = await guardianFinish({ ...input, mode, repoRoot, cwd: currentWorktree, sessionId, config });
       return { ...finish, lane: "session-finish" };
     }
     const result = await guardianDoneLandClean({ input: { ...input, mode }, repoRoot, cwd: currentWorktree, sessionId, session: currentSession, config });
@@ -192,7 +206,7 @@ export async function guardianDone(input: Record<string, unknown> = {}): Promise
   }
 
   if (!samePath(currentWorktree, repoRoot)) {
-    return reattachCurrentGuardianWorktree(repoRoot, currentWorktree, currentBranch, config, currentSession ? null : requestedSessionId, input);
+    return reattachCurrentGuardianWorktree(repoRoot, currentWorktree, currentBranch, config, currentSession ? null : requestedSessionId, { ...input, mode });
   }
 
   if (samePath(currentWorktree, repoRoot) && currentBranch === baseBranch && protectedBranches.includes(baseBranch)) {
