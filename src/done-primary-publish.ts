@@ -1,7 +1,8 @@
 import crypto from "node:crypto";
 import path from "node:path";
 import { createSafetyRef, fetchRemote, getCurrentBranch, getHeadCommit, getRefCommit, getRepoRoot, isAncestor, listStashes, runGit } from "./git.ts";
-import { runCleanupSweep } from "./done-cleanup-sweep.ts";
+import { finalPostflightCommitsFromCleanupSweep, runCleanupSweep } from "./done-cleanup-sweep.ts";
+import { runFinalCleanupPostflight } from "./final-postflight.ts";
 import type { GuardianConfig, MutableRecord } from "./types.ts";
 import type { DirtySnapshot } from "./done-primary-snapshot.ts";
 import { dirtySnapshot } from "./done-primary-snapshot.ts";
@@ -125,5 +126,7 @@ export async function primaryMainDone(repoRoot: string, cwd: string, config: Gua
   const proven = await isAncestor(repoRoot, commit, `${String(config.remote)}/${String(config.baseBranch)}`);
   if (!proven) return blocked("published commit is not proven reachable from remote base", { safetyRef, commit }, preflight);
   const cleanupSweep = await runCleanupSweep(repoRoot, config, input);
-  return { ok: cleanupSweep.ok === false ? false : true, status: cleanupSweep.ok === false ? "partial" : "published", ...(cleanupSweep.ok === false ? { reason: "published, but post-publish cleanup has remaining blockers" } : {}), lane: "primary-main-publish", branch, commit, safetyRef, preflight, cleanupSweep };
+  const finalPostflight = await runFinalCleanupPostflight({ repoRoot, config, requiredCommits: [{ commit, source: branch, reason: "published primary-main commit must be present on final base" }, ...finalPostflightCommitsFromCleanupSweep(cleanupSweep)] });
+  const ok = cleanupSweep.ok !== false && finalPostflight.ok === true;
+  return { ok, status: ok ? "published" : "partial", ...(ok ? {} : { reason: finalPostflight.ok === false ? "published, but final cleanup postflight failed" : "published, but post-publish cleanup has remaining blockers" }), lane: "primary-main-publish", branch, commit, safetyRef, preflight, cleanupSweep, finalPostflight };
 }

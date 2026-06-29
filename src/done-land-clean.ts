@@ -1,6 +1,7 @@
 import { guardianDeleteWorktree } from "./delete-worktree.ts";
-import { runCleanupSweep } from "./done-cleanup-sweep.ts";
+import { finalPostflightCommitsFromCleanupSweep, runCleanupSweep } from "./done-cleanup-sweep.ts";
 import { syncLocalBase } from "./done-main-sync.ts";
+import { runFinalCleanupPostflight, type FinalPostflightCommit } from "./final-postflight.ts";
 import { createSafetyRef, fetchRemote, getCurrentBranch, getDirtyFiles, getHeadCommit, isAncestor, pushBranch, runGit } from "./git.ts";
 import { getOrCreatePullRequest, mergePullRequest } from "./done-github-pr.ts";
 import type { GuardianConfig, GuardianSession } from "./types.ts";
@@ -46,25 +47,34 @@ function commitMessage(input: Record<string, unknown>): string {
   return typeof input.commitMessage === "string" ? input.commitMessage.trim() : "";
 }
 
-async function postFinishMaintenance(context: LandCleanContext): Promise<Record<string, unknown>> {
+async function postFinishMaintenance(context: LandCleanContext, requiredCommits: readonly FinalPostflightCommit[]): Promise<Record<string, unknown>> {
   if (context.input.skipPostFinishMaintenance === true) return {};
   const mainSync = await syncLocalBase(context.repoRoot, context.config);
   const cleanupSweep = await runCleanupSweep(context.repoRoot, context.config, context.input);
-  return { mainSync, cleanupSweep };
+  const finalPostflight = await runFinalCleanupPostflight({ repoRoot: context.repoRoot, config: context.config, requiredCommits: [...requiredCommits, ...finalPostflightCommitsFromCleanupSweep(cleanupSweep)] });
+  return { mainSync, cleanupSweep, finalPostflight };
 }
 
 function withMaintenanceOutcome(result: Record<string, unknown>, maintenance: Record<string, unknown>): Record<string, unknown> {
+  const mainSync = maintenance.mainSync;
+  const mainSyncOk = typeof mainSync === "object" && mainSync !== null && "ok" in mainSync
+    ? (mainSync as { readonly ok?: unknown }).ok
+    : undefined;
   const cleanupSweep = maintenance.cleanupSweep;
   const sweepOk = typeof cleanupSweep === "object" && cleanupSweep !== null && "ok" in cleanupSweep
     ? (cleanupSweep as { readonly ok?: unknown }).ok
     : undefined;
-  if (sweepOk === false) {
+  const finalPostflight = maintenance.finalPostflight;
+  const finalPostflightOk = typeof finalPostflight === "object" && finalPostflight !== null && "ok" in finalPostflight
+    ? (finalPostflight as { readonly ok?: unknown }).ok
+    : undefined;
+  if (mainSyncOk === false || sweepOk === false || finalPostflightOk === false) {
     return {
       ...result,
       ...maintenance,
       ok: false,
       status: "partial",
-      reason: "session landed and cleaned, but post-finish cleanup sweep was blocked",
+      reason: finalPostflightOk === false ? "session landed and cleaned, but final cleanup postflight failed" : mainSyncOk === false ? "session landed and cleaned, but local base sync was blocked" : "session landed and cleaned, but post-finish cleanup sweep was blocked",
     };
   }
   return { ...result, ...maintenance };
@@ -174,7 +184,7 @@ export async function guardianDoneLandClean(context: LandCleanContext): Promise<
   if (await isAncestor(context.repoRoot, head, baseRef)) {
     const cleanup = await cleanupLandedSession(context, "session commit is already reachable from the remote base branch");
     if (cleanup.ok !== true) return cleanup;
-    const maintenance = await postFinishMaintenance(context);
+    const maintenance = await postFinishMaintenance(context, [{ commit: head, source: preflight.branch, reason: "landed session commit must be present on final base" }]);
     return withMaintenanceOutcome({
       ok: true,
       status: "already-landed-and-cleaned",
@@ -203,7 +213,7 @@ export async function guardianDoneLandClean(context: LandCleanContext): Promise<
   }
   const cleanup = await cleanupLandedSession(context, "PR landed");
   if (cleanup.ok !== true) return { ...cleanup, pr: prResult.pr };
-  const maintenance = await postFinishMaintenance(context);
+  const maintenance = await postFinishMaintenance(context, [{ commit: head, source: preflight.branch, reason: "landed session commit must be present on final base" }]);
   return withMaintenanceOutcome({
     ok: true,
     status: "landed-and-cleaned",
