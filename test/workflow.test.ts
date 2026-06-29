@@ -25,6 +25,7 @@ type WorkflowResult = {
   };
   candidates: Array<Record<string, unknown>>;
   blockers: Array<Record<string, unknown>>;
+  finalPostflight?: Record<string, unknown>;
   results: Array<Record<string, unknown>>;
   remaining: Array<Record<string, unknown>>;
 };
@@ -322,6 +323,8 @@ test("guardian_finish_workflow cleans safe candidates while reporting dirty Guar
   assert.equal(plan.candidates.length, 1);
   assert.equal(plan.blockers.length, 1);
   assert.match(String(plan.blockers[0].reason), /uncommitted changes/);
+  assert.equal(plan.finalPostflight?.ok, false);
+  assert.equal(plan.remaining.some((entry) => entry.kind === "final-postflight"), true);
 
   const apply = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "apply", confirmToken: plan.confirmToken }));
   assert.equal(apply.ok, false);
@@ -330,8 +333,9 @@ test("guardian_finish_workflow cleans safe candidates while reporting dirty Guar
   assert.equal(apply.results.length, 1);
   assert.equal(apply.results[0].worktreeRemoved, true);
   assert.equal(apply.results[0].branchDeleted, true);
-  assert.equal(apply.remaining.length, 1);
-  assert.match(String(apply.remaining[0].reason), /uncommitted changes/);
+  assert.equal(apply.remaining.length, 2);
+  assert.equal(apply.remaining.some((entry) => entry.branch === dirtyBranch && /uncommitted changes/.test(String(entry.reason))), true);
+  assert.equal(apply.remaining.some((entry) => entry.kind === "final-postflight"), true);
   assert.equal(await pathExists(cleanPath), false);
   assert.equal(await branchExists(repo, cleanBranch), false);
   assert.equal(await pathExists(dirtyPath), true);
@@ -512,20 +516,22 @@ test("guardian_finish_workflow cleans merged remote Guardian branches", async (t
   const plan = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "plan" }));
 
   assert.equal(plan.ok, true, JSON.stringify(plan));
-  assert.equal(plan.status, "planned");
+  assert.equal(plan.status, "planned-partial");
   assert.equal(plan.candidates.length, 1);
   assert.equal(plan.candidates[0].kind, "remote-branch");
   assert.equal(plan.candidates[0].targetKind, "remote-branch");
   assert.equal(plan.candidates[0].remote, "origin");
   assert.equal(plan.candidates[0].remoteBranch, branch);
   assert.equal(plan.candidates[0].head, head);
+  assert.equal(plan.remaining.some((entry) => entry.kind === "final-postflight"), true);
 
   const apply = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "apply", confirmToken: plan.confirmToken }));
 
-  assert.equal(apply.ok, true, JSON.stringify(apply));
-  assert.equal(apply.status, "cleaned");
+  assert.equal(apply.ok, false, JSON.stringify(apply));
+  assert.equal(apply.status, "partial");
   assert.equal(apply.results.length, 1);
   assert.equal(apply.results[0].remoteBranchDeleted, true);
+  assert.equal(apply.remaining.some((entry) => entry.kind === "final-postflight"), true);
   assert.equal(await remoteBranchExists(repo, branch), false);
   assert.equal(await remoteBranchExists(repo, rescueBranch), true);
   assert.equal(await remoteBranchExists(repo, unmergedBranch), true);
@@ -615,6 +621,22 @@ test("guardian_finish_workflow preserves merged local rescue branches by default
 
   assert.equal(plan.ok, true, JSON.stringify(plan));
   assert.equal(plan.candidates.length, 0);
+  assert.equal(await branchExists(repo, branch), true);
+});
+
+test("guardian_finish_workflow skipFinalPostflight skips plan-mode final postflight blockers", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const branch = "rescue/workflow-skip-plan-postflight";
+  await createMergedBranch(repo, branch, "workflow-skip-plan-postflight.txt");
+
+  const plan = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "plan", skipFinalPostflight: true }));
+
+  assert.equal(plan.ok, true, JSON.stringify(plan));
+  assert.equal(plan.status, "planned");
+  assert.equal(plan.candidates.length, 0);
+  assert.deepEqual(plan.remaining, []);
+  assert.equal(plan.finalPostflight?.status, "skipped");
   assert.equal(await branchExists(repo, branch), true);
 });
 

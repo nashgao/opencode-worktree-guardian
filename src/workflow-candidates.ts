@@ -67,6 +67,7 @@ export async function discoverCandidates(repoRoot: string, cwd: string, config: 
   const excludedBranchSet = new Set(excludedBranches.filter((branch) => branch.length > 0));
   const candidates: Record<string, unknown>[] = [];
   const blockers: Record<string, unknown>[] = [];
+  const cleanableCheckedOutBranches = new Set<string>();
 
   for (const worktree of worktrees) {
     if (samePath(worktree.path, repoRoot) || samePath(worktree.path, currentWorktree)) continue;
@@ -90,8 +91,10 @@ export async function discoverCandidates(repoRoot: string, cwd: string, config: 
       continue;
     }
     const candidate = await plannedCandidate(repoRoot, config, { targetPath: worktree.path, allowIgnoredFiles });
-    if (candidate.ok) candidates.push({ kind: "worktree", ...candidate });
-    else blockers.push({ kind: "worktree", targetPath: worktree.path, branch: worktree.branch, reason: candidate.reason });
+    if (candidate.ok) {
+      cleanableCheckedOutBranches.add(worktree.branch);
+      candidates.push({ kind: "worktree", ...candidate });
+    } else blockers.push({ kind: "worktree", targetPath: worktree.path, branch: worktree.branch, reason: candidate.reason });
   }
 
   const branches = await listBranches(repoRoot) as Array<{ name: string; commit: string }>;
@@ -119,7 +122,7 @@ export async function discoverCandidates(repoRoot: string, cwd: string, config: 
       if (remoteBranch.branch === String(config.baseBranch)) continue;
       if (excludedBranchSet.has(remoteBranch.branch)) continue;
       if ((config.protectedBranches as string[]).includes(remoteBranch.branch)) continue;
-      if (checkedOutBranches.has(remoteBranch.branch)) continue;
+      if (checkedOutBranches.has(remoteBranch.branch) && !cleanableCheckedOutBranches.has(remoteBranch.branch)) continue;
       if (!(await isAncestor(repoRoot, remoteBranch.commit, baseRef))) continue;
       candidates.push({ kind: "remote-branch", targetKind: "remote-branch", remote, remoteBranch: remoteBranch.branch, branch: remoteBranch.branch, head: remoteBranch.commit, localBranchExists: localBranches.has(remoteBranch.branch) });
     }

@@ -4,6 +4,7 @@ import { configForResolvedBase, resolveBaseRef } from "./done-base-ref.ts";
 import { syncLocalBase } from "./done-main-sync.ts";
 import { guardianDeleteWorktree } from "./delete.ts";
 import { createSafetyRef, deleteRemoteBranch, fetchRemotePrune, getCurrentBranch, getDirtyFiles, getRefCommit, getRepoRoot, listStashes } from "./git.ts";
+import { runFinalCleanupPostflight } from "./final-postflight.ts";
 import { candidateTokenMaterial, createWorkflowToken, discoverCandidates, isGuardianWorktreeStatusPath, MAX_WORKFLOW_CLEANUP_CANDIDATES } from "./workflow-candidates.ts";
 
 function blocked(reason: string, details: Record<string, unknown> = {}, preflight?: Record<string, unknown>): Record<string, unknown> {
@@ -21,6 +22,28 @@ function addPreflightBlocker(preflight: Record<string, unknown>, reason: string)
   const blockers = preflightBlockers(preflight);
   if (blockers.includes(reason)) return;
   preflight.blockers = [...blockers, reason];
+}
+
+function plannedCleanupAllowances(candidates: readonly Record<string, unknown>[]): Record<string, string[]> {
+  const localBranches = new Set<string>();
+  const worktreeBranches = new Set<string>();
+  const remoteBranches = new Set<string>();
+  for (const candidate of candidates) {
+    const targetKind = typeof candidate.targetKind === "string" ? candidate.targetKind : "";
+    const branch = typeof candidate.branch === "string" ? candidate.branch : "";
+    if (targetKind === "remote-branch") {
+      const remoteBranch = typeof candidate.remoteBranch === "string" ? candidate.remoteBranch : branch;
+      if (remoteBranch.length > 0) remoteBranches.add(remoteBranch);
+      continue;
+    }
+    if (branch.length > 0) localBranches.add(branch);
+    if (targetKind === "worktree" && branch.length > 0) worktreeBranches.add(branch);
+  }
+  return {
+    allowedLocalBranches: [...localBranches],
+    allowedWorktreeBranches: [...worktreeBranches],
+    allowedRemoteBranches: [...remoteBranches],
+  };
 }
 
 export async function guardianFinishWorkflow(input: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
@@ -113,7 +136,13 @@ export async function guardianFinishWorkflow(input: Record<string, unknown> = {}
     return blocked("cleanup blockers must be resolved before apply", { candidates, blockers }, preflight);
   }
   const confirmToken = createWorkflowToken(preflight, candidates);
-  if (mode === "plan") return { ok: true, status: blockers.length > 0 ? "planned-partial" : "planned", confirmToken, preflight, candidates, blockers };
+  if (mode === "plan") {
+    const finalPostflight = input.skipFinalPostflight === true
+      ? { ok: true, status: "skipped", reason: "internal cleanup sweep skips final postflight" }
+      : await runFinalCleanupPostflight({ repoRoot, config, plannedBaseSync: candidates.length > 0, ...plannedCleanupAllowances(candidates) });
+    const remaining = finalPostflight.ok === true ? blockers : [...blockers, { kind: "final-postflight", status: "blocked", reason: finalPostflight.reason ?? "final cleanup postflight failed", finalPostflight }];
+    return { ok: true, status: remaining.length > 0 ? "planned-partial" : "planned", confirmToken, preflight, candidates, blockers, remaining, finalPostflight };
+  }
   if (input.confirmToken !== confirmToken) return blocked("confirm token mismatch; re-run mode=plan and use the returned confirmToken", { tokenMatched: false, candidates, blockers }, preflight);
 
   const applyBlockers = [...blockers];
@@ -130,7 +159,7 @@ export async function guardianFinishWorkflow(input: Record<string, unknown> = {}
     }
   }
 
-  const results = [];
+  const results: Record<string, unknown>[] = [];
   for (const candidate of candidates) {
     const targetKind = typeof candidate.targetKind === "string" ? candidate.targetKind : undefined;
     if (targetKind === "remote-branch") {
@@ -163,6 +192,12 @@ export async function guardianFinishWorkflow(input: Record<string, unknown> = {}
 
   const failedResults = results.filter((result) => result.ok !== true);
   const remaining = [...applyBlockers, ...failedResults];
-  const ok = failedResults.length === 0 && applyBlockers.length === 0;
-  return { ok, status: ok ? "cleaned" : "partial", ...(ok ? {} : { reason: "safe cleanup completed with remaining blockers" }), preflight, candidates, blockers, remaining, results, ...(baseSync ? { baseSync } : {}) };
+  const requiredCommits = results
+    .filter((result) => result.ok === true && typeof result.head === "string")
+    .map((result) => ({ commit: String(result.head), source: typeof result.branch === "string" ? result.branch : "cleanup-candidate", reason: "cleanup deleted a branch or worktree that must be present on final base" }));
+  const finalPostflight = input.skipFinalPostflight === true ? { ok: true, status: "skipped", reason: "internal cleanup sweep skips final postflight" } : await runFinalCleanupPostflight({ repoRoot, config, requiredCommits });
+  const postflightRemaining = finalPostflight.ok === true ? [] : [{ kind: "final-postflight", status: "blocked", reason: finalPostflight.reason ?? "final cleanup postflight failed", finalPostflight }];
+  const allRemaining = [...remaining, ...postflightRemaining];
+  const ok = failedResults.length === 0 && applyBlockers.length === 0 && finalPostflight.ok === true;
+  return { ok, status: ok ? "cleaned" : "partial", ...(ok ? {} : { reason: "safe cleanup completed with remaining blockers" }), preflight, candidates, blockers, remaining: allRemaining, results, finalPostflight, ...(baseSync ? { baseSync } : {}) };
 }

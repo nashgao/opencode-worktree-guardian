@@ -20,6 +20,8 @@ type WorkflowResult = {
   readonly preflight: Record<string, unknown>;
   readonly candidates: Array<Record<string, unknown>>;
   readonly results: Array<Record<string, unknown>>;
+  readonly remaining: Array<Record<string, unknown>>;
+  readonly finalPostflight?: Record<string, unknown>;
 };
 
 async function createRepoWithGitlabUpstream() {
@@ -30,6 +32,16 @@ async function createRepoWithGitlabUpstream() {
   await git(repo, ["push", "-u", "gitlab", "main"]);
   await git(repo, ["branch", "--set-upstream-to", "gitlab/main", "main"]);
   return { base, repo, gitlab };
+}
+
+async function createRepoWithGitlabTrunkUpstream() {
+  const { base, repo } = await createRepoWithOrigin();
+  const gitlab = path.join(base, "gitlab.git");
+  await execFileAsync("git", ["init", "--bare", gitlab]);
+  await git(repo, ["remote", "add", "gitlab", gitlab]);
+  await git(repo, ["push", "-u", "gitlab", "main:trunk"]);
+  await git(repo, ["branch", "--set-upstream-to", "gitlab/trunk", "main"]);
+  return { base, repo };
 }
 
 async function clonePublisher(remote: string) {
@@ -111,6 +123,22 @@ test("guardian_finish_workflow cleans local branches merged to tracked upstream"
   await assert.rejects(() => git(repo, ["rev-parse", "--verify", branch]));
 });
 
+test("guardian_finish_workflow final postflight keeps local base when trusted upstream branch has a different name", async (t) => {
+  const { base, repo } = await createRepoWithGitlabTrunkUpstream();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+
+  const plan = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "plan", config: TRUST_GITLAB_CONFIG }));
+
+  assert.equal(plan.ok, true, JSON.stringify(plan));
+  assert.equal(plan.status, "planned");
+  assert.equal(plan.preflight.baseRef, "gitlab/trunk");
+  assert.equal(plan.preflight.effectiveBaseBranch, "trunk");
+  assert.equal(plan.preflight.configuredBaseRef, "origin/main");
+  assert.equal(plan.finalPostflight?.ok, true, JSON.stringify(plan.finalPostflight));
+  assert.equal(plan.finalPostflight?.baseBranch, "main");
+  assert.deepEqual(plan.remaining, []);
+});
+
 
 test("syncLocalBase blocks untrusted tracked upstream before fetch", async (t) => {
   const { base, repo, gitlab } = await createRepoWithGitlabUpstream();
@@ -147,13 +175,15 @@ test("guardian_finish_workflow cleans recorded worktrees using trusted effective
   const plan = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "plan", config: TRUST_GITLAB_CONFIG }));
 
   assert.equal(plan.ok, true, JSON.stringify(plan));
-  assert.equal(plan.candidates.length, 1);
-  assert.equal(plan.candidates[0].branch, branch);
+  assert.equal(plan.candidates.length, 2);
+  assert.deepEqual(plan.candidates.map((candidate) => candidate.targetKind).sort(), ["remote-branch", "worktree"]);
+  assert.equal(plan.candidates.every((candidate) => candidate.branch === branch), true);
 
   const apply = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "apply", confirmToken: plan.confirmToken, config: TRUST_GITLAB_CONFIG }));
 
   assert.equal(apply.ok, true, JSON.stringify(apply));
-  assert.equal(apply.results[0].worktreeRemoved, true);
-  assert.equal(apply.results[0].branchDeleted, true);
+  assert.equal(apply.results.some((result) => result.worktreeRemoved === true), true);
+  assert.equal(apply.results.some((result) => result.branchDeleted === true), true);
+  assert.equal(apply.results.some((result) => result.remoteBranchDeleted === true), true);
   await assert.rejects(() => git(repo, ["rev-parse", "--verify", branch]));
 });
