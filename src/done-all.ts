@@ -1,13 +1,13 @@
-import crypto from "node:crypto";
-import path from "node:path";
 import { loadConfig, normalizeConfig } from "./config.ts";
 import { fetchRemote, getDirtyFiles, getHeadCommit, getRefCommit, getRepoRoot } from "./git.ts";
 import { getGuardianPaths, readState } from "./state.ts";
 import { guardianDoneLandClean } from "./done-land-clean.ts";
+import { combineCleanupSweeps, createDoneAllConfirmToken, preSessionCleanupSweep } from "./done-all-cleanup.ts";
+import { finalPostflightCommitsFromCleanupSweep, runCleanupSweep } from "./done-cleanup-sweep.ts";
 import { guardianFinishWorkflow } from "./workflow.ts";
-import { candidateTokenMaterial } from "./workflow-candidates.ts";
 import { activeFeatureSessions, type FeatureSession } from "./done-feature-sessions.ts";
 import { syncLocalBase } from "./done-main-sync.ts";
+import { runFinalCleanupPostflight } from "./final-postflight.ts";
 import { isRecordLike } from "./types.ts";
 import type { GuardianConfig } from "./types.ts";
 
@@ -26,56 +26,6 @@ type SessionPlan = {
   readonly disposition: Disposition;
   readonly reason?: string;
 };
-
-function createDoneAllToken(material: Record<string, unknown>): string {
-  return crypto.createHash("sha256").update(JSON.stringify(material)).digest("hex");
-}
-
-// The confirm token binds everything an apply must not have drifted on between plan and apply:
-// the resolved base commit, the policy that classified each session, and every session's identity,
-// live head, and dirty fingerprint. Any of these changing (session added/removed, base moved, a
-// finishable head advanced, a clean worktree went dirty) recomputes a different token and fails closed.
-function cleanupPlanTokenMaterial(cleanupPlan: Record<string, unknown>): Record<string, unknown> {
-  const candidates = Array.isArray(cleanupPlan.candidates) ? cleanupPlan.candidates.filter((candidate): candidate is Record<string, unknown> => isRecordLike(candidate)) : [];
-  const blockers = Array.isArray(cleanupPlan.blockers) ? cleanupPlan.blockers.filter((blocker): blocker is Record<string, unknown> => isRecordLike(blocker)) : [];
-  return {
-    ok: cleanupPlan.ok === true,
-    status: typeof cleanupPlan.status === "string" ? cleanupPlan.status : null,
-    confirmToken: typeof cleanupPlan.confirmToken === "string" ? cleanupPlan.confirmToken : null,
-    candidates: candidates.map(candidateTokenMaterial),
-    blockers: blockers.map((blocker) => ({
-      kind: blocker.kind ?? null,
-      targetPath: blocker.targetPath ?? null,
-      branch: blocker.branch ?? null,
-      head: blocker.head ?? null,
-      targetKind: blocker.targetKind ?? null,
-      remote: blocker.remote ?? null,
-      remoteBranch: blocker.remoteBranch ?? null,
-      reason: blocker.reason ?? null,
-    })),
-  };
-}
-
-function tokenMaterial(repoRoot: string, config: GuardianConfig, baseRef: string, baseRefOid: string | null, protectedBranches: readonly string[], plans: readonly SessionPlan[], cleanupPlan: Record<string, unknown>): Record<string, unknown> {
-  return {
-    operation: "guardian_done_all/v1",
-    repoRoot: path.resolve(repoRoot),
-    remote: config.remote,
-    baseBranch: config.baseBranch,
-    baseRef,
-    baseRefOid,
-    protectedBranches: [...protectedBranches].sort(),
-    sessions: plans.map((plan) => ({
-      session_id: plan.session_id,
-      branch: plan.branch,
-      worktree_path: path.resolve(plan.worktree_path),
-      head: plan.head,
-      dirtyFileCount: plan.dirtyFileCount,
-      disposition: plan.disposition,
-    })),
-    cleanupPlan: cleanupPlanTokenMaterial(cleanupPlan),
-  };
-}
 
 // Clean-only v1 contract: protected branches and no-branch sessions are hard-blocked, dirty
 // sessions are skipped (a single shared commit message across N sessions would be unsafe), and
@@ -162,7 +112,7 @@ export async function guardianDoneAll(input: Record<string, unknown> = {}): Prom
       cleanupSummary: { candidates: cleanupCandidates, blockers: cleanupBlockers },
     };
   }
-  const confirmToken = createDoneAllToken(tokenMaterial(repoRoot, config, baseRef, baseRefOid, protectedBranches, plans, cleanupPlan));
+  const confirmToken = createDoneAllConfirmToken({ repoRoot, config, baseRef, baseRefOid, protectedBranches, plans, cleanupPlan });
 
   if (mode === "plan") {
     const noSessionWork = plans.length === 0;
@@ -193,26 +143,9 @@ export async function guardianDoneAll(input: Record<string, unknown> = {}): Prom
   }
 
   const cleanupApply = cleanupCandidates > 0 && cleanupHasApplyToken
-    ? await guardianFinishWorkflow({ ...input, repoRoot, cwd: repoRoot, mode: "apply", confirmToken: cleanupPlan.confirmToken, config, excludeBranches: cleanupExcludeBranches })
+    ? await guardianFinishWorkflow({ ...input, repoRoot, cwd: repoRoot, mode: "apply", confirmToken: cleanupPlan.confirmToken, config, excludeBranches: cleanupExcludeBranches, skipFinalPostflight: true })
     : null;
-  const cleanupApplyResults = cleanupApply && Array.isArray(cleanupApply.results) ? cleanupApply.results : [];
-  const cleanupSweep = cleanupApply
-    ? {
-      ok: cleanupApply.ok === true,
-      status: cleanupApply.status === "cleaned" ? "cleaned" : "partial",
-      reason: cleanupApply.ok === true ? undefined : "cleanup sweep applied safe candidates with remaining blockers",
-      candidateCount: cleanupCandidates,
-      cleanedCount: cleanupApplyResults.filter((result) => isRecordLike(result) && result.ok === true).length,
-      failedCount: cleanupApplyResults.filter((result) => !isRecordLike(result) || result.ok !== true).length,
-      plan: cleanupPlan,
-      apply: cleanupApply,
-      remaining: cleanupApply.remaining ?? cleanupApply.blockers ?? [],
-    }
-    : cleanupCandidates > 0
-      ? { ok: false, status: "blocked", reason: "cleanup plan has candidates but no apply token", candidateCount: cleanupCandidates, plan: cleanupPlan }
-      : cleanupBlockers > 0 || cleanupPlan.ok !== true
-        ? { ok: false, status: "partial", reason: "cleanup blockers remain", candidateCount: 0, plan: cleanupPlan, remaining: cleanupPlan.blockers ?? [] }
-        : { ok: true, status: "no-op", candidateCount: 0, plan: cleanupPlan };
+  const cleanupSweep = preSessionCleanupSweep({ cleanupPlan, cleanupCandidates, cleanupBlockers, cleanupApply });
 
   const results: Record<string, unknown>[] = [];
   for (const plan of finishable) {
@@ -250,19 +183,27 @@ export async function guardianDoneAll(input: Record<string, unknown> = {}): Prom
   const finishedCount = results.filter((result) => result.ok === true).length;
   const failedCount = results.length - finishedCount;
   const hardFailure = failedCount > 0;
-  const cleanupRemaining = isRecordLike(cleanupSweep) && Array.isArray(cleanupSweep.remaining) ? cleanupSweep.remaining.filter((entry): entry is Record<string, unknown> => isRecordLike(entry)) : [];
-  const allRemaining = [...remaining, ...cleanupRemaining];
-  const repoFinished = !hardFailure && cleanupSweep.ok === true && allRemaining.length === 0;
   const mainSync = await syncLocalBase(repoRoot, config);
+  const postSessionCleanupSweep = await runCleanupSweep(repoRoot, config, input);
+  const combinedCleanupSweep = combineCleanupSweeps(cleanupSweep, postSessionCleanupSweep);
+  const cleanupRemaining = Array.isArray(combinedCleanupSweep.remaining) ? combinedCleanupSweep.remaining.filter((entry): entry is Record<string, unknown> => isRecordLike(entry)) : [];
+  const allRemaining = [...remaining, ...cleanupRemaining];
+  const requiredCommits = results
+    .filter((result) => result.ok === true && typeof result.head === "string")
+    .map((result) => ({ commit: String(result.head), source: typeof result.branch === "string" ? result.branch : "done-all-session", reason: "finished session commit must be present on final base" }));
+  const finalPostflight = await runFinalCleanupPostflight({ repoRoot, config, requiredCommits: [...requiredCommits, ...finalPostflightCommitsFromCleanupSweep(combinedCleanupSweep)] });
+  const finalRemaining = finalPostflight.ok === true ? allRemaining : [...allRemaining, { kind: "final-postflight", status: "blocked", reason: finalPostflight.reason ?? "final cleanup postflight failed", finalPostflight }];
+  const repoFinished = !hardFailure && combinedCleanupSweep.ok === true && mainSync.ok === true && finalPostflight.ok === true && finalRemaining.length === 0;
   return {
     ok: repoFinished,
     status: repoFinished ? "finished" : "partial",
     lane: "done-all",
     summary: { ...summary, finished: finishedCount, failed: failedCount },
     results,
-    remaining: allRemaining,
+    remaining: finalRemaining,
     mainSync,
-    cleanupSweep,
-    ...(allRemaining.length > 0 ? { remainingHint: "safe work was applied; remaining entries need explicit cleanup or individual guardian_done handling before the repo is done" } : {}),
+    finalPostflight,
+    cleanupSweep: combinedCleanupSweep,
+    ...(finalRemaining.length > 0 ? { remainingHint: "safe work was applied; remaining entries need explicit cleanup or individual guardian_done handling before the repo is done" } : {}),
   };
 }

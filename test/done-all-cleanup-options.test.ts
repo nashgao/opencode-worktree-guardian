@@ -61,7 +61,9 @@ test("guardian_done all=true honors allowIgnoredFiles for stale Guardian cleanup
   assert.equal(apply.ok, true, JSON.stringify(apply));
   assert.equal(apply.status, "finished");
   const cleanupSweep = apply.cleanupSweep as LooseRecord;
-  assert.equal(cleanupSweep.cleanedCount, 1);
+  assert.equal(cleanupSweep.cleanedCount, 2);
+  assert.equal((cleanupSweep.preSession as LooseRecord).cleanedCount, 1);
+  assert.equal((cleanupSweep.postSession as LooseRecord).cleanedCount, 1);
   assert.equal(await pathExists(stale.worktreePath), false);
   await assert.rejects(git(repo, ["rev-parse", "--verify", staleBranch]));
 });

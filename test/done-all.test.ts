@@ -4,6 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { DEFAULT_CONFIG } from "../src/config.ts";
 import { guardianDone } from "../src/done.ts";
+import { finalPostflightCommitsFromCleanupSweep } from "../src/done-cleanup-sweep.ts";
 import { createSafetyRef } from "../src/git.ts";
 import { guardianStart } from "../src/tools.ts";
 import { createRepoWithOrigin, git, installFakeGh, installMultiBranchFakeGh } from "./helpers.ts";
@@ -38,6 +39,30 @@ async function createMergedGuardianWorktree(repo: string, branch: string, worktr
   await git(repo, ["worktree", "add", worktreePath, branch]);
   return { head, worktreePath };
 }
+
+test("cleanup sweep final postflight commits include nested deleted heads", () => {
+  const commits = finalPostflightCommitsFromCleanupSweep({
+    ok: true,
+    preSession: {
+      apply: {
+        results: [
+          { ok: true, branchDeleted: true, branch: "guardian/pre", head: "abc123" },
+          { ok: false, branchDeleted: true, branch: "guardian/failed", head: "def456" },
+        ],
+      },
+    },
+    postSession: {
+      apply: {
+        results: [{ ok: true, remoteBranchDeleted: true, remote: "origin", remoteBranch: "guardian/post", head: "789abc" }],
+      },
+    },
+  });
+
+  assert.deepEqual(commits.map((entry) => ({ commit: entry.commit, source: entry.source })), [
+    { commit: "abc123", source: "guardian/pre" },
+    { commit: "789abc", source: "origin/guardian/post" },
+  ]);
+});
 
 test("guardian_done all=true is a no-op when no active feature sessions exist", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
@@ -223,7 +248,10 @@ test("guardian_done all=true applies preplanned cleanup before session merges ad
 
   assert.equal(apply.ok, true, JSON.stringify(apply));
   assert.equal(apply.status, "finished");
-  assert.equal((apply.cleanupSweep as LooseRecord).cleanedCount, 1);
+  const cleanupSweep = apply.cleanupSweep as LooseRecord;
+  assert.equal(cleanupSweep.cleanedCount, 2);
+  assert.equal((cleanupSweep.preSession as LooseRecord).cleanedCount, 1);
+  assert.equal((cleanupSweep.postSession as LooseRecord).cleanedCount, 1);
   await assert.rejects(git(repo, ["rev-parse", "--verify", staleBranch]));
   assert.equal(await pathExists(session.session.worktree_path), false);
 });
@@ -261,8 +289,10 @@ test("guardian_done all=true progresses safe sessions and cleanup while reportin
   assert.equal(results[0].worktreeRemoved, true);
   const cleanupSweep = apply.cleanupSweep as LooseRecord;
   assert.equal(cleanupSweep.status, "partial");
-  assert.equal(cleanupSweep.cleanedCount, 1);
+  assert.equal(cleanupSweep.cleanedCount, 2);
   assert.equal(cleanupSweep.failedCount, 0);
+  assert.equal((cleanupSweep.preSession as LooseRecord).cleanedCount, 1);
+  assert.equal((cleanupSweep.postSession as LooseRecord).cleanedCount, 1);
   const cleanupRemaining = cleanupSweep.remaining as LooseRecord[];
   assert.equal(cleanupRemaining.length, 1);
   assert.equal(cleanupRemaining[0].branch, dirtyBranch);
@@ -274,7 +304,7 @@ test("guardian_done all=true progresses safe sessions and cleanup while reportin
   await git(repo, ["rev-parse", "--verify", dirtyBranch]);
 });
 
-test("guardian_done all=true does not clean post-finish candidates absent from plan", async (t) => {
+test("guardian_done all=true cleans post-finish remote branches through Guardian sweep", async (t) => {
   const { base, repo, remote } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
   const session = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_all_post_finish_candidate", taskName: "post finish candidate", createWorktree: true, config: DEFAULT_CONFIG });
@@ -290,9 +320,11 @@ test("guardian_done all=true does not clean post-finish candidates absent from p
   assert.equal(apply.ok, true, JSON.stringify(apply));
   assert.equal(apply.status, "finished");
   const cleanupSweep = apply.cleanupSweep as LooseRecord;
-  assert.equal(cleanupSweep.status, "no-op");
-  assert.equal(cleanupSweep.candidateCount, 0);
-  assert.equal(await remoteBranchExists(repo, session.session.branch), true);
+  assert.equal(cleanupSweep.status, "cleaned");
+  assert.equal(cleanupSweep.candidateCount, 1);
+  assert.equal(cleanupSweep.cleanedCount, 1);
+  assert.equal((cleanupSweep.postSession as LooseRecord).cleanedCount, 1);
+  assert.equal(await remoteBranchExists(repo, session.session.branch), false);
   const ghLog = await fs.readFile(fakeGh.logPath, "utf8");
   assert.doesNotMatch(ghLog, /--delete-branch/);
 });
