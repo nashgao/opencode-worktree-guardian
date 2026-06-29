@@ -25,7 +25,7 @@
     "test": "node scripts/with-safe-node-temp.mjs -- node --import tsx --test test/*.test.ts",
     "lint": "npm run typecheck",
     "typecheck": "tsc --noEmit",
-    "coverage": "node scripts/with-safe-node-temp.mjs -- node --import tsx --test --experimental-test-coverage --test-coverage-lines=80 test/*.test.ts",
+    "coverage": "node scripts/with-safe-node-temp.mjs -- node --import tsx --test --test-isolation=none --experimental-test-coverage --test-coverage-lines=80 test/*.test.ts",
     "verify": "npm run lint && npm run coverage",
     "audit:deps": "npm audit --registry=https://registry.npmjs.org --omit=dev",
     "test:contract": "node scripts/with-safe-node-temp.mjs -- node --import tsx --test test/plugin-contract.test.ts test/plugin-status-contract.test.ts test/plugin-hygiene-contract.test.ts test/plugin-delete-contract.test.ts test/plugin-done-contract.test.ts test/plugin-workflow-contract.test.ts test/index.test.ts test/index-hook-basics.test.ts test/index-autostart.test.ts test/index-autostart-routing.test.ts test/index-session-routing.test.ts test/index-idle-finish.test.ts test/index-direct-routing.test.ts test/project-index.test.ts",
