@@ -12,6 +12,27 @@ export async function reattachCurrentGuardianWorktree(repoRoot: string, currentW
 
   const headCommit = await getHeadCommit(currentWorktree);
   const sessionId = requestedSessionId ?? recoverySessionId(currentBranch, headCommit);
+  const mode = input.mode === "apply" ? "apply" : "plan";
+  if (mode === "plan") {
+    const result = await guardianFinish({ ...input, mode, repoRoot, cwd: currentWorktree, sessionId, config });
+    return {
+      ...result,
+      action: "reattach-and-finish",
+      lane: "session-finish",
+      reattached: true,
+      sessionId,
+      branch: currentBranch,
+      worktree: currentWorktree,
+      commit: headCommit,
+      nextAction: "guardian_done mode=apply confirm=true",
+    };
+  }
+  if (input.confirm !== true) {
+    return blocked("guardian_done reattach apply requires confirm=true", {
+      lane: "session-finish",
+      nextAction: "guardian_done mode=apply confirm=true",
+    });
+  }
   await recordSession(repoRoot, config, {
     session_id: sessionId,
     status: "active",
@@ -21,6 +42,6 @@ export async function reattachCurrentGuardianWorktree(repoRoot: string, currentW
     head_commit: headCommit,
     safety_refs: [],
   }, { event: { type: "guardian_done_reattach", session_id: sessionId } });
-  const result = await guardianFinish({ ...input, repoRoot, cwd: currentWorktree, sessionId, config });
+  const result = await guardianFinish({ ...input, mode, repoRoot, cwd: currentWorktree, sessionId, config });
   return { ...result, lane: "session-finish", reattached: true };
 }

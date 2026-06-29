@@ -6,6 +6,7 @@ import type { FinishPreflight, GuardianFinishResult, LooseRecord } from "./finis
 import { createSafetyRef, fetchRemote, getCurrentBranch, getDirtyFiles, getHeadCommit, getRepoRoot, isAncestor, listStashes, listWorktrees, pushBranch, runGit, snapshotWorktreeDirtCommit, tryGit } from "./git.ts";
 import { isActiveSession, isTerminalSession } from "./lifecycle.ts";
 import { getGuardianPaths, readState, recordSession } from "./state.ts";
+import type { GuardianSession } from "./types.ts";
 import { isRecordLike } from "./types.ts";
 import { recoverableGuardianWorktreeBlocker, recoverySessionId } from "./worktree-recovery.ts";
 
@@ -60,6 +61,8 @@ export async function guardianFinish(input: LooseRecord = {}): Promise<GuardianF
   const state = isFinishStateInput(input.state) ? input.state : await readState(paths, { repoRoot, config });
   const currentWorktree = await getRepoRoot(cwd);
   preflight.currentWorktree = currentWorktree;
+  const planMode = input.mode === "plan";
+  let plannedRecoveredSession = false;
   if (!sessionId) {
     const activeEntry = Object.entries(state.sessions ?? {}).find(([, candidate]) => isActiveSession(candidate) && typeof candidate.worktree_path === "string" && samePath(candidate.worktree_path, currentWorktree));
     sessionId = activeEntry?.[0] ?? null;
@@ -75,8 +78,8 @@ export async function guardianFinish(input: LooseRecord = {}): Promise<GuardianF
     }
     if (!currentBranch) return blocked("detached HEAD cannot be finished safely", { worktree: currentWorktree }, preflight);
     const headCommit = await getHeadCommit(currentWorktree);
-    sessionId = recoverySessionId(currentBranch, headCommit);
-    const recoveredState = await recordSession(repoRoot, config, {
+    sessionId = terminalSession ? recoverySessionId(currentBranch, headCommit) : sessionId ?? recoverySessionId(currentBranch, headCommit);
+    const recoveredSession: GuardianSession = {
       session_id: sessionId,
       status: "active",
       branch: currentBranch,
@@ -84,11 +87,17 @@ export async function guardianFinish(input: LooseRecord = {}): Promise<GuardianF
       base_ref: `${config.remote}/${config.baseBranch}`,
       head_commit: headCommit,
       safety_refs: [],
-    }, { event: { type: "guardian_finish_recover", session_id: sessionId } });
-    session = recoveredState.sessions[sessionId];
+    };
+    if (planMode) {
+      session = recoveredSession;
+      plannedRecoveredSession = true;
+    } else {
+      const recoveredState = await recordSession(repoRoot, config, recoveredSession, { event: { type: "guardian_finish_recover", session_id: sessionId } });
+      session = recoveredState.sessions[sessionId];
+    }
     preflight.sessionRecovered = true;
   }
-  preflight.sessionRecorded = Boolean(session);
+  preflight.sessionRecorded = Boolean(session) && !plannedRecoveredSession;
   if (!sessionId) return blocked("sessionId is required", {}, preflight);
   preflight.sessionId = sessionId;
   if (!session) return blocked("current session is not recorded in guardian state", { sessionId }, preflight);
@@ -136,6 +145,12 @@ export async function guardianFinish(input: LooseRecord = {}): Promise<GuardianF
   preflight.commit = commit;
   const existingSafetyRefs = Array.isArray(session.safety_refs) ? session.safety_refs.filter((ref: unknown) => typeof ref === "string") : [];
   const existingSafetyRef = existingSafetyRefs[existingSafetyRefs.length - 1];
+  if (planMode) {
+    if (mode === "merge-to-base" && input.allowMergeToBase !== true) {
+      return blocked("merge-to-base requires explicit allowMergeToBase=true", { branch }, preflight, { action: "requires-explicit-merge-approval" });
+    }
+    return withFinishReport({ ok: true, status: "planned", mode, branch, worktree: currentWorktree, commit, nextAction: `guardian_done mode=apply confirm=true finishMode=${mode}` }, preflight, { action: "planned" });
+  }
   if (mode === "preserve-only" && session.status === "preserved" && existingSafetyRef) {
     preflight.safetyRef = existingSafetyRef;
     return withFinishReport({ ok: true, status: "preserved", mode, branch, worktree: currentWorktree, commit, safetyRef: existingSafetyRef, idempotent: true }, preflight, { action: "already-preserved" });
