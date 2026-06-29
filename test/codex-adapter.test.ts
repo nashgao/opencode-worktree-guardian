@@ -186,7 +186,7 @@ test("Codex guardian_done reports needs-selection for ambiguous dirty targets", 
 
   const plan = await runCodexCli(["tool", "guardian_done", JSON.stringify({ repoRoot: repo, cwd: repo, mode: "plan", commitMessage: "feat: ambiguous codex done" })]);
 
-  assert.match(plan.stdout, /\[WARN\] guardian_done needs a session selection/);
+  assert.match(plan.stdout, /\[WARN\] guardian_done needs target selection/);
   assert.match(plan.stdout, /multiple dirty implementation targets/);
   assert.match(plan.stdout, /dirty target candidates: 2/);
   assert.match(plan.stdout, /target=primary/);

@@ -172,7 +172,7 @@ export function formatGuardianDoneOutput(rawResult: unknown) {
     const sessions = arrayValue(result.availableSessions);
     const candidates = arrayValue(result.candidates);
     const lines = [
-      "[WARN] guardian_done needs a session selection",
+      "[WARN] guardian_done needs target selection",
       `[INFO] ${textValue(result.reason, "no Guardian session matched the current location")}`,
       `[INFO] active feature sessions: ${sessions.length}`,
     ];

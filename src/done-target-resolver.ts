@@ -9,7 +9,7 @@ export type DoneTargetDecision =
   | { readonly kind: "reattach" }
   | { readonly kind: "primary-rescue-recommended" }
   | { readonly kind: "needs-selection"; readonly ok: false; readonly status: "needs-selection"; readonly lane: "select-target"; readonly reason: string; readonly candidates: readonly DoneDirtyTarget[]; readonly suggestedCommands: readonly string[] }
-  | { readonly kind: "blocked"; readonly ok: false; readonly status: "blocked"; readonly lane: string; readonly reason: string; readonly branch?: string; readonly availableSessions?: readonly DoneSessionInventory[]; readonly suggestedCommands?: readonly string[] };
+  | { readonly kind: "blocked"; readonly ok: false; readonly status: "blocked"; readonly lane: string; readonly reason: string; readonly branch?: string; readonly sessionId?: string; readonly availableSessions?: readonly DoneSessionInventory[]; readonly suggestedCommands?: readonly string[] };
 
 export type ResolveDoneTargetOptions = {
   readonly input: Record<string, unknown>;
@@ -77,6 +77,16 @@ export function resolveDoneTarget(options: ResolveDoneTargetOptions): DoneTarget
     const session = inventory.sessions.find((candidate) => candidate.sessionId === sessionId);
     if (session) return sessionDecision(session, sessionTarget(inventory, session.sessionId));
     if (inventory.currentWorktree !== inventory.repoRoot) return { kind: "reattach" };
+    return {
+      kind: "blocked",
+      ok: false,
+      status: "blocked",
+      lane: "session-not-found",
+      reason: `no active Guardian session matches sessionId ${sessionId}`,
+      sessionId,
+      availableSessions: inventory.sessions,
+      suggestedCommands: featureSessionCommands(inventory.sessions),
+    };
   }
 
   if (!branch && inventory.currentSessionId) {

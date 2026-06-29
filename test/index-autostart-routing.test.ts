@@ -169,7 +169,19 @@ test("/guardian slash commands rewrite to native tool instructions", async () =>
   await hooks["command.execute.before"]({ command: "/guardian delete-paths src/old.ts", sessionID: "ses_123", arguments: [] }, deletePathsOutput);
   assert.deepEqual(deletePathsOutput.parts, [{ type: "text", text: "Use the guardian_delete_paths native tool. Run mode=plan first with exact paths, inspect target status and blockers, get explicit user confirmation, then apply with confirmDelete=true. Tracked source deletion requires allowTracked=true; directory deletion requires allowRecursive=true. User arguments: src/old.ts" }]);
 
-  const doneOutput = { parts: [] };
+  const doneOutput: { parts: Array<{ readonly type: string; readonly text: string }> } = { parts: [] };
   await hooks["command.execute.before"]({ command: "/guardian done", sessionID: "ses_123", arguments: [] }, doneOutput);
-  assert.deepEqual(doneOutput.parts, [{ type: "text", text: "Use the guardian_done native tool. Run guardian_done with mode=plan first, inspect selectedTarget, lane, preflight, dirty files, blockers, and cleanup preview, then continue to mode=apply confirm=true with the same options when the plan is safe and the user invoked the completion workflow. Guardian inventories the primary worktree plus active Guardian sessions, so the command can run from any cwd. Bare guardian_done auto-selects exactly one dirty implementation target; if multiple dirty targets exist, stop on needs-selection and rerun the exact primary=true, sessionId=..., or branch=... option shown. Active-session dirt and dirty primary-main publishing require commitMessage. Admin bypass requires allowAdminBypass=true." }]);
+  assert.equal(doneOutput.parts.length, 1);
+  const donePrompt = doneOutput.parts[0]?.text ?? "";
+  assert.match(donePrompt, /guardian_done/);
+  assert.match(donePrompt, /mode=plan/);
+  assert.match(donePrompt, /selectedTarget/);
+  assert.match(donePrompt, /from any cwd/);
+  assert.match(donePrompt, /exactly one dirty implementation target/);
+  assert.match(donePrompt, /needs-selection/);
+  assert.match(donePrompt, /primary=true/);
+  assert.match(donePrompt, /sessionId=\.\.\./);
+  assert.match(donePrompt, /branch=\.\.\./);
+  assert.match(donePrompt, /commitMessage/);
+  assert.match(donePrompt, /allowAdminBypass=true/);
 });

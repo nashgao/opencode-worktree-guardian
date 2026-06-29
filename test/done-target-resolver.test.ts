@@ -25,6 +25,21 @@ test("guardian_done target resolver honors explicit session and branch from prim
   assert.equal(byBranch.sessionId, "ses_resolve_explicit");
 });
 
+test("guardian_done target resolver blocks missing explicit sessionId from primary cwd", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_resolve_real", taskName: "resolve real", createWorktree: true, config: DEFAULT_CONFIG });
+  await fs.writeFile(path.join(started.session.worktree_path, "session-dirty.txt"), "session\n", "utf8");
+  const inventory = await buildDoneWorkInventory({ repoRoot: repo, cwd: repo, config: DEFAULT_CONFIG });
+
+  const missing = resolveDoneTarget({ input: { sessionId: "ses_missing" }, inventory });
+
+  assert.equal(missing.kind, "blocked");
+  assert.equal(missing.lane, "session-not-found");
+  assert.equal(missing.sessionId, "ses_missing");
+  assert.ok(missing.suggestedCommands?.includes(`guardian_done branch=${started.session.branch}`));
+});
+
 test("guardian_done target resolver auto-selects one dirty target and blocks ambiguous dirt", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
