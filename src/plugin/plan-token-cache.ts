@@ -28,6 +28,7 @@ function planCacheKey(name: GuardianToolName, toolArgs: PlanCacheToolArgs) {
     allowTracked: toolArgs.allowTracked === true,
     allowRecursive: toolArgs.allowRecursive === true,
     allowDirtyNestedGit: toolArgs.allowDirtyNestedGit === true,
+    primary: toolArgs.primary === true,
     commitMessage: typeof toolArgs.commitMessage === "string" ? toolArgs.commitMessage : "",
     finishMode: typeof toolArgs.finishMode === "string" ? toolArgs.finishMode : "",
     deleteBranch: toolArgs.deleteBranch === true,

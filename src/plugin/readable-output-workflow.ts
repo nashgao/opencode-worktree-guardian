@@ -89,6 +89,16 @@ function formatCleanupPlanEntry(entry: unknown): string {
   return `  - kind=${kind} targetKind=${targetKind} branch=${branch} path=${path}${head}${reason ? ` reason=${reason}` : ""}`;
 }
 
+function formatDirtyTarget(entry: unknown): string {
+  const target = recordValue(entry);
+  const targetKind = textValue(target.targetKind);
+  const session = textValue(target.sessionId, "");
+  const branch = textValue(target.branch);
+  const worktree = textValue(target.worktreePath);
+  const dirtyCount = arrayValue(target.dirtyFiles).length;
+  return `  - target=${targetKind}${session ? ` session=${session}` : ""} branch=${branch} path=${worktree} dirty=${dirtyCount}`;
+}
+
 function formatGuardianDoneAllOutput(result: Record<string, unknown>) {
   const summary = recordValue(result.summary);
   const sessions = arrayValue(result.sessions);
@@ -160,11 +170,16 @@ export function formatGuardianDoneOutput(rawResult: unknown) {
   }
   if (result.status === "needs-selection" || result.lane === "select-session") {
     const sessions = arrayValue(result.availableSessions);
+    const candidates = arrayValue(result.candidates);
     const lines = [
       "[WARN] guardian_done needs a session selection",
       `[INFO] ${textValue(result.reason, "no Guardian session matched the current location")}`,
       `[INFO] active feature sessions: ${sessions.length}`,
     ];
+    if (candidates.length > 0) {
+      lines.push(`[INFO] dirty target candidates: ${candidates.length}`);
+      for (const entry of candidates.slice(0, 8)) lines.push(formatDirtyTarget(entry));
+    }
     for (const entry of sessions.slice(0, 8)) {
       const session = recordValue(entry);
       lines.push(`  - branch=${textValue(session.branch)} session=${textValue(session.session_id)} head=${shortCommit(session.head)} path=${textValue(session.worktree_path)}`);
@@ -181,6 +196,7 @@ export function formatGuardianDoneOutput(rawResult: unknown) {
   const cleanup = recordValue(result.cleanup);
   const pr = recordValue(result.pr);
   const dirtySnapshot = recordValue(result.dirtySnapshot);
+  const selectedTarget = recordValue(result.selectedTarget);
   const dirtyPaths = arrayValue(dirtySnapshot.paths ?? preflight.dirtyFiles ?? result.dirtyFiles);
   const branch = preflight.currentBranch ?? result.branch;
   const baseBranch = preflight.baseBranch ?? result.baseBranch;
@@ -192,6 +208,9 @@ export function formatGuardianDoneOutput(rawResult: unknown) {
   const reason = textValue(result.reason, "");
   if (result.ok === false || reason) lines.push(`[FAIL] ${reason || "guardian_done blocked"}`);
   if (typeof result.nextAction === "string") lines.push(`[INFO] nextAction: ${result.nextAction}`);
+  if (Object.keys(selectedTarget).length > 0) {
+    lines.push(`[INFO] selectedTarget: ${textValue(selectedTarget.targetKind)} session=${textValue(selectedTarget.sessionId)} branch=${textValue(selectedTarget.branch)} path=${textValue(selectedTarget.worktreePath)} dirty=${arrayValue(selectedTarget.dirtyFiles).length}`);
+  }
   if (typeof result.worktreePath === "string") lines.push(`[INFO] worktree: ${result.worktreePath}`);
   if (typeof result.head === "string") lines.push(`[INFO] head: ${shortCommit(result.head)}`);
   if (Object.keys(pr).length > 0) lines.push(`[INFO] pr: #${textValue(pr.number)} ${textValue(pr.url)} created=${String(result.prCreated === true)} adminBypass=${String(result.adminBypass === true)}`);

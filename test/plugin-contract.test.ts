@@ -84,6 +84,7 @@ test("guardian native tools expose OpenCode tool definitions", async () => {
   assert.equal(typeof hooks.tool.guardian_hygiene.args.allowCategories.safeParse, "function");
   assert.equal(typeof hooks.tool.guardian_hygiene.args.confirmDelete.safeParse, "function");
   assert.equal(typeof hooks.tool.guardian_done.args.allowAdminBypass.safeParse, "function");
+  assert.equal(typeof hooks.tool.guardian_done.args.primary.safeParse, "function");
 });
 
 test("README documents local shim and readiness command names", async () => {

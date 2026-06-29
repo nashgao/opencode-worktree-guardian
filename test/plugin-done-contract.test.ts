@@ -103,6 +103,20 @@ test("guardian_done plugin confirm reuses planned-partial tokens", () => {
   assert.equal(applyArgs.confirmToken, "partial-token");
 });
 
+test("guardian_done plugin cache keys include primary target", () => {
+  const cache: PlanTokenCache = new Map();
+  const primaryPlanArgs: PlanCacheToolArgs = { repoRoot: "/repo", cwd: "/repo", mode: "plan", primary: true, commitMessage: "feat: primary target" };
+  const bareApplyArgs: PlanCacheToolArgs = { repoRoot: "/repo", cwd: "/repo", mode: "apply", confirm: true, confirmToken: "", commitMessage: "feat: primary target" };
+  const primaryApplyArgs: PlanCacheToolArgs = { ...bareApplyArgs, primary: true };
+
+  rememberPlanConfirmToken("guardian_done", primaryPlanArgs, { ok: true, status: "planned", confirmToken: "primary-token" }, cache);
+  maybeInjectPlanConfirmToken("guardian_done", bareApplyArgs, cache);
+  maybeInjectPlanConfirmToken("guardian_done", primaryApplyArgs, cache);
+
+  assert.equal(bareApplyArgs.confirmToken, "");
+  assert.equal(primaryApplyArgs.confirmToken, "primary-token");
+});
+
 test("guardian_done readable done-all output includes cleanup plan details", () => {
   const output = formatGuardianOutput("guardian_done", {
     ok: true,
@@ -125,6 +139,43 @@ test("guardian_done readable done-all output includes cleanup plan details", () 
   assert.match(output, /branch=guardian\/session-ses-old/);
   assert.match(output, /cleanup blockers:/);
   assert.match(output, /branch=guardian\/session-ses-blocked/);
+});
+
+test("guardian_done readable output shows selected target and dirty target choices", () => {
+  const selected = formatGuardianOutput("guardian_done", {
+    ok: true,
+    status: "planned",
+    lane: "session-finish",
+    branch: "guardian/session-ses-selected",
+    worktreePath: "/repo/.worktrees/repo/selected",
+    dirtyFiles: ["feature.txt"],
+    selectedTarget: {
+      targetKind: "session",
+      sessionId: "ses_selected",
+      branch: "guardian/session-ses-selected",
+      worktreePath: "/repo/.worktrees/repo/selected",
+      dirtyFiles: ["feature.txt"],
+    },
+  });
+  const ambiguous = formatGuardianOutput("guardian_done", {
+    ok: false,
+    status: "needs-selection",
+    lane: "select-target",
+    reason: "multiple dirty implementation targets require an explicit guardian_done target",
+    candidates: [
+      { targetKind: "primary", branch: "main", worktreePath: "/repo", dirtyFiles: ["primary.txt"] },
+      { targetKind: "session", sessionId: "ses_dirty", branch: "guardian/session-ses-dirty", worktreePath: "/repo/.worktrees/repo/dirty", dirtyFiles: ["session.txt"] },
+    ],
+    suggestedCommands: ["guardian_done primary=true commitMessage=...", "guardian_done branch=guardian/session-ses-dirty commitMessage=..."],
+  });
+
+  assert.match(selected, /selectedTarget: session/);
+  assert.match(selected, /session=ses_selected/);
+  assert.match(selected, /dirty=1/);
+  assert.match(ambiguous, /dirty target candidates: 2/);
+  assert.match(ambiguous, /target=primary/);
+  assert.match(ambiguous, /target=session/);
+  assert.match(ambiguous, /guardian_done primary=true commitMessage=\.\.\./);
 });
 
 test("guardian_done tool execute treats empty optional strings as absent", async () => {

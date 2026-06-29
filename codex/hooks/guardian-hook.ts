@@ -112,6 +112,7 @@ function planCacheKey(name: string, toolArgs: Record<string, unknown>): string {
     sessionId: typeof toolArgs["sessionId"] === "string" ? toolArgs["sessionId"] : "", repoRoot: typeof toolArgs["repoRoot"] === "string" ? toolArgs["repoRoot"] : "", cwd: typeof toolArgs["cwd"] === "string" ? toolArgs["cwd"] : "",
     commitMessage: typeof toolArgs["commitMessage"] === "string" ? toolArgs["commitMessage"] : "", finishMode: typeof toolArgs["finishMode"] === "string" ? toolArgs["finishMode"] : "", action: typeof toolArgs["action"] === "string" ? toolArgs["action"] : "",
     allowTracked: toolArgs["allowTracked"] === true, allowRecursive: toolArgs["allowRecursive"] === true, allowDirtyNestedGit: toolArgs["allowDirtyNestedGit"] === true,
+    primary: toolArgs["primary"] === true,
     deleteBranch: toolArgs["deleteBranch"] === true, abandonUnmerged: toolArgs["abandonUnmerged"] === true, allowIgnoredFiles: toolArgs["allowIgnoredFiles"] === true,
   });
 }

@@ -3,7 +3,8 @@ import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
-import { createRepo } from "./helpers.ts";
+import { createRepo, createRepoWithOrigin } from "./helpers.ts";
+import { getGuardianPaths } from "../src/state.ts";
 
 const projectRoot = path.resolve(new URL("..", import.meta.url).pathname);
 const codexCliPath = path.join(projectRoot, "codex", "hooks", "guardian-hook.ts");
@@ -125,6 +126,20 @@ test("Codex tool command applies a cached hygiene plan without exposing confirm 
 
   assert.match(apply.stdout, /\[GOOD\] guardian_hygiene cleaned/);
   assert.equal(await pathExists(cacheFile), false);
+});
+
+test("Codex guardian_done cache keys include primary target", async () => {
+  const { base, repo } = await createRepoWithOrigin();
+  test.after(() => fs.rm(base, { recursive: true, force: true }));
+  await fs.writeFile(path.join(repo, "primary-cache.txt"), "primary\n");
+
+  await runCodexCli(["tool", "guardian_done", JSON.stringify({ repoRoot: repo, cwd: repo, mode: "plan", primary: true, commitMessage: "feat: primary cache" })]);
+
+  const cachePath = path.join((await getGuardianPaths(repo)).dir, "codex-plan-cache.json");
+  const cache = JSON.parse(await fs.readFile(cachePath, "utf8")) as { readonly entries?: Record<string, string> };
+  const keys = Object.keys(cache.entries ?? {});
+  assert.equal(keys.length, 1);
+  assert.equal(JSON.parse(keys[0]).primary, true);
 });
 
 test("Codex plugin payload is packaged and points at Guardian hooks", async () => {
