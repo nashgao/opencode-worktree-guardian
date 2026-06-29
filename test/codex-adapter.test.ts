@@ -3,7 +3,9 @@ import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
-import { createRepo, createRepoWithOrigin } from "./helpers.ts";
+import { createRepo, createRepoWithOrigin, git, installFakeGh } from "./helpers.ts";
+import { DEFAULT_CONFIG } from "../src/config.ts";
+import { guardianStart } from "../src/tools.ts";
 import { getGuardianPaths } from "../src/state.ts";
 
 const projectRoot = path.resolve(new URL("..", import.meta.url).pathname);
@@ -16,6 +18,10 @@ type CodexCliOptions = {
 
 async function pathExists(candidate: string): Promise<boolean> {
   return fs.access(candidate).then(() => true, () => false);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 async function runCodexCli(args: readonly string[], input = "", options: CodexCliOptions = {}) {
@@ -99,8 +105,8 @@ test("Codex tool command returns readable guardian status output", async () => {
 
   const { stdout } = await runCodexCli(["tool", "guardian_status", JSON.stringify({ repoRoot: repo, cwd: repo })]);
 
-  assert.match(stdout, /^\[GOOD\] guardian_status completed/m);
-  assert.match(stdout, /\[INFO\] sessions: \d+ \| worktrees: \d+ \| orphaned: \d+ \| dirty: \d+/);
+  assert.match(stdout, /^\[GOOD\] guardian_status snapshot/m);
+  assert.match(stdout, /\[INFO\] sessions: \d+ \| worktrees: \d+ \| orphaned: \d+ \| poisoned: \d+ \| dirty: \d+/);
   assert.match(stdout, new RegExp(repo.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 });
 
@@ -140,6 +146,53 @@ test("Codex guardian_done cache keys include primary target", async () => {
   const keys = Object.keys(cache.entries ?? {});
   assert.equal(keys.length, 1);
   assert.equal(JSON.parse(keys[0]).primary, true);
+});
+
+test("Codex guardian_done lands one dirty session from the primary cwd", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_codex_done_anywhere", taskName: "codex done anywhere", createWorktree: true, config: DEFAULT_CONFIG });
+  const worktree = started.session.worktree_path;
+  const branch = started.session.branch;
+  await fs.writeFile(path.join(worktree, "codex-session.txt"), "codex session\n");
+
+  const planArgs = { repoRoot: repo, cwd: repo, mode: "plan", commitMessage: "feat: codex session done" };
+  const plan = await runCodexCli(["tool", "guardian_done", JSON.stringify(planArgs)]);
+
+  assert.match(plan.stdout, /\[WARN\] guardian_done planned/);
+  assert.match(plan.stdout, /lane: session-finish/);
+  assert.match(plan.stdout, /selectedTarget: session session=ses_codex_done_anywhere/);
+  assert.match(plan.stdout, /dirty files:\n  - codex-session\.txt/);
+  assert.match(plan.stdout, /commitMessage: feat: codex session done/);
+
+  await installFakeGh(t, { repo, branch, dynamicHead: true });
+  const apply = await runCodexCli(["tool", "guardian_done", JSON.stringify({ ...planArgs, mode: "apply", confirm: true, timestamp: "20260629T010101" })]);
+
+  assert.match(apply.stdout, /\[GOOD\] guardian_done landed-and-cleaned/);
+  assert.match(apply.stdout, /selectedTarget: session session=ses_codex_done_anywhere/);
+  assert.match(apply.stdout, /commitMessage: feat: codex session done/);
+  assert.match(apply.stdout, /cleanup: deleted worktreeRemoved=true branchDeleted=true/);
+  assert.equal(await pathExists(worktree), false);
+  await assert.rejects(() => git(repo, ["rev-parse", "--verify", branch]));
+  await git(repo, ["cat-file", "-e", "origin/main:codex-session.txt"]);
+});
+
+test("Codex guardian_done reports needs-selection for ambiguous dirty targets", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_codex_done_ambiguous", taskName: "codex done ambiguous", createWorktree: true, config: DEFAULT_CONFIG });
+  await fs.writeFile(path.join(repo, "codex-primary.txt"), "primary\n");
+  await fs.writeFile(path.join(started.session.worktree_path, "codex-session.txt"), "session\n");
+
+  const plan = await runCodexCli(["tool", "guardian_done", JSON.stringify({ repoRoot: repo, cwd: repo, mode: "plan", commitMessage: "feat: ambiguous codex done" })]);
+
+  assert.match(plan.stdout, /\[WARN\] guardian_done needs a session selection/);
+  assert.match(plan.stdout, /multiple dirty implementation targets/);
+  assert.match(plan.stdout, /dirty target candidates: 2/);
+  assert.match(plan.stdout, /target=primary/);
+  assert.match(plan.stdout, /target=session session=ses_codex_done_ambiguous/);
+  assert.match(plan.stdout, /guardian_done primary=true commitMessage=\.\.\./);
+  assert.match(plan.stdout, new RegExp(`guardian_done branch=${escapeRegExp(started.session.branch)} commitMessage=\\.\\.\\.`));
 });
 
 test("Codex plugin payload is packaged and points at Guardian hooks", async () => {

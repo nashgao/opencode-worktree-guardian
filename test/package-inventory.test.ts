@@ -34,5 +34,15 @@ test("public docs and package inventory stay aligned with guardian command surfa
     assert.equal(readme.includes(`/${slashName}`), true, `README must document slash command /${slashName}`);
   }
 
+  const doneCommand = await fs.readFile(path.join(projectRoot, "commands", "done.md"), "utf8");
+  const doneSkill = await fs.readFile(path.join(projectRoot, "codex", "skills", "guardian-done", "SKILL.md"), "utf8");
+  for (const surface of [readme, doneCommand, doneSkill]) {
+    assert.match(surface, /one dirty implementation target|exactly one dirty implementation target/);
+    assert.match(surface, /needs-selection/);
+    assert.match(surface, /primary=true/);
+    assert.match(surface, /sessionId=\.\.\./);
+    assert.match(surface, /branch=\.\.\./);
+  }
+
   assert.deepEqual(await findLegacyHygieneReferences(), []);
 });

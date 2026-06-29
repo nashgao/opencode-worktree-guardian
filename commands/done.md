@@ -1,9 +1,11 @@
 ---
 description: Plan or apply the safest Guardian implementation-done path
-argument-hint: [mode=plan|apply] [all=true] [commitMessage=...] [confirm=true]
+argument-hint: [mode=plan|apply] [primary=true] [sessionId=...] [branch=...] [all=true] [commitMessage=...] [confirm=true]
 ---
 
 Use the `guardian_done` native tool for the implementation-done workflow. Run `mode=plan` first and inspect the selected lane, preflight facts, dirty files, and blockers. Do not stop at the plan when the user invoked this completion workflow: if the plan is safe, continue with `mode=apply`, `confirm: true`, and the same options. The plugin reuses a fresh matching internal plan token, so the user should not have to copy a token in normal command use.
+
+`guardian_done` is repo-inventory-first, not cwd-dependent. Bare `guardian_done` auto-selects only when exactly one dirty implementation target exists across the protected primary/base branch and active Guardian sessions. Explicit `primary=true`, `sessionId=...`, or `branch=...` can be used from any cwd and wins over unrelated dirt in the caller cwd. If multiple dirty implementation targets exist, stop on `needs-selection` and rerun the exact `guardian_done primary=true`, `guardian_done sessionId=...`, or `guardian_done branch=...` command shown in the plan.
 
 If the lane is `done-all`, let `guardian_done` handle the default repo-wide implementation-done workflow. The plan enumerates every active Guardian feature session and reports finishable, dirty, or protected sessions; apply lands or already-landed-cleans each clean finishable session, skips dirty/protected sessions with exact next actions, fast-forwards the local base worktree from its tracked upstream when that upstream remote is trusted, then cleans safe redundant merged worktree/branch candidates while reporting dirty or protected leftovers. Run `mode=plan` first, inspect the readable summary, finishable sessions, skipped sessions, and confirmation evidence, then continue with `mode=apply` and `confirm: true` when the plan is safe. `all=true` remains accepted for explicit batch selection, but is no longer required for the normal clean-primary finish path.
 

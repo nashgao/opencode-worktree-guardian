@@ -1,7 +1,6 @@
 /** @jsxImportSource @opentui/solid */
 import { createResource, For, Show } from "solid-js";
 import type { RGBA } from "@opentui/core";
-import type { TuiPluginApi } from "@opencode-ai/plugin/tui";
 import { guardianStatus } from "../recover.ts";
 import { buildHudModel, type HudModel, type HudTone, type HudWorktree } from "./model.ts";
 
@@ -15,6 +14,31 @@ export type HudColors = {
   readonly bad: HudColor;
   readonly accent: HudColor;
   readonly border: HudColor;
+};
+
+export type GuardianHudApi = {
+  readonly state: {
+    readonly path: {
+      readonly directory: string;
+    };
+  };
+  readonly theme: {
+    readonly current: {
+      readonly text: HudColor;
+      readonly textMuted: HudColor;
+      readonly success: HudColor;
+      readonly warning: HudColor;
+      readonly error: HudColor;
+      readonly accent: HudColor;
+      readonly border: HudColor;
+    };
+  };
+  readonly ui: {
+    readonly dialog: {
+      readonly setSize: (size: "medium" | "large" | "xlarge") => void;
+      readonly replace: (render: () => unknown, onClose?: () => void) => void;
+    };
+  };
 };
 
 function toneColor(tone: HudTone, colors: HudColors): HudColor {
@@ -80,7 +104,7 @@ export function HudView(props: { readonly model: HudModel; readonly colors: HudC
   );
 }
 
-function themeColors(api: TuiPluginApi): HudColors {
+function themeColors(api: GuardianHudApi): HudColors {
   const theme = api.theme.current;
   return {
     text: theme.text,
@@ -96,7 +120,7 @@ function themeColors(api: TuiPluginApi): HudColors {
 // OpenCode-wired HUD: pulls live Guardian state for the current directory and
 // renders HudView. guardianStatus() reads git + state from disk with a cwd, so
 // it works directly in the TUI process.
-export function Hud(props: { readonly api: TuiPluginApi }) {
+export function Hud(props: { readonly api: GuardianHudApi }) {
   const colors = themeColors(props.api);
   const directory = props.api.state.path.directory;
   const [model] = createResource(() => directory, async (cwd) => buildHudModel(await guardianStatus({ cwd })));
@@ -114,7 +138,7 @@ export function Hud(props: { readonly api: TuiPluginApi }) {
   );
 }
 
-export function openHud(api: TuiPluginApi): void {
+export function openHud(api: GuardianHudApi): void {
   api.ui.dialog.setSize("large");
   api.ui.dialog.replace(() => <Hud api={api} />);
 }

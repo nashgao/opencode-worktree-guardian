@@ -1,12 +1,39 @@
-import type { TuiPluginApi } from "@opencode-ai/plugin/tui";
 import { openHud } from "./hud/Hud.tsx";
+import type { GuardianHudApi } from "./hud/Hud.tsx";
+
+type GuardianTuiCommand = {
+  readonly namespace: string;
+  readonly name: string;
+  readonly title: string;
+  readonly desc: string;
+  readonly category: string;
+  readonly slashName: string;
+  readonly run: () => void | Promise<void>;
+};
+
+export type GuardianTuiApi = GuardianHudApi & {
+  readonly keymap: {
+    readonly registerLayer: (input: { readonly commands: readonly GuardianTuiCommand[]; readonly bindings: readonly unknown[] }) => unknown;
+  };
+  readonly route: {
+    readonly current: { readonly name: string; readonly params?: Record<string, unknown> };
+  };
+  readonly client: {
+    readonly session: {
+      readonly promptAsync: (input: { readonly sessionID: string; readonly directory: string; readonly parts: readonly { readonly type: "text"; readonly text: string }[] }) => Promise<void>;
+    };
+  };
+  readonly ui: GuardianHudApi["ui"] & {
+    readonly toast: (input: { readonly variant?: "info" | "success" | "warning" | "error"; readonly title?: string; readonly message: string }) => void;
+  };
+};
 
 const COMMANDS = [
   {
     name: "guardian-done",
     title: "Guardian: Done",
     description: "Plan or apply the safest implementation-done path for the current repository state.",
-    prompt: "Use the guardian_done native tool. Run mode=plan first, inspect the selected lane, preflight, dirty files, and blockers, then continue to mode=apply confirm=true with the same options when the plan is safe and the user invoked the completion workflow. From a clean primary branch, bare guardian_done plans the repo-wide done-all lane; apply lands finishable sessions, syncs local base from its tracked upstream when that upstream remote is trusted, and cleans safe redundant merged worktree/local-branch candidates plus lease-guarded remote Guardian refs while reporting dirty or protected leftovers. For an active session, include commitMessage when the session is dirty so Guardian can commit before creating or reusing the PR, merging it without GitHub CLI branch deletion, proving remote-base reachability, removing the stale worktree/local branch, syncing local base, and cleaning safe redundant cleanup candidates and reporting dirty or protected leftovers. If it selects dirty primary-main publishing, require commitMessage and confirm=true; after publish, inspect the returned cleanupSweep and any remaining blockers. Admin bypass requires allowAdminBypass=true. Never force-push, mutate stashes, delete unrelated remote branches, or run raw cleanup commands.",
+    prompt: "Use the guardian_done native tool. Run mode=plan first, inspect selectedTarget, lane, preflight, dirty files, blockers, and cleanup preview, then continue to mode=apply confirm=true with the same options when the plan is safe and the user invoked the completion workflow. Guardian inventories the primary worktree plus active Guardian sessions, so the command can run from any cwd. Bare guardian_done auto-selects exactly one dirty implementation target; if multiple dirty targets exist, stop on needs-selection and rerun the exact primary=true, sessionId=..., or branch=... option shown. Use explicit primary=true, sessionId=..., or branch=... when the target is known. Active-session dirt and dirty primary-main publishing require commitMessage. Clean active sessions use done-all; apply lands finishable sessions, syncs local base from its tracked upstream when that upstream remote is trusted, and cleans safe redundant candidates while reporting remaining blockers. After session land or primary publish, inspect cleanupSweep. Admin bypass requires allowAdminBypass=true. Never force-push, mutate stashes, delete unrelated remote branches, or run raw cleanup commands.",
   },
   {
     name: "guardian-status",
@@ -88,7 +115,7 @@ const COMMANDS = [
   },
 ] as const;
 
-async function submitPrompt(api: TuiPluginApi, prompt: string) {
+async function submitPrompt(api: GuardianTuiApi, prompt: string) {
   const route = api.route.current;
   let sessionID: string | undefined;
   if (route.name === "session" && route.params && typeof route.params.sessionID === "string") {
@@ -106,7 +133,7 @@ async function submitPrompt(api: TuiPluginApi, prompt: string) {
   });
 }
 
-export async function tui(api: TuiPluginApi) {
+export async function tui(api: GuardianTuiApi) {
   const promptCommands = COMMANDS.map((command) => ({
     namespace: "palette",
     name: command.name,

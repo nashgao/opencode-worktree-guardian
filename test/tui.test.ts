@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import plugin, { id, tui } from "../src/tui.ts";
-import type { TuiPluginApi } from "@opencode-ai/plugin/tui";
+import plugin, { id, tui, type GuardianTuiApi } from "../src/tui.ts";
 
 const expectedSlashNames = [
   "guardian-delete-paths",
@@ -28,19 +27,19 @@ type RegisteredCommand = {
   desc: string;
   category: string;
   slashName: string;
-  run: () => Promise<void>;
+  run: () => void | Promise<void>;
 };
 
 type RegisteredLayer = {
-  commands: RegisteredCommand[];
-  bindings: unknown[];
+  commands: readonly RegisteredCommand[];
+  bindings: readonly unknown[];
 };
 
 function createApi(routeName = "session") {
   const prompts: unknown[] = [];
   const toasts: unknown[] = [];
   let layer: RegisteredLayer | undefined;
-  const api = {
+  const api: GuardianTuiApi = {
     keymap: {
       registerLayer(input: RegisteredLayer) {
         layer = input;
@@ -64,9 +63,24 @@ function createApi(routeName = "session") {
       toast(input: unknown) {
         toasts.push(input);
       },
+      dialog: {
+        setSize() {},
+        replace() {},
+      },
+    },
+    theme: {
+      current: {
+        text: "text",
+        textMuted: "muted",
+        success: "success",
+        warning: "warning",
+        error: "error",
+        accent: "accent",
+        border: "border",
+      },
     },
   };
-  return { api: api as unknown as TuiPluginApi, prompts, toasts, get layer() { return layer; } };
+  return { api, prompts, toasts, get layer() { return layer; } };
 }
 
 test("tui plugin exports OpenCode TUI module shape", () => {
@@ -131,6 +145,13 @@ test("tui done prompt preserves primary-main token gates and separate cleanup", 
   const prompt = runtime.prompts[0] as { parts: Array<{ text: string }> };
   assert.match(prompt.parts[0].text, /guardian_done/);
   assert.match(prompt.parts[0].text, /mode=plan/);
+  assert.match(prompt.parts[0].text, /selectedTarget/);
+  assert.match(prompt.parts[0].text, /from any cwd/);
+  assert.match(prompt.parts[0].text, /exactly one dirty implementation target/);
+  assert.match(prompt.parts[0].text, /needs-selection/);
+  assert.match(prompt.parts[0].text, /primary=true/);
+  assert.match(prompt.parts[0].text, /sessionId=\.\.\./);
+  assert.match(prompt.parts[0].text, /branch=\.\.\./);
   assert.match(prompt.parts[0].text, /continue to mode=apply confirm=true/);
   assert.match(prompt.parts[0].text, /commitMessage/);
   assert.doesNotMatch(prompt.parts[0].text, /confirmToken/);

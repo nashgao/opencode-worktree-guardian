@@ -6,6 +6,7 @@ import { z } from "zod";
 import { loadConfig } from "../../src/config.ts";
 import { classifyGuardCommand } from "../../src/guards.ts";
 import { getCurrentBranch } from "../../src/git.ts";
+import { formatGuardianOutput, READABLE_GUARDIAN_TOOLS } from "../../src/plugin/readable-output.ts";
 import { getGuardianPaths } from "../../src/state.ts";
 import { collectKnownWorktreePaths, recordLastSafeState, runGuardianTool } from "../../src/tools.ts";
 import type { GuardOptions } from "../../src/types.ts";
@@ -206,6 +207,11 @@ function confirmationHint(name: string, result: Record<string, unknown>): string
 }
 
 function formatToolOutput(name: string, result: Record<string, unknown>): string {
+  if (READABLE_GUARDIAN_TOOLS.has(name)) {
+    const formatted = formatGuardianOutput(name, result);
+    const hint = confirmationHint(name, result);
+    return `${hint === undefined ? formatted : `${formatted}\n[INFO] ${hint}`}\n`;
+  }
   const status = textField(result, "status", result["ok"] === false ? "blocked" : "completed");
   const lines = [`${result["ok"] === false ? "[FAIL]" : status === "planned" ? "[WARN]" : "[GOOD]"} ${name} ${status}`];
   const repoRoot = textField(result, "repoRoot", "");
