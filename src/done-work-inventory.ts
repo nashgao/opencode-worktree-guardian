@@ -5,7 +5,7 @@ import { isRecordLike } from "./types.ts";
 import type { GuardianConfig, GuardianSession } from "./types.ts";
 import { activeFeatureSessions } from "./done-feature-sessions.ts";
 import { dirtySnapshot, type DirtySnapshot } from "./done-primary-snapshot.ts";
-import { samePath } from "./done-shared.ts";
+import { samePathOnDisk } from "./done-shared.ts";
 
 export type DonePrimaryInventory = {
   readonly branch: string | null;
@@ -98,9 +98,9 @@ function dirtyTargets(inventory: Omit<DoneWorkInventory, "dirtyTargets">): reado
   return targets;
 }
 
-function activeSessionIdForWorktree(state: Awaited<ReturnType<typeof readState>>, currentWorktree: string): string | null {
+async function activeSessionIdForWorktree(state: Awaited<ReturnType<typeof readState>>, currentWorktree: string): Promise<string | null> {
   for (const [sessionId, session] of Object.entries(state.sessions ?? {})) {
-    if (isRecordLike(session) && isActiveSession(session) && typeof session.worktree_path === "string" && samePath(session.worktree_path, currentWorktree)) return sessionId;
+    if (isRecordLike(session) && isActiveSession(session) && typeof session.worktree_path === "string" && await samePathOnDisk(session.worktree_path, currentWorktree)) return sessionId;
   }
   return null;
 }
@@ -117,6 +117,7 @@ export async function buildDoneWorkInventory(options: BuildDoneWorkInventoryOpti
     if (!isRecordLike(session)) continue;
     const head = await getHeadCommit(featureSession.worktree_path).catch(() => featureSession.head);
     const dirtyFiles = await getDirtyFiles(featureSession.worktree_path).catch(() => [] as string[]);
+    const isCurrentWorktree = await samePathOnDisk(featureSession.worktree_path, currentWorktree);
     sessions.push({
       sessionId: featureSession.session_id,
       session,
@@ -124,7 +125,7 @@ export async function buildDoneWorkInventory(options: BuildDoneWorkInventoryOpti
       worktreePath: featureSession.worktree_path,
       head,
       dirtyFiles,
-      isCurrentWorktree: samePath(featureSession.worktree_path, currentWorktree),
+      isCurrentWorktree,
     });
   }
   sessions.sort((left, right) => left.sessionId.localeCompare(right.sessionId));
@@ -139,7 +140,7 @@ export async function buildDoneWorkInventory(options: BuildDoneWorkInventoryOpti
     state,
     primary: { branch: await getCurrentBranch(repoRoot), dirtyFiles: snapshot.paths, dirtySnapshot: snapshot },
     sessions,
-    currentSessionId: activeSessionIdForWorktree(state, currentWorktree),
+    currentSessionId: await activeSessionIdForWorktree(state, currentWorktree),
   };
   return { ...withoutTargets, dirtyTargets: dirtyTargets(withoutTargets) };
 }

@@ -1,5 +1,6 @@
+import fs from "node:fs/promises";
 import path from "node:path";
-import { isRecordLike } from "./types.ts";
+import { errorCode, isRecordLike } from "./types.ts";
 
 export function samePath(left: string, right: string): boolean {
   return path.resolve(left) === path.resolve(right);
@@ -8,6 +9,20 @@ export function samePath(left: string, right: string): boolean {
 export function isInside(candidate: string, parent: string): boolean {
   const relative = path.relative(parent, candidate);
   return relative === "" || (Boolean(relative) && !relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+export async function realPathOrResolved(candidate: string): Promise<string> {
+  try {
+    return await fs.realpath(candidate);
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") return path.resolve(candidate);
+    throw error;
+  }
+}
+
+export async function samePathOnDisk(left: string, right: string): Promise<boolean> {
+  const [leftPath, rightPath] = await Promise.all([realPathOrResolved(left), realPathOrResolved(right)]);
+  return samePath(leftPath, rightPath);
 }
 
 export function blocked(reason: string, details: Record<string, unknown> = {}, preflight?: Record<string, unknown>): Record<string, unknown> {

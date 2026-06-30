@@ -36,3 +36,33 @@ test("guardian_done work inventory reports primary and active session dirt witho
   assert.equal(cleanSession.branch, clean.session.branch);
   assert.deepEqual(cleanSession.dirtyFiles, []);
 });
+
+test("guardian_done work inventory resolves symlinked worktree roots before filtering active sessions", { skip: process.platform === "win32" }, async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const aliasBase = path.join(path.dirname(base), `${path.basename(base)}-alias`);
+  await fs.symlink(base, aliasBase, "dir");
+  t.after(() => fs.rm(aliasBase, { recursive: true, force: true }));
+  const aliasRepo = path.join(aliasBase, path.basename(repo));
+  const config = {
+    ...DEFAULT_CONFIG,
+    worktreeRoot: path.join(aliasBase, "worktrees", "$REPO"),
+  };
+  const started = await guardianStart({
+    repoRoot: aliasRepo,
+    cwd: aliasRepo,
+    sessionId: "ses_inventory_alias_dirty",
+    taskName: "inventory alias dirty",
+    createWorktree: true,
+    config,
+  });
+  await fs.writeFile(path.join(started.session.worktree_path, "session-dirty.txt"), "session\n", "utf8");
+
+  const inventory = await buildDoneWorkInventory({ repoRoot: aliasRepo, cwd: aliasRepo, config });
+
+  assert.equal(inventory.sessions.length, 1);
+  assert.equal(inventory.dirtyTargets.length, 1);
+  assert.equal(inventory.dirtyTargets[0]?.targetKind, "session");
+  assert.equal(inventory.dirtyTargets[0]?.sessionId, "ses_inventory_alias_dirty");
+  assert.deepEqual(inventory.dirtyTargets[0]?.dirtyFiles, ["session-dirty.txt"]);
+});
