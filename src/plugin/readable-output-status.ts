@@ -1,3 +1,4 @@
+import { computeGuardianVerdict } from "../verdict.ts";
 import { arrayValue, describeEntry, recordValue, shortCommit, textValue } from "./readable-output-values.ts";
 
 function countLine(result: Record<string, unknown>) {
@@ -17,11 +18,17 @@ function countLine(result: Record<string, unknown>) {
 
 export function formatGuardianStatusOutput(name: string, rawResult: unknown) {
   const result = recordValue(rawResult);
-  const lines = [
-    `${result.ok === false ? "[FAIL]" : "[GOOD]"} ${name} snapshot`,
-    `[INFO] repoRoot: ${textValue(result.repoRoot)}`,
-    `[INFO] ${countLine(result)}`,
-  ];
+  const lines: string[] = [];
+  if (result.ok !== false && name === "guardian_status") {
+    const verdict = computeGuardianVerdict(result);
+    const marker = verdict.tone === "bad" ? "[FAIL]" : verdict.tone === "warn" ? "[WARN]" : "[GOOD]";
+    lines.push(`${marker} ${name}: ${verdict.headline}`);
+    if (verdict.nextAction) lines.push(`[INFO] next: ${verdict.nextAction}`);
+  } else {
+    lines.push(`${result.ok === false ? "[FAIL]" : "[GOOD]"} ${name} snapshot`);
+  }
+  lines.push(`[INFO] repoRoot: ${textValue(result.repoRoot)}`);
+  lines.push(`[INFO] ${countLine(result)}`);
   const reason = textValue(result.reason, "");
   if (result.ok === false || reason) lines.push(`[FAIL] ${reason || "guardian tool reported failure"}`);
   const warningSections = [

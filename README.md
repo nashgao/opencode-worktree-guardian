@@ -175,11 +175,12 @@ The canonical Guardian safety policy is [ADR 0001: Guardian Safety Policy](docs/
 Clean `guardian_status` keeps the readable summary short and the structured fields available in `metadata`:
 
 ```text
-[GOOD] guardian_status snapshot
+[GOOD] guardian_status: 1 active session on guardian/example — clean, no risks detected.
 [INFO] repoRoot: /repo
-[INFO] sessions: 1 | worktrees: 1 | orphaned: 0 | dirty: 0 | stashes: 0 | safetyRefs: 0 | preservedRefs: 0 | recoveryCandidates: 0
-[INFO] sessions: 1
+[INFO] sessions: 1 | worktrees: 1 | orphaned: 0 | poisoned: 0 | dirty: 0 | stashes: 0 | safetyRefs: 0 | preservedRefs: 0 | recoveryCandidates: 0
+[INFO] active sessions: 1
   - session_id=ses_123 status=active branch=guardian/example worktree_path=/repo/.worktrees/example head=abc123def456
+[INFO] terminal sessions: 0
 [INFO] worktrees: 1
   - branch=guardian/example head=abc123def456 path=/repo/.worktrees/example
 [INFO] suggested commands:
