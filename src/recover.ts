@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { expandWorktreeRoot, loadConfig, normalizeConfig } from "./config.ts";
+import { realPathOrResolved } from "./done-shared.ts";
 import { getCommonGitDir, getDirtyFiles, getRepoRoot, listBranches, listRecoveryCandidates, listRefs, listStashes, listWorktrees } from "./git.ts";
 import type { GitBranchEntry, GitRefEntry, GitStashEntry } from "./git.ts";
 import { scanWorkspaceHygiene } from "./hygiene.ts";
@@ -85,6 +86,11 @@ async function pathExists(candidate: string) {
   }
 }
 
+async function canonicalPathSet(paths: readonly string[]): Promise<ReadonlySet<string>> {
+  const canonicalPaths = await Promise.all(paths.map((entry) => realPathOrResolved(entry)));
+  return new Set(canonicalPaths.map((entry) => path.resolve(entry)));
+}
+
 function isInside(candidate: string, parent: string) {
   const relative = path.relative(parent, candidate);
   return relative === "" || Boolean(relative) && !relative.startsWith("..") && !path.isAbsolute(relative);
@@ -104,6 +110,7 @@ async function annotateWorktreeWithoutState(worktree: WorktreeEntry, repoRoot: s
   try {
     metadata = { ...metadata, commonGitDir: await getCommonGitDir(worktreePath) };
   } catch (error) {
+    if (!(error instanceof Error)) throw error;
     metadata = { ...metadata, commonGitDirError: errorMessage(error) };
   }
 
@@ -151,17 +158,24 @@ export async function guardianStatus(input: GuardianToolInput = {}): Promise<Gua
   const paths = await getGuardianPaths(repoRoot);
   const state = await readState(paths, { repoRoot, config });
   const worktrees = await listWorktrees(repoRoot);
-  const worktreePaths = new Set(worktrees.map((entry) => path.resolve(entry.path)));
+  const canonicalRepoRoot = path.resolve(await realPathOrResolved(repoRoot));
+  const worktreeEntries = await Promise.all(worktrees.map(async (entry) => ({
+    entry,
+    canonicalPath: path.resolve(await realPathOrResolved(entry.path)),
+  })));
+  const worktreePaths = new Set(worktreeEntries.map((entry) => entry.canonicalPath));
   const sessions = Object.values(state.sessions ?? {});
   const activeSessions = sessions.filter(isActiveSession);
   const terminalSessions = sessions.filter(isTerminalSession);
-  const sessionWorktreePaths = new Set(activeSessions.map((session) => session.worktree_path).filter((entry): entry is string => typeof entry === "string").map((entry) => path.resolve(entry)));
+  const sessionWorktreePaths = await canonicalPathSet(activeSessions.map((session) => session.worktree_path).filter((entry): entry is string => typeof entry === "string"));
   const sessionBranches = new Set(activeSessions.map((session) => session.branch).filter((entry): entry is string => typeof entry === "string"));
   const orphanedSessions = [];
   const poisonedSessions = [];
 
   for (const session of activeSessions) {
-    if (!session.worktree_path || !worktreePaths.has(path.resolve(session.worktree_path)) || !(await pathExists(session.worktree_path))) {
+    const sessionWorktreePath = typeof session.worktree_path === "string" ? session.worktree_path : "";
+    const canonicalSessionWorktreePath = sessionWorktreePath ? path.resolve(await realPathOrResolved(sessionWorktreePath)) : "";
+    if (!sessionWorktreePath || !worktreePaths.has(canonicalSessionWorktreePath) || !(await pathExists(sessionWorktreePath))) {
       orphanedSessions.push(session);
     }
     const poisonedSession = annotatePoisonedSession(session, repoRoot, config);
@@ -170,9 +184,10 @@ export async function guardianStatus(input: GuardianToolInput = {}): Promise<Gua
 
   const branches = await listBranches(repoRoot);
   const branchesWithoutWorktrees = branches.filter((branch) => !worktrees.some((worktree) => worktree.branch === branch.name));
-  const worktreesWithoutState = await Promise.all(worktrees
-    .filter((worktree) => !sessionWorktreePaths.has(path.resolve(worktree.path)))
-    .map((worktree) => annotateWorktreeWithoutState(worktree, repoRoot, config)));
+  const worktreesWithoutState = await Promise.all(worktreeEntries
+    .filter((worktree) => worktree.canonicalPath !== canonicalRepoRoot)
+    .filter((worktree) => !sessionWorktreePaths.has(worktree.canonicalPath))
+    .map((worktree) => annotateWorktreeWithoutState(worktree.entry, repoRoot, config)));
   const stateBranchesWithoutWorktrees = [...sessionBranches].filter((branch) => !worktrees.some((worktree) => worktree.branch === branch));
 
   return {
