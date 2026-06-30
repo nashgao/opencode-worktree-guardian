@@ -84,6 +84,10 @@ export function HudView(props: { readonly model: HudModel; readonly colors: HudC
   return (
     <box flexDirection="column" padding={1} gap={1} border borderColor={colors().border}>
       <text fg={colors().accent}>{`Guardian HUD · ${shortRepoPath(model().repoRoot)}`}</text>
+      <text fg={toneColor(model().verdict.tone, colors())}>{model().verdict.headline}</text>
+      <Show when={model().verdict.nextAction}>
+        {(next) => <text fg={colors().muted}>{`→ ${next()}`}</text>}
+      </Show>
       <text fg={colors().muted}>{metricsLine(model().metrics)}</text>
       <text fg={colors().text}>{"Worktrees"}</text>
       <For each={model().worktrees}>

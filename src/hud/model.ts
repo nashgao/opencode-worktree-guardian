@@ -1,6 +1,7 @@
 import path from "node:path";
 import type { GitBranchEntry, GitRefEntry, GitStashEntry } from "../git.ts";
 import type { GuardianSession, WorktreeEntry } from "../types.ts";
+import { computeGuardianVerdict, type GuardianVerdict } from "../verdict.ts";
 
 export type HudTone = "good" | "warn" | "bad" | "neutral";
 
@@ -53,6 +54,7 @@ export type HudModel = {
   readonly lifecycle: readonly HudLifecycleBucket[];
   readonly risks: readonly HudRisk[];
   readonly safetyRefTotal: number;
+  readonly verdict: GuardianVerdict;
 };
 
 type AnnotatedWorktree = WorktreeEntry & {
@@ -72,6 +74,8 @@ export type HudStatusInput = {
   readonly activeSessions: readonly GuardianSession[];
   readonly terminalSessions: readonly GuardianSession[];
   readonly orphanedSessions: readonly GuardianSession[];
+  readonly poisonedSessions?: readonly GuardianSession[];
+  readonly stateBranchesWithoutWorktrees?: readonly string[];
   readonly worktreesWithoutState: readonly AnnotatedWorktree[];
   readonly branchesWithoutWorktrees: readonly GitBranchEntry[];
   readonly safetyRefs: readonly GitRefEntry[];
@@ -199,6 +203,9 @@ function buildRisks(input: HudStatusInput): HudRisk[] {
   for (const session of input.orphanedSessions) {
     risks.push({ severity: "fail", label: "orphaned session", detail: `${sessionId(session)} (${session.branch ?? "no branch"})` });
   }
+  for (const session of input.poisonedSessions ?? []) {
+    risks.push({ severity: "fail", label: "poisoned session", detail: `${sessionId(session)} (${session.branch ?? "no branch"})` });
+  }
   for (const worktree of input.worktreesWithoutState) {
     if (samePath(worktree.path, input.repoRoot)) continue;
     if (worktree.severity === "fail") {
@@ -211,9 +218,15 @@ function buildRisks(input: HudStatusInput): HudRisk[] {
   if (input.stashes.length > 0) {
     risks.push({ severity: "warn", label: "stashes", detail: `${input.stashes.length} stashed` });
   }
+  for (const branch of input.stateBranchesWithoutWorktrees ?? []) {
+    risks.push({ severity: "warn", label: "branch without worktree", detail: branch });
+  }
+  const hygieneFindings = input.hygiene?.summary?.findingCount ?? 0;
   const hygieneFail = input.hygiene?.summary?.bySeverity?.fail ?? 0;
   if (hygieneFail > 0) {
     risks.push({ severity: "fail", label: "hygiene failures", detail: `${hygieneFail} fail-severity findings` });
+  } else if (hygieneFindings > 0) {
+    risks.push({ severity: "warn", label: "hygiene findings", detail: `${hygieneFindings} finding${hygieneFindings === 1 ? "" : "s"}` });
   }
   return risks;
 }
@@ -237,5 +250,6 @@ export function buildHudModel(input: HudStatusInput, generatedAt: string = new D
     lifecycle: buildLifecycle(input.sessions),
     risks: buildRisks(input),
     safetyRefTotal: input.safetyRefs.length,
+    verdict: computeGuardianVerdict(input),
   };
 }

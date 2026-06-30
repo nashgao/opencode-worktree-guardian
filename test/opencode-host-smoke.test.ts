@@ -82,7 +82,7 @@ test("host-like guardian_status smoke runs in a disposable repo", async (t) => {
   assert.equal(result.metadata.repoRoot, repo);
   assert.equal(Array.isArray(result.metadata.worktrees), true);
   assert.equal(Array.isArray(result.metadata.safetyRefs), true);
-  assert.match(result.output, /\[GOOD\] guardian_status snapshot/);
+  assert.match(result.output, /^\[GOOD\] guardian_status: No active Guardian sessions/m);
   assert.match(result.output, /worktrees: \d+/);
 });
 

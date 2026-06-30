@@ -67,7 +67,8 @@ test("guardian_status tool execute returns readable output with raw metadata", a
   assert.equal(typeof result.metadata, "object");
   assert.deepEqual(metadataCalls, [{ title: "guardian_status" }]);
   assert.equal(result.metadata.repoRoot, repo);
-  assert.match(result.output, /\[GOOD\] guardian_status snapshot/);
+  assert.match(result.output, /^\[(GOOD|WARN|FAIL)\] guardian_status: /m);
+  assert.doesNotMatch(result.output, /guardian_status snapshot/);
   assert.match(result.output, /\[INFO\] repoRoot:/);
   assert.match(result.output, /sessions: \d+/);
   assert.match(result.output, /active sessions: 1/);
@@ -93,7 +94,8 @@ test("unrelated lifecycle tools ignore project status schema fields", async () =
   assert.equal(result.metadata.schemaVersion, undefined);
   assert.equal(result.metadata.reportPath, undefined);
   assert.equal(await fs.access(`${repo}/.git/opencode-guardian/project-report.html`).then(() => true, () => false), false);
-  assert.match(result.output, /\[GOOD\] guardian_status snapshot/);
+  assert.match(result.output, /^\[GOOD\] guardian_status: No active Guardian sessions/m);
+  assert.doesNotMatch(result.output, /guardian_status snapshot/);
   assert.doesNotMatch(result.output, /Project Intelligence|guardian_project_status|Roadmaps|ULW loops|project-report\.html/);
 });
 

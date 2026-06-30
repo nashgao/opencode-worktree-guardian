@@ -123,3 +123,28 @@ test("lists branches without worktrees with short commits", () => {
   }), FIXED);
   assert.deepEqual(model.branchesWithoutWorktree, [{ name: "tooling/preserve", head: "0123456789ab" }]);
 });
+
+test("empty state yields a clean good verdict", () => {
+  const model = buildHudModel(baseInput(), FIXED);
+  assert.equal(model.verdict.tone, "good");
+  assert.match(model.verdict.headline, /clean, no risks detected/);
+  assert.equal(model.verdict.nextAction, null);
+});
+
+test("poisoned session drives a fail verdict and a matching risk", () => {
+  const model = buildHudModel(baseInput({
+    activeSessions: [{ session_id: "ses_p", status: "active", branch: "main", worktree_path: "/repo" }],
+    poisonedSessions: [{ session_id: "ses_p", status: "active", branch: "main", worktree_path: "/repo" }],
+  }), FIXED);
+  assert.equal(model.verdict.tone, "bad");
+  assert.match(model.verdict.headline, /poisoned session/);
+  assert.ok(model.risks.some((r) => r.label === "poisoned session" && r.detail.includes("ses_p")));
+});
+
+test("state branch without a worktree is a warn verdict and risk", () => {
+  const model = buildHudModel(baseInput({
+    stateBranchesWithoutWorktrees: ["guardian/stranded"],
+  }), FIXED);
+  assert.equal(model.verdict.tone, "warn");
+  assert.ok(model.risks.some((r) => r.label === "branch without worktree" && r.detail === "guardian/stranded"));
+});
