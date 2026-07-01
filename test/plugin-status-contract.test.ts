@@ -57,6 +57,33 @@ test("guardian_status tool execute returns readable output with raw metadata", a
     head_commit: head,
     safety_refs: [],
   });
+  await seedSession(repo, {
+    session_id: "ses_contract_status_deleted",
+    status: "deleted",
+    branch: "guardian/contract-status-deleted",
+    worktree_path: `${repo}/.worktrees/opencode-worktree-guardian/contract-status-deleted`,
+    base_ref: "origin/main",
+    head_commit: head,
+    safety_refs: [],
+  });
+  await seedSession(repo, {
+    session_id: "ses_contract_status_finished",
+    status: "finished",
+    branch: "guardian/contract-status-finished",
+    worktree_path: `${repo}/.worktrees/opencode-worktree-guardian/contract-status-finished`,
+    base_ref: "origin/main",
+    head_commit: head,
+    safety_refs: [],
+  });
+  await seedSession(repo, {
+    session_id: "ses_contract_status_superseded",
+    status: "superseded",
+    branch: "guardian/contract-status-superseded",
+    worktree_path: `${repo}/.worktrees/opencode-worktree-guardian/contract-status-superseded`,
+    base_ref: "origin/main",
+    head_commit: head,
+    safety_refs: [],
+  });
   const hooks = await plugin.server({ directory: repo, worktree: repo });
   const { context, metadataCalls } = createToolContext();
   context.directory = repo;
@@ -67,13 +94,16 @@ test("guardian_status tool execute returns readable output with raw metadata", a
   assert.equal(typeof result.metadata, "object");
   assert.deepEqual(metadataCalls, [{ title: "guardian_status" }]);
   assert.equal(result.metadata.repoRoot, repo);
-  assert.match(result.output, /^\[(GOOD|WARN|FAIL)\] guardian_status: /m);
+  assert.match(result.output, /^\[FAIL\] Guardian Status: Needs attention/m);
   assert.doesNotMatch(result.output, /guardian_status snapshot/);
-  assert.match(result.output, /\[INFO\] repoRoot:/);
-  assert.match(result.output, /sessions: \d+/);
-  assert.match(result.output, /active sessions: 1/);
-  assert.match(result.output, /terminal sessions: 1/);
-  assert.match(result.output, /worktrees: \d+/);
+  assert.match(result.output, /Repo\n  /);
+  assert.match(result.output, /Work Now\n  Active sessions: 1\n  Worktrees: \d+\n  Dirty files: 0\n  Stashes: 0\n  Orphaned sessions: 0\n  Poisoned sessions: 1\n  Recovery candidates: 0/);
+  assert.match(result.output, /Problems\n  Poisoned sessions: 1\n    - ses_contract_status_active/);
+  assert.match(result.output, /History\n  Retained terminal sessions: 4\n  deleted: 1\n  finished: 1\n  preserved: 1\n  superseded: 1\n  Safety refs: 0\n  Preserved refs: 0/);
+  assert.match(result.output, /Active Sessions\n  ses_contract_status_active active guardian\/contract-status-active/);
+  assert.doesNotMatch(result.output, /\[INFO\] terminal sessions:/);
+  assert.doesNotMatch(result.output, /ses_contract_status_terminal/);
+  assert.match(result.output, /Current Worktrees\n  main /);
 });
 
 test("unrelated lifecycle tools ignore project status schema fields", async () => {
@@ -94,7 +124,7 @@ test("unrelated lifecycle tools ignore project status schema fields", async () =
   assert.equal(result.metadata.schemaVersion, undefined);
   assert.equal(result.metadata.reportPath, undefined);
   assert.equal(await fs.access(`${repo}/.git/opencode-guardian/project-report.html`).then(() => true, () => false), false);
-  assert.match(result.output, /^\[GOOD\] guardian_status: No active Guardian sessions/m);
+  assert.match(result.output, /^\[GOOD\] Guardian Status: Clean/m);
   assert.doesNotMatch(result.output, /guardian_status snapshot/);
   assert.doesNotMatch(result.output, /Project Intelligence|guardian_project_status|Roadmaps|ULW loops|project-report\.html/);
 });
@@ -111,8 +141,8 @@ test("guardian_recover tool execute returns readable output with raw metadata", 
   assert.equal(typeof result.metadata, "object");
   assert.equal(result.metadata.repoRoot, repo);
   assert.match(result.output, /\[GOOD\] guardian_recover snapshot/);
-  assert.match(result.output, /recoveryCandidates: \d+/);
-  assert.match(result.output, /suggested commands|sessions:/);
+  assert.match(result.output, /Recovery candidates: 0/);
+  assert.match(result.output, /Suggested Commands/);
 });
 
 test("guardian_report_html tool execute writes report and returns readable output with raw metadata", async () => {

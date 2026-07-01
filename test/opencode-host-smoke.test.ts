@@ -82,8 +82,8 @@ test("host-like guardian_status smoke runs in a disposable repo", async (t) => {
   assert.equal(result.metadata.repoRoot, repo);
   assert.equal(Array.isArray(result.metadata.worktrees), true);
   assert.equal(Array.isArray(result.metadata.safetyRefs), true);
-  assert.match(result.output, /^\[GOOD\] guardian_status: No active Guardian sessions/m);
-  assert.match(result.output, /worktrees: \d+/);
+  assert.match(result.output, /^\[GOOD\] Guardian Status: Clean/m);
+  assert.match(result.output, /Work Now\n  Active sessions: 0\n  Worktrees: \d+/);
 });
 
 test("host-like chat transform preserves OpenCode client method binding", async (t) => {

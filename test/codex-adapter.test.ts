@@ -105,8 +105,9 @@ test("Codex tool command returns readable guardian status output", async () => {
 
   const { stdout } = await runCodexCli(["tool", "guardian_status", JSON.stringify({ repoRoot: repo, cwd: repo })]);
 
-  assert.match(stdout, /^\[GOOD\] guardian_status: No active Guardian sessions/m);
-  assert.match(stdout, /\[INFO\] sessions: \d+ \| worktrees: \d+ \| orphaned: \d+ \| poisoned: \d+ \| dirty: \d+/);
+  assert.match(stdout, /^\[GOOD\] Guardian Status: Clean/m);
+  assert.match(stdout, /Work Now\n  Active sessions: 0\n  Worktrees: \d+\n  Dirty files: 0\n  Stashes: 0\n  Orphaned sessions: 0\n  Poisoned sessions: 0\n  Recovery candidates: 0/);
+  assert.match(stdout, /History\n  Retained terminal sessions: 0\n  Safety refs: 0\n  Preserved refs: 0/);
   assert.match(stdout, new RegExp(repo.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 });
 
