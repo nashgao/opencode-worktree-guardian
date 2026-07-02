@@ -92,15 +92,16 @@ test("fail outranks warn and extra signals are summarised with a +N suffix", () 
   assert.match(verdict.headline, /\(\+2 more\)/);
 });
 
-test("hygiene fail-severity findings drive a fail verdict", () => {
+test("hygiene findings that need manual review produce a warn verdict", () => {
   const verdict = computeGuardianVerdict({
     ok: true,
     repoRoot: "/repo",
     activeSessions: [],
     hygiene: { summary: { findingCount: 3, bySeverity: { fail: 1, warn: 2 } } },
   });
-  assert.equal(verdict.tone, "bad");
-  assert.match(verdict.headline, /fail-severity hygiene finding/);
+  assert.equal(verdict.tone, "warn");
+  assert.match(verdict.headline, /3 workspace hygiene findings \(1 manual-review item\)/);
+  assert.match(verdict.nextAction ?? "", /guardian_hygiene/);
 });
 
 test("ok:false short-circuits to a fail verdict carrying the reason", () => {

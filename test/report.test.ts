@@ -128,10 +128,12 @@ test("guardian report HTML renders workspace hygiene summary and top findings", 
 
   assert.match(html, /Workspace Hygiene/);
   assert.match(html, /Candidate Paths/);
+  assert.match(html, /Manual Review/);
+  assert.doesNotMatch(html, /<span>Fail<\/span>/);
   assert.match(html, /Known Cleanable/);
   assert.match(html, /Nested Git/);
   assert.match(html, /Suspicious/);
-  assert.match(html, /Top Findings By Severity And Category/);
+  assert.match(html, /Top Findings By Review Level And Category/);
   assert.match(html, /research-clone/);
   assert.match(html, /nested Git repository has uncommitted changes/);
 });

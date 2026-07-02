@@ -63,7 +63,7 @@ function hygieneProblemLines(result: Record<string, unknown>): string[] {
   const warn = numberValue(recordValue(summary.bySeverity).warn);
   const total = numberValue(summary.findingCount);
   if (total === 0) return [];
-  const severity = [fail > 0 ? `${fail} fail` : "", warn > 0 ? `${warn} warn` : ""].filter(Boolean).join(", ");
+  const severity = [fail > 0 ? `${fail} need manual review` : "", warn > 0 ? `${warn} warning${warn === 1 ? "" : "s"}` : ""].filter(Boolean).join(", ");
   return [`Hygiene findings: ${total}${severity ? ` (${severity})` : ""}`];
 }
 
@@ -71,7 +71,7 @@ function statusHeader(name: string, result: Record<string, unknown>) {
   if (result.ok === false || name !== "guardian_status") return `${result.ok === false ? "[FAIL]" : "[GOOD]"} ${name} snapshot`;
   const verdict = computeGuardianVerdict(result);
   const marker = verdict.tone === "bad" ? "[FAIL]" : verdict.tone === "warn" ? "[WARN]" : "[GOOD]";
-  const state = verdict.tone === "good" ? "Clean" : "Needs attention";
+  const state = verdict.tone === "good" ? "Clean" : verdict.tone === "warn" ? "Needs review" : "Blocked";
   return `${marker} Guardian Status: ${state}`;
 }
 

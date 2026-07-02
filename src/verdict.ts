@@ -107,7 +107,8 @@ function collectSignals(status: LooseRecord): VerdictSignal[] {
     signals.push({ tone: "bad", fragment: `${externalFail} worktree${plural(externalFail)} outside Guardian ownership`, nextAction: "guardian_status for paths, then guardian_delete_worktree if intended" });
   }
   if (hygieneFail > 0) {
-    signals.push({ tone: "bad", fragment: `${hygieneFail} fail-severity hygiene finding${plural(hygieneFail)}`, nextAction: "guardian_hygiene to review" });
+    const findingCount = hygieneFindings > 0 ? hygieneFindings : hygieneFail;
+    signals.push({ tone: "warn", fragment: `${findingCount} workspace hygiene finding${plural(findingCount)} (${hygieneFail} manual-review item${plural(hygieneFail)})`, nextAction: "guardian_hygiene to review" });
   }
 
   if (dirty > 0) {

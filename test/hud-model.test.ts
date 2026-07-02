@@ -99,8 +99,9 @@ test("orphaned sessions, dirty files, stashes, and hygiene produce risks", () =>
   assert.ok(model.risks.some((r) => r.label === "orphaned session" && r.detail.includes("ses_orphan")));
   assert.ok(model.risks.some((r) => r.label === "dirty files"));
   assert.ok(model.risks.some((r) => r.label === "stashes"));
-  assert.ok(model.risks.some((r) => r.label === "hygiene failures"));
+  assert.ok(model.risks.some((r) => r.severity === "warn" && r.label === "hygiene needs review"));
   assert.equal(model.metrics.find((m) => m.label === "Dirty")?.tone, "bad");
+  assert.equal(model.metrics.find((m) => m.label === "Hygiene")?.tone, "warn");
 });
 
 test("buckets sessions by lifecycle status, sorted by count", () => {

@@ -183,7 +183,7 @@ function buildMetrics(input: HudStatusInput): HudMetric[] {
     { label: "Safety Refs", value: input.safetyRefs.length, tone: "neutral" },
     { label: "Dirty", value: input.dirtyFiles.length, tone: input.dirtyFiles.length > 0 ? "bad" : "good" },
     { label: "Stashes", value: input.stashes.length, tone: input.stashes.length > 0 ? "warn" : "good" },
-    { label: "Hygiene", value: hygieneFindings, tone: hygieneFail > 0 ? "bad" : hygieneFindings > 0 ? "warn" : "good" },
+    { label: "Hygiene", value: hygieneFindings, tone: hygieneFindings > 0 ? "warn" : "good" },
   ];
 }
 
@@ -224,7 +224,7 @@ function buildRisks(input: HudStatusInput): HudRisk[] {
   const hygieneFindings = input.hygiene?.summary?.findingCount ?? 0;
   const hygieneFail = input.hygiene?.summary?.bySeverity?.fail ?? 0;
   if (hygieneFail > 0) {
-    risks.push({ severity: "fail", label: "hygiene failures", detail: `${hygieneFail} fail-severity findings` });
+    risks.push({ severity: "warn", label: "hygiene needs review", detail: `${hygieneFail} manual-review finding${hygieneFail === 1 ? "" : "s"}` });
   } else if (hygieneFindings > 0) {
     risks.push({ severity: "warn", label: "hygiene findings", detail: `${hygieneFindings} finding${hygieneFindings === 1 ? "" : "s"}` });
   }

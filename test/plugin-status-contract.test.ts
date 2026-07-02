@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import test from "node:test";
 import plugin from "../src/index.ts";
+import { formatGuardianStatusOutput } from "../src/plugin/readable-output-status.ts";
 import { createToolContext, metadataRecord, runTool } from "./plugin-contract-helpers.ts";
 import { createRepo, seedSession } from "./helpers.ts";
 
@@ -31,6 +32,22 @@ test("guardian_project_status returns project snapshot metadata and readable out
   assert.match(result.output, /\[(GOOD|WARN)\] guardian_project_status snapshot/);
   assert.match(result.output, /Project Roadmap/);
   assert.doesNotMatch(result.output, /confirmToken|confirmDelete|mode=apply|guardian_delete|rm -rf|git clean/);
+});
+
+test("guardian_status readable output treats hygiene-only findings as review warnings", () => {
+  const output = formatGuardianStatusOutput("guardian_status", {
+    ok: true,
+    repoRoot: "/repo",
+    activeSessions: [],
+    worktrees: [],
+    hygiene: { summary: { findingCount: 3, bySeverity: { fail: 1, warn: 2 } } },
+  });
+
+  assert.match(output, /^\[WARN\] Guardian Status: Needs review/m);
+  assert.match(output, /3 workspace hygiene findings \(1 manual-review item\)/);
+  assert.match(output, /Hygiene findings: 3 \(1 need manual review, 2 warnings\)/);
+  assert.doesNotMatch(output, /^\[FAIL\]/m);
+  assert.doesNotMatch(output, /fail-severity/);
 });
 
 test("guardian_status tool execute returns readable output with raw metadata", async () => {
@@ -94,7 +111,7 @@ test("guardian_status tool execute returns readable output with raw metadata", a
   assert.equal(typeof result.metadata, "object");
   assert.deepEqual(metadataCalls, [{ title: "guardian_status" }]);
   assert.equal(result.metadata.repoRoot, repo);
-  assert.match(result.output, /^\[FAIL\] Guardian Status: Needs attention/m);
+  assert.match(result.output, /^\[FAIL\] Guardian Status: Blocked/m);
   assert.doesNotMatch(result.output, /guardian_status snapshot/);
   assert.match(result.output, /Repo\n  /);
   assert.match(result.output, /Work Now\n  Active sessions: 1\n  Worktrees: \d+\n  Dirty files: 0\n  Stashes: 0\n  Orphaned sessions: 0\n  Poisoned sessions: 1\n  Recovery candidates: 0/);
