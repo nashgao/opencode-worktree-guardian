@@ -6,7 +6,7 @@ Canonical safety policy: [ADR 0001: Guardian Safety Policy](../../docs/adr/0001-
 
 ## Packaged command surface
 
-- Hosts with packaged plugin command discovery, such as `oh-my-openagent`, can expose this package's top-level `commands/*.md` files as namespaced commands like `/opencode-worktree-guardian:status`, `/opencode-worktree-guardian:hygiene`, `/opencode-worktree-guardian:delete-paths`, and `/opencode-worktree-guardian:delete-worktree`.
+- Hosts with packaged plugin command discovery, such as `oh-my-openagent`, can expose this package's top-level `commands/*.md` files as namespaced commands like `/opencode-worktree-guardian:status`, `/opencode-worktree-guardian:goal`, `/opencode-worktree-guardian:hygiene`, `/opencode-worktree-guardian:delete-paths`, and `/opencode-worktree-guardian:delete-worktree`.
 - Treat those slash commands as prompt wrappers only. The native `guardian_*` tools remain the authority for safety checks and mutation gates.
 - Native OpenCode user/project commands are separate files under `~/.config/opencode/commands/*.md` or `<repo>/.opencode/commands/*.md`.
 
@@ -16,6 +16,7 @@ Canonical safety policy: [ADR 0001: Guardian Safety Policy](../../docs/adr/0001-
 - Use `guardian_status` for read-only inventory.
 - Use `guardian_project_status` for read-only project intelligence evidence from roadmap, milestone review, `.omo/plans`, and `.omo/ulw-loop` artifacts. It does not establish ownership or approval to mutate. Only pass `writeReport: true` when the user explicitly asks for the static project report.
 - Use `guardian_done` for normal implementation completion. It inventories dirty implementation targets across the primary worktree and active Guardian sessions before choosing a lane, so it can be run from any cwd. Bare `guardian_done` auto-selects exactly one dirty target; multiple dirty targets return `needs-selection` with exact `primary=true`, `sessionId=...`, or `branch=...` follow-up options. With no dirty targets, clean primary with active sessions plans the repo-wide done-all lane; after confirmation it lands finishable sessions, syncs local base when safe, and applies safe redundant cleanup from the same clean no-blocker plan while reporting dirty or protected leftovers. Prefer it over raw protected-branch push/merge commands or low-level finish tools unless the user explicitly asks for those tools.
+- Use `guardian_goal` when the user wants the configured desired repo state in one command. It reads config `goal`, runs safe known-cleanable hygiene cleanup before `guardian_done`, then delegates commit/land/push/worktree/branch cleanup to existing Guardian gates. Run `mode: "plan"` first and apply with `confirm: true` only when the user invoked the goal workflow and the plan is safe.
 - Use `guardian_hygiene` for hygiene scan/plan/apply cleanup. With no `mode`, it scans only. For cleanup, first run `mode: "plan"`; inspect exact approved targets and blockers, get explicit user confirmation, then run `mode: "apply"` with `confirmDelete: true`.
 - Use `guardian_delete_paths` when the user intentionally wants exact files or directories deleted, including tracked source only with explicit `allowTracked: true`. Worktree deletion must use `guardian_delete_worktree`.
 - Use `guardian_report_html` or `/guardian report` when the user wants a browser-readable branch/worktree/session report. It writes a static offline file at `.git/opencode-guardian/report.html` and returns the exact path.
@@ -35,6 +36,7 @@ Canonical safety policy: [ADR 0001: Guardian Safety Policy](../../docs/adr/0001-
 - `autoStart`: enabled by default; repo config `autoStart=false` opts out of automatic ownership
 - `autoFinish`: disabled unless repo config opts in
 - `autoCleanup`: disabled unless repo config opts in
+- `goal`: default desired repo state is commit dirty implementation work with an explicit commit message, land/push to base, clean Guardian worktrees/branches, and clean safe hygiene findings
 - stash mutation is never cleanup
 - workspace hygiene scan mode is report-only; cleanup requires `guardian_hygiene mode=plan`, exact-target review, explicit confirmation, and `mode=apply confirmDelete=true`
 - `guardian_delete_paths` is the exact intentional path deletion surface

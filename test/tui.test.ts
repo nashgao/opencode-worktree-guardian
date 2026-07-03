@@ -9,6 +9,7 @@ const expectedSlashNames = [
   "guardian-finish",
   "guardian-finish-workflow",
   "guardian-gc",
+  "guardian-goal",
   "guardian-hud",
   "guardian-hygiene",
   "guardian-init",

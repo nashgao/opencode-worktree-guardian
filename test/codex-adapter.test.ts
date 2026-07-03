@@ -243,6 +243,7 @@ test("Codex plugin payload is packaged and points at Guardian hooks", async () =
     "guardian-finish",
     "guardian-finish-workflow",
     "guardian-gc",
+    "guardian-goal",
     "guardian-hud",
     "guardian-hygiene",
     "guardian-init",

@@ -12,6 +12,14 @@
   "allowStashIfUnrelated": false,
   "allowBaseWorktreePreserveReset": false,
   "allowDirtyPaths": [],
+  "goal": {
+    "commitDirty": true,
+    "landToBase": true,
+    "pushBase": true,
+    "cleanupWorktrees": true,
+    "cleanupBranches": true,
+    "cleanupHygiene": true
+  },
   "protectedPaths": [
     ".omo",
     ".omc",

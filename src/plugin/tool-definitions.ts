@@ -12,6 +12,7 @@ export function createTools(planCache: PlanTokenCache) {
     guardian_finish_workflow: guardianTool("guardian_finish_workflow", "Plan or apply an implementation-done workflow that verifies clean state and removes redundant merged worktrees and branches through Guardian gates.", planCache),
     guardian_finish: guardianTool("guardian_finish", "Apply the configured gated finish mode for the current Guardian worktree.", planCache),
     guardian_preserve: guardianTool("guardian_preserve", "Mark the current Guardian worktree as terminal/preserved with a safety ref.", planCache),
+    guardian_goal: guardianTool("guardian_goal", "Plan or apply the repo-local desired end state from config.goal by composing Guardian done and safe hygiene cleanup gates.", planCache),
     guardian_project_status: guardianTool("guardian_project_status", "Read project roadmap, milestone, plan, and ULW evidence into a static project intelligence snapshot.", planCache),
     guardian_recover: guardianTool("guardian_recover", "List recovery refs, orphaned sessions, stash inventory, and suggested recovery commands without mutation.", planCache),
     guardian_report_html: guardianTool("guardian_report_html", "Write a static offline HTML report for guardian sessions, worktrees, branches, risks, and recovery commands.", planCache),

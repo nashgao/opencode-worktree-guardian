@@ -7,6 +7,15 @@ export type MutableRecord = {
 export type GuardianFinishMode = "preserve-only" | "push-branch" | "create-pr" | "merge-to-base";
 export type GuardianAutoStartMode = "eager" | "lazy";
 
+export type GuardianGoalConfig = {
+  readonly commitDirty: boolean;
+  readonly landToBase: boolean;
+  readonly pushBase: boolean;
+  readonly cleanupWorktrees: boolean;
+  readonly cleanupBranches: boolean;
+  readonly cleanupHygiene: boolean;
+};
+
 export type GuardianConfig = {
   readonly remote: string;
   readonly baseBranch: string;
@@ -24,6 +33,7 @@ export type GuardianConfig = {
   readonly protectedPaths: readonly string[];
   readonly protectedBranches: readonly string[];
   readonly trustedUpstreamRemotes: readonly string[];
+  readonly goal: GuardianGoalConfig;
   readonly lockTimeoutMs: number;
   readonly [key: string]: unknown;
 };

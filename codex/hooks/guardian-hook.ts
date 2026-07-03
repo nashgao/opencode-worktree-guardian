@@ -121,7 +121,7 @@ function planCacheKey(name: string, toolArgs: Record<string, unknown>): string {
 function shouldUseCachedPlanToken(name: string, toolArgs: Record<string, unknown>): boolean {
   if (toolArgs["mode"] !== "apply") return false;
   if (name === "guardian_delete_paths" || name === "guardian_hygiene") return toolArgs["confirmDelete"] === true;
-  return (name === "guardian_done" || name === "guardian_finish_workflow") && (toolArgs["confirm"] === true || toolArgs["confirmDelete"] === true);
+  return (name === "guardian_done" || name === "guardian_finish_workflow" || name === "guardian_goal") && (toolArgs["confirm"] === true || toolArgs["confirmDelete"] === true);
 }
 
 function isPlaceholderConfirmToken(value: unknown): boolean {
@@ -161,9 +161,13 @@ function maybeInjectPlanConfirmToken(name: string, toolArgs: Record<string, unkn
   if (cachedToken !== undefined) toolArgs["confirmToken"] = cachedToken;
 }
 
+function isCacheablePlanStatus(status: unknown): boolean {
+  return status === "planned" || status === "planned-partial";
+}
+
 function rememberPlanConfirmToken(name: string, toolArgs: Record<string, unknown>, result: Record<string, unknown>, cache: Map<string, string>): boolean {
-  if (toolArgs["mode"] !== "plan" || result["ok"] !== true || result["status"] !== "planned") return false;
-  if (!["guardian_delete_paths", "guardian_done", "guardian_finish_workflow", "guardian_hygiene"].includes(name) || typeof result["confirmToken"] !== "string") return false;
+  if (toolArgs["mode"] !== "plan" || result["ok"] !== true || !isCacheablePlanStatus(result["status"])) return false;
+  if (!["guardian_delete_paths", "guardian_done", "guardian_finish_workflow", "guardian_goal", "guardian_hygiene"].includes(name) || typeof result["confirmToken"] !== "string") return false;
   cache.set(planCacheKey(name, toolArgs), result["confirmToken"]);
   return true;
 }
@@ -197,7 +201,7 @@ function confirmationHint(name: string, result: Record<string, unknown>): string
   if (name === "guardian_hygiene" || name === "guardian_delete_paths") {
     return "After explicit user confirmation, rerun with mode=apply and confirmDelete=true; the Codex adapter reuses the matching cached plan token.";
   }
-  if (name === "guardian_done" || name === "guardian_finish_workflow") {
+  if (name === "guardian_done" || name === "guardian_finish_workflow" || name === "guardian_goal") {
     return "After explicit user confirmation, rerun with mode=apply and confirm=true; the Codex adapter reuses the matching cached plan token.";
   }
   if (name === "guardian_delete_worktree") {

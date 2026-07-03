@@ -3,6 +3,7 @@ import { guardianDeleteWorktree } from "./delete.ts";
 import { guardianDone } from "./done.ts";
 import { guardianFinish } from "./finish.ts";
 import { guardianGc } from "./gc.ts";
+import { guardianGoal } from "./goal.ts";
 import { guardianHygiene } from "./hygiene.ts";
 import { guardianInit } from "./init.ts";
 import { guardianPreserve } from "./preserve.ts";
@@ -24,6 +25,7 @@ export const GUARDIAN_TOOL_RUNNERS = {
   guardian_finish: guardianFinish,
   guardian_finish_workflow: guardianFinishWorkflow,
   guardian_gc: guardianGc,
+  guardian_goal: guardianGoal,
   guardian_hygiene: guardianHygiene,
   guardian_init: guardianInit,
   guardian_preserve: guardianPreserve,

@@ -16,6 +16,7 @@ test("exposes guardian native tools", async () => {
     "guardian_finish",
     "guardian_finish_workflow",
     "guardian_gc",
+    "guardian_goal",
     "guardian_hygiene",
     "guardian_init",
     "guardian_preserve",

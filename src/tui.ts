@@ -36,6 +36,12 @@ const COMMANDS = [
     prompt: "Use the guardian_done native tool. Run mode=plan first, inspect selectedTarget, lane, preflight, dirty files, blockers, and cleanup preview, then continue to mode=apply confirm=true with the same options when the plan is safe and the user invoked the completion workflow. Guardian inventories the primary worktree plus active Guardian sessions, so the command can run from any cwd. Bare guardian_done auto-selects exactly one dirty implementation target; if multiple dirty targets exist, stop on needs-selection and rerun the exact primary=true, sessionId=..., or branch=... option shown. Use explicit primary=true, sessionId=..., or branch=... when the target is known. Active-session dirt and dirty primary-main publishing require commitMessage. Clean active sessions use done-all; apply lands finishable sessions, syncs local base from its tracked upstream when that upstream remote is trusted, cleans safe redundant candidates, may recoverably abandon Guardian-owned stale local branch-only leftovers with terminal-state or safety-ref proof, and reports remaining blockers. After session land or primary publish, inspect cleanupSweep. Admin bypass requires allowAdminBypass=true. Never force-push, mutate stashes, delete unrelated remote branches, or run raw cleanup commands.",
   },
   {
+    name: "guardian-goal",
+    title: "Guardian: Goal",
+    description: "Drive the repo toward the configured Guardian desired end state.",
+    prompt: "Use the guardian_goal native tool. Run mode=plan first, inspect the configured goal flags, hygiene and done child steps, blockers, and selected commit target, then continue to mode=apply confirm=true with the same options when the plan is safe and the user invoked the goal workflow. Include commitMessage when dirty implementation work needs to be committed. Guardian goal composes safe known-cleanable hygiene cleanup before guardian_done so generated cache residue is not committed, then lands/pushes/cleans through existing Guardian gates. Do not use raw git cleanup, raw worktree removal, raw branch deletion, stash mutation, force-push, or bypass Guardian blockers.",
+  },
+  {
     name: "guardian-status",
     title: "Guardian: Status",
     description: "Show Guardian session, worktree, branch, stash, and recovery inventory.",

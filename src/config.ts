@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { normalizeProtectedPaths } from "./protected-paths.ts";
-import type { GuardianAutoStartMode, GuardianConfig, GuardianFinishMode, LoadedGuardianConfig, LoadConfigOptions, RecordLike } from "./types.ts";
+import type { GuardianAutoStartMode, GuardianConfig, GuardianFinishMode, GuardianGoalConfig, LoadedGuardianConfig, LoadConfigOptions, RecordLike } from "./types.ts";
 import { errorCode, isRecordLike } from "./types.ts";
 
 export const CONFIG_PATH = path.join(".opencode", "worktree-guardian.json");
@@ -59,6 +59,19 @@ function stringArrayField(record: RecordLike, key: string) {
   return value;
 }
 
+function goalField(record: RecordLike, key: string): GuardianGoalConfig {
+  const value = record[key];
+  if (!isRecordLike(value)) throw templateError(`${key} must be an object`);
+  return {
+    commitDirty: booleanField(value, "commitDirty"),
+    landToBase: booleanField(value, "landToBase"),
+    pushBase: booleanField(value, "pushBase"),
+    cleanupWorktrees: booleanField(value, "cleanupWorktrees"),
+    cleanupBranches: booleanField(value, "cleanupBranches"),
+    cleanupHygiene: booleanField(value, "cleanupHygiene"),
+  };
+}
+
 function parseDefaultConfigTemplate(raw: string): GuardianConfig {
   const value: unknown = JSON.parse(raw);
   if (!isRecordLike(value)) throw templateError("root must be an object");
@@ -80,6 +93,7 @@ function parseDefaultConfigTemplate(raw: string): GuardianConfig {
     allowStashIfUnrelated: booleanField(value, "allowStashIfUnrelated"),
     allowBaseWorktreePreserveReset: booleanField(value, "allowBaseWorktreePreserveReset"),
     allowDirtyPaths: uniqueStrings(stringArrayField(value, "allowDirtyPaths")),
+    goal: goalField(value, "goal"),
     protectedPaths: normalizeProtectedPaths(stringArrayField(value, "protectedPaths")),
     protectedBranches: uniqueStrings(stringArrayField(value, "protectedBranches")),
     trustedUpstreamRemotes: uniqueStrings(stringArrayField(value, "trustedUpstreamRemotes")),
@@ -88,6 +102,18 @@ function parseDefaultConfigTemplate(raw: string): GuardianConfig {
 }
 
 export const DEFAULT_CONFIG: GuardianConfig = Object.freeze(parseDefaultConfigTemplate(DEFAULT_CONFIG_TEMPLATE));
+
+export function normalizeGoalConfig(input: unknown): GuardianGoalConfig {
+  if (!isRecordLike(input)) return DEFAULT_CONFIG.goal;
+  return {
+    commitDirty: typeof input.commitDirty === "boolean" ? input.commitDirty : DEFAULT_CONFIG.goal.commitDirty,
+    landToBase: typeof input.landToBase === "boolean" ? input.landToBase : DEFAULT_CONFIG.goal.landToBase,
+    pushBase: typeof input.pushBase === "boolean" ? input.pushBase : DEFAULT_CONFIG.goal.pushBase,
+    cleanupWorktrees: typeof input.cleanupWorktrees === "boolean" ? input.cleanupWorktrees : DEFAULT_CONFIG.goal.cleanupWorktrees,
+    cleanupBranches: typeof input.cleanupBranches === "boolean" ? input.cleanupBranches : DEFAULT_CONFIG.goal.cleanupBranches,
+    cleanupHygiene: typeof input.cleanupHygiene === "boolean" ? input.cleanupHygiene : DEFAULT_CONFIG.goal.cleanupHygiene,
+  };
+}
 
 export function normalizeConfig(input: RecordLike = {}): GuardianConfig {
   const config = { ...DEFAULT_CONFIG, ...input };
@@ -112,6 +138,7 @@ export function normalizeConfig(input: RecordLike = {}): GuardianConfig {
     allowStashIfUnrelated: config.allowStashIfUnrelated === true,
     allowBaseWorktreePreserveReset: config.allowBaseWorktreePreserveReset === true,
     allowDirtyPaths: uniqueStrings(Array.isArray(input.allowDirtyPaths) ? input.allowDirtyPaths : []),
+    goal: normalizeGoalConfig(input.goal),
     protectedPaths: normalizeProtectedPaths(Array.isArray(config.protectedPaths) ? config.protectedPaths : []),
     protectedBranches,
     trustedUpstreamRemotes: uniqueStrings(Array.isArray(input.trustedUpstreamRemotes) ? input.trustedUpstreamRemotes : []),

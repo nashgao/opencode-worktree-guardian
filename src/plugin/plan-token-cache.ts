@@ -49,7 +49,7 @@ function shouldUseCachedPlanToken(name: GuardianToolName, toolArgs: PlanCacheToo
   if (name === "guardian_delete_paths") return toolArgs.confirmDelete === true;
   if (name === "guardian_hygiene") return toolArgs.confirmDelete === true;
   if (name === "guardian_gc") return toolArgs.confirmDelete === true;
-  if (name === "guardian_done" || name === "guardian_finish_workflow") return toolArgs.confirm === true || toolArgs.confirmDelete === true;
+  if (name === "guardian_done" || name === "guardian_finish_workflow" || name === "guardian_goal") return toolArgs.confirm === true || toolArgs.confirmDelete === true;
   return false;
 }
 
@@ -67,6 +67,6 @@ export function maybeInjectPlanConfirmToken(name: GuardianToolName, toolArgs: Pl
 export function rememberPlanConfirmToken(name: GuardianToolName, toolArgs: PlanCacheToolArgs, result: { readonly ok?: unknown; readonly status?: unknown; readonly confirmToken?: unknown }, planCache?: PlanTokenCache) {
   if (!planCache) return;
   if (toolArgs.mode !== "plan" || result.ok !== true || !isCacheablePlanStatus(result.status) || typeof result.confirmToken !== "string") return;
-  if (!["guardian_delete_paths", "guardian_hygiene", "guardian_done", "guardian_finish_workflow", "guardian_gc"].includes(name)) return;
+  if (!["guardian_delete_paths", "guardian_hygiene", "guardian_done", "guardian_finish_workflow", "guardian_goal", "guardian_gc"].includes(name)) return;
   planCache.set(planCacheKey(name, toolArgs), result.confirmToken);
 }

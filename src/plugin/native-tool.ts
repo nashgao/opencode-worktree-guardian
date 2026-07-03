@@ -67,7 +67,7 @@ export function guardianTool(name: GuardianToolName, description: string, planCa
       normalizeOptionalToolStrings(toolArgs);
       if (toolArgs.repoRoot == null && typeof context?.directory === "string") toolArgs.repoRoot = context.directory;
       const shouldInjectContextSession = name === "guardian_unblock_finish"
-        || name !== "guardian_done" && toolArgs.targetPath == null && toolArgs.branch == null;
+        || name !== "guardian_done" && name !== "guardian_goal" && toolArgs.targetPath == null && toolArgs.branch == null;
       if (toolArgs.sessionId == null && shouldInjectContextSession) {
         if (typeof context?.sessionID === "string") toolArgs.sessionId = context.sessionID;
         else if (typeof context?.sessionId === "string") toolArgs.sessionId = context.sessionId;

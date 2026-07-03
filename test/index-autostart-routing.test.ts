@@ -173,6 +173,17 @@ test("/guardian slash commands rewrite to native tool instructions", async () =>
   await hooks["command.execute.before"]({ command: "/guardian delete-paths src/old.ts", sessionID: "ses_123", arguments: [] }, deletePathsOutput);
   assert.deepEqual(deletePathsOutput.parts, [{ type: "text", text: "Use the guardian_delete_paths native tool. Run mode=plan first with exact paths, inspect target status and blockers, get explicit user confirmation, then apply with confirmDelete=true. Tracked source deletion requires allowTracked=true; directory deletion requires allowRecursive=true. User arguments: src/old.ts" }]);
 
+  const goalOutput: { parts: Array<{ readonly type: string; readonly text: string }> } = { parts: [] };
+  await hooks["command.execute.before"]({ command: "/guardian goal commitMessage=feat: done", sessionID: "ses_123", arguments: [] }, goalOutput);
+  assert.equal(goalOutput.parts.length, 1);
+  const goalPrompt = goalOutput.parts[0]?.text ?? "";
+  assert.match(goalPrompt, /guardian_goal/);
+  assert.match(goalPrompt, /mode=plan/);
+  assert.match(goalPrompt, /goal flags/);
+  assert.match(goalPrompt, /mode=apply confirm=true/);
+  assert.match(goalPrompt, /commitMessage/);
+  assert.match(goalPrompt, /User arguments: commitMessage=feat: done/);
+
   const doneOutput: { parts: Array<{ readonly type: string; readonly text: string }> } = { parts: [] };
   await hooks["command.execute.before"]({ command: "/guardian done", sessionID: "ses_123", arguments: [] }, doneOutput);
   assert.equal(doneOutput.parts.length, 1);
