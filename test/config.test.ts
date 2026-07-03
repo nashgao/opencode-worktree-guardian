@@ -5,6 +5,8 @@ import test from "node:test";
 import { CONFIG_PATH, DEFAULT_CONFIG, initializeConfig, loadConfig, normalizeConfig } from "../src/config.ts";
 import { createTempDir } from "./helpers.ts";
 
+const TEMPLATE_PROTECTED_PATHS = [".omo", ".omc", ".omx", ".sisyphus", ".milestones", ".opencode", ".codegraph", ".worktrees"];
+
 test("config defaults are delivery-first and cleanup-conservative", () => {
   const config = normalizeConfig();
   assert.equal(config.finishMode, "create-pr");
@@ -14,11 +16,11 @@ test("config defaults are delivery-first and cleanup-conservative", () => {
   assert.equal(config.autoCleanup, false);
   assert.equal(config.allowStashIfUnrelated, false);
   assert.deepEqual(config.allowDirtyPaths, []);
-  assert.deepEqual(config.protectedPaths, [".omo", ".omc", ".omx", ".sisyphus", ".milestones"]);
+  assert.deepEqual(config.protectedPaths, TEMPLATE_PROTECTED_PATHS);
   assert.deepEqual(config.protectedBranches, DEFAULT_CONFIG.protectedBranches);
 });
 
-test("repo-local config overrides defaults but keeps protected baselines", async () => {
+test("repo-local config replaces template protected paths", async () => {
   const repo = await createTempDir();
   await fs.mkdir(path.join(repo, ".opencode"));
   await fs.writeFile(path.join(repo, ".opencode", "worktree-guardian.json"), JSON.stringify({
@@ -40,8 +42,22 @@ test("repo-local config overrides defaults but keeps protected baselines", async
   assert.equal(config.autoCleanup, false);
   assert.equal(config.allowStashIfUnrelated, false);
   assert.deepEqual(config.allowDirtyPaths, [".claude/logs/**", ".omx/**"]);
-  assert.deepEqual(config.protectedPaths, [".omo", ".omc", ".omx", ".sisyphus", ".milestones", ".agent-state"]);
+  assert.deepEqual(config.protectedPaths, [".agent-state", ".omo/cache"]);
   assert.deepEqual(config.protectedBranches, ["main", "master", "develop", "production", "release"]);
+});
+
+test("repo-local config uses template protected paths when the field is absent", async () => {
+  const repo = await createTempDir();
+  await fs.mkdir(path.join(repo, ".opencode"));
+  await fs.writeFile(path.join(repo, ".opencode", "worktree-guardian.json"), JSON.stringify({
+    autoStartMode: "lazy",
+  }));
+
+  const { config, loaded } = await loadConfig(repo);
+
+  assert.equal(loaded, true);
+  assert.equal(config.autoStartMode, "lazy");
+  assert.deepEqual(config.protectedPaths, TEMPLATE_PROTECTED_PATHS);
 });
 
 test("missing config loads defaults without pretending a file was read", async () => {
@@ -67,6 +83,7 @@ test("config initialization writes defaults once", async () => {
   assert.equal(existing.status, "exists");
   assert.equal(existing.created, false);
   assert.deepEqual(loaded.config, DEFAULT_CONFIG);
+  assert.deepEqual(loaded.config.protectedPaths, TEMPLATE_PROTECTED_PATHS);
   assert.equal(await fs.readFile(configPath, "utf8"), `${JSON.stringify(DEFAULT_CONFIG, null, 2)}\n`);
 });
 

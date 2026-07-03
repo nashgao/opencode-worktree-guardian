@@ -143,6 +143,28 @@ test("guardian_delete_paths blocks configured protected paths", async () => {
   assert.equal(hasFatalBlocker(blocked.blockers, ".agent-state/logs", /configured protected path \.agent-state/), true);
 });
 
+test("guardian_delete_paths lets repo config replace template protected paths", async () => {
+  const repo = await createRepo();
+  await fs.mkdir(path.join(repo, ".opencode"), { recursive: true });
+  await fs.writeFile(path.join(repo, ".opencode", "worktree-guardian.json"), JSON.stringify({ protectedPaths: ["keep-me"] }));
+  await fs.mkdir(path.join(repo, "keep-me"), { recursive: true });
+  await fs.writeFile(path.join(repo, "keep-me", "important.txt"), "important\n");
+  await fs.mkdir(path.join(repo, ".codegraph"), { recursive: true });
+  await fs.writeFile(path.join(repo, ".codegraph", "index.sqlite"), "cache\n");
+
+  const blocked = await guardianDeletePaths({
+    repoRoot: repo,
+    mode: "plan",
+    paths: ["keep-me", ".codegraph"],
+    allowRecursive: true,
+  });
+
+  assert.equal(blocked.status, "blocked");
+  assert.deepEqual(records(blocked.targets).map((target) => target.path), [".codegraph"]);
+  assert.equal(hasFatalBlocker(blocked.blockers, "keep-me", /configured protected path keep-me/), true);
+  assert.equal(hasFatalBlocker(blocked.blockers, ".codegraph", /configured protected path \.codegraph/), false);
+});
+
 test("guardian_delete_paths blocks stale tokens after path content changes", async () => {
   const repo = await createRepo();
   await fs.writeFile(path.join(repo, "scratch.txt"), "original\n");
@@ -162,6 +184,7 @@ test("guardian_delete_paths blocks repo control paths, dependencies, worktree ro
   await fs.mkdir(path.join(repo, ".worktrees", path.basename(repo)), { recursive: true });
   await fs.mkdir(path.join(repo, "node_modules", "pkg"), { recursive: true });
   await fs.mkdir(path.join(repo, ".opencode"), { recursive: true });
+  await fs.mkdir(path.join(repo, ".codegraph"), { recursive: true });
   await fs.writeFile(path.join(repo, "target.txt"), "target\n");
   await fs.symlink("target.txt", path.join(repo, "link.txt"));
 
@@ -170,7 +193,7 @@ test("guardian_delete_paths blocks repo control paths, dependencies, worktree ro
     cwd: repo,
     config: DEFAULT_CONFIG,
     mode: "plan",
-    paths: [".", ".git", ".opencode", ".worktrees", "node_modules", "link.txt"],
+    paths: [".", ".git", ".opencode", ".codegraph", ".worktrees", "node_modules", "link.txt"],
     allowRecursive: true,
   });
   const reasons = (blocked.blockers as Array<Record<string, unknown>>).map((blocker) => String(blocker.reason)).sort();
@@ -178,7 +201,9 @@ test("guardian_delete_paths blocks repo control paths, dependencies, worktree ro
   assert.equal(blocked.status, "blocked");
   assert.equal(reasons.some((reason) => /repository root/.test(reason)), true);
   assert.equal(reasons.some((reason) => /git metadata/.test(reason)), true);
-  assert.equal(reasons.some((reason) => /protected \.opencode/.test(reason)), true);
+  assert.equal(hasFatalBlocker(blocked.blockers, ".opencode", /configured protected path \.opencode/), true);
+  assert.equal(hasFatalBlocker(blocked.blockers, ".codegraph", /configured protected path \.codegraph/), true);
+  assert.equal(hasFatalBlocker(blocked.blockers, ".worktrees", /configured protected path \.worktrees/), true);
   assert.equal(reasons.some((reason) => /configured Guardian worktree root/.test(reason)), true);
   assert.equal(reasons.some((reason) => /protected node_modules/.test(reason)), true);
   assert.equal(reasons.some((reason) => /symlink delete roots/.test(reason)), true);

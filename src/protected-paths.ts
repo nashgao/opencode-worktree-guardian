@@ -1,7 +1,3 @@
-export const DEFAULT_PROTECTED_PATHS = [".omo", ".omc", ".omx", ".sisyphus", ".milestones"] as const;
-
-const DEFAULT_PROTECTED_PATH_SET = new Set<string>(DEFAULT_PROTECTED_PATHS);
-
 type ProtectedPathMatch = {
   readonly path: string;
   readonly reason: string;
@@ -21,7 +17,7 @@ function pathContains(parent: string, child: string) {
 
 export function normalizeProtectedPaths(values: readonly unknown[] = []) {
   const paths: string[] = [];
-  for (const value of [...DEFAULT_PROTECTED_PATHS, ...values]) {
+  for (const value of values) {
     if (typeof value !== "string") continue;
     const normalized = normalizeProtectedPath(value);
     if (!normalized || paths.some((protectedPath) => pathContains(protectedPath, normalized))) continue;
@@ -44,6 +40,6 @@ export function protectedPathMatch(relative: string, protectedPaths: readonly st
   if (!protectedPath) return null;
   return {
     path: protectedPath,
-    reason: DEFAULT_PROTECTED_PATH_SET.has(protectedPath) ? "local agent state directory" : `configured protected path ${protectedPath}`,
+    reason: `configured protected path ${protectedPath}`,
   };
 }

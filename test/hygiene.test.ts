@@ -253,7 +253,7 @@ test("hygiene scanner keeps nested protected exclusions from suppressing reviewa
   ]);
 });
 
-test("hygiene scanner excludes agent-state directories from cleanup findings", async () => {
+test("hygiene scanner excludes agent and local tooling state directories from cleanup findings", async () => {
   const repo = await createRepo();
   await fs.writeFile(path.join(repo, ".gitignore"), "logs/\n");
   await writeArtifact(repo, ".milestones/logs/progress-events.jsonl");
@@ -261,6 +261,9 @@ test("hygiene scanner excludes agent-state directories from cleanup findings", a
   await writeArtifact(repo, ".omo/plan.md");
   await writeArtifact(repo, ".omx/cache.json");
   await writeArtifact(repo, ".sisyphus/state.json");
+  await writeArtifact(repo, ".opencode/worktree-guardian.json");
+  await writeArtifact(repo, ".codegraph/index.sqlite");
+  await writeArtifact(repo, ".worktrees/cache.json");
   await git(repo, ["add", ".gitignore"]);
   await git(repo, ["commit", "-m", "track ignore rules"]);
 
@@ -268,7 +271,7 @@ test("hygiene scanner excludes agent-state directories from cleanup findings", a
 
   assert.equal(result.ok, true);
   assert.equal(result.summary.findingCount, 0);
-  assert.deepEqual(pathsFromRecords(result.exclusions), [".milestones", ".omc", ".omo", ".omx", ".sisyphus"]);
+  assert.deepEqual(pathsFromRecords(result.exclusions), [".codegraph", ".milestones", ".omc", ".omo", ".omx", ".opencode", ".sisyphus", ".worktrees"]);
   assert.deepEqual(recordField(result, "reviewableCandidates"), []);
 });
 
