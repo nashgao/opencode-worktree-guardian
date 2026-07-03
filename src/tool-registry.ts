@@ -4,6 +4,7 @@ import { guardianDone } from "./done.ts";
 import { guardianFinish } from "./finish.ts";
 import { guardianGc } from "./gc.ts";
 import { guardianHygiene } from "./hygiene.ts";
+import { guardianInit } from "./init.ts";
 import { guardianPreserve } from "./preserve.ts";
 import { guardianProjectStatus } from "./project/status-tool.ts";
 import { guardianRecover, guardianStatus } from "./recover.ts";
@@ -24,6 +25,7 @@ export const GUARDIAN_TOOL_RUNNERS = {
   guardian_finish_workflow: guardianFinishWorkflow,
   guardian_gc: guardianGc,
   guardian_hygiene: guardianHygiene,
+  guardian_init: guardianInit,
   guardian_preserve: guardianPreserve,
   guardian_project_status: guardianProjectStatus,
   guardian_recover: guardianRecover,

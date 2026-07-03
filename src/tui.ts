@@ -48,6 +48,12 @@ const COMMANDS = [
     prompt: "Use the guardian_start native tool to create or attach this session to a Guardian-owned worktree. Do not use raw git worktree add.",
   },
   {
+    name: "guardian-init",
+    title: "Guardian: Init",
+    description: "Write the default repo-local Guardian config if it is missing.",
+    prompt: "Use the guardian_init native tool to write the default .opencode/worktree-guardian.json config only if it is missing. Do not create sessions, worktrees, branches, or cleanup anything.",
+  },
+  {
     name: "guardian-finish",
     title: "Guardian: Finish",
     description: "Finish Guardian-owned work through the configured gated finish mode.",

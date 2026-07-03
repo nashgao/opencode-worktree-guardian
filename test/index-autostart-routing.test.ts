@@ -161,6 +161,10 @@ test("/guardian slash commands rewrite to native tool instructions", async () =>
   await hooks["command.execute.before"]({ command: "/guardian status", sessionID: "ses_123", arguments: [] }, output);
   assert.deepEqual(output.parts, [{ type: "text", text: "Use the guardian_status native tool." }]);
 
+  const initOutput = { parts: [] };
+  await hooks["command.execute.before"]({ command: "/guardian init", sessionID: "ses_123", arguments: [] }, initOutput);
+  assert.deepEqual(initOutput.parts, [{ type: "text", text: "Use the guardian_init native tool." }]);
+
   const deleteOutput = { parts: [] };
   await hooks["command.execute.before"]({ command: "/guardian delete-worktree", sessionID: "ses_123", arguments: [] }, deleteOutput);
   assert.deepEqual(deleteOutput.parts, [{ type: "text", text: "Use the guardian_delete_worktree native tool. Run mode=plan first. Dirty targets block by default; use allowRedundantDirtyPaths=true only in direct plan/apply when Guardian proves each dirty path already matches the fetched base tree and reports dirtySnapshotRef. Stale local Guardian branch cleanup requires an exact branch or terminal sessionId plus deleteBranch=true and Guardian ownership proof from terminal state or safety refs. Intentional unmerged local abandonment requires deleteBranch=true plus abandonUnmerged=true in both plan and apply after inspecting unmerged commit evidence." }]);

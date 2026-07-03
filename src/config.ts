@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { DEFAULT_PROTECTED_PATHS, normalizeProtectedPaths } from "./protected-paths.ts";
 import type { GuardianAutoStartMode, GuardianConfig, GuardianFinishMode, LoadedGuardianConfig, LoadConfigOptions, RecordLike } from "./types.ts";
 import { errorCode, isRecordLike } from "./types.ts";
 
@@ -22,6 +23,7 @@ export const DEFAULT_CONFIG: GuardianConfig = Object.freeze({
   allowStashIfUnrelated: false,
   allowBaseWorktreePreserveReset: false,
   allowDirtyPaths: [],
+  protectedPaths: DEFAULT_PROTECTED_PATHS,
   protectedBranches: ["main", "master", "develop", "production"],
   trustedUpstreamRemotes: [],
   lockTimeoutMs: 5_000,
@@ -69,6 +71,7 @@ export function normalizeConfig(input: RecordLike = {}): GuardianConfig {
     allowStashIfUnrelated: config.allowStashIfUnrelated === true,
     allowBaseWorktreePreserveReset: config.allowBaseWorktreePreserveReset === true,
     allowDirtyPaths: uniqueStrings(Array.isArray(input.allowDirtyPaths) ? input.allowDirtyPaths : []),
+    protectedPaths: normalizeProtectedPaths(Array.isArray(input.protectedPaths) ? input.protectedPaths : []),
     protectedBranches,
     trustedUpstreamRemotes: uniqueStrings(Array.isArray(input.trustedUpstreamRemotes) ? input.trustedUpstreamRemotes : []),
     lockTimeoutMs: typeof config.lockTimeoutMs === "number" && Number.isFinite(config.lockTimeoutMs) ? config.lockTimeoutMs : DEFAULT_CONFIG.lockTimeoutMs,
@@ -93,6 +96,36 @@ export async function loadConfig(repoRoot: string, options: LoadConfigOptions = 
     path: configPath,
     loaded: Object.keys(parsed).length > 0,
   };
+}
+
+export function defaultConfigFileContent() {
+  return `${JSON.stringify(DEFAULT_CONFIG, null, 2)}\n`;
+}
+
+async function configFileExists(configPath: string) {
+  try {
+    await fs.access(configPath);
+    return true;
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") return false;
+    throw error;
+  }
+}
+
+export async function initializeConfig(repoRoot: string): Promise<Record<string, unknown>> {
+  const configPath = path.join(repoRoot, CONFIG_PATH);
+  if (await configFileExists(configPath)) {
+    const loaded = await loadConfig(repoRoot);
+    return { ok: true, status: "exists", repoRoot, configPath, created: false, config: loaded.config, loaded: loaded.loaded };
+  }
+  await fs.mkdir(path.dirname(configPath), { recursive: true });
+  try {
+    await fs.writeFile(configPath, defaultConfigFileContent(), { flag: "wx" });
+  } catch (error) {
+    if (errorCode(error) !== "EEXIST") throw error;
+  }
+  const loaded = await loadConfig(repoRoot);
+  return { ok: true, status: "created", repoRoot, configPath, created: true, config: loaded.config, loaded: loaded.loaded };
 }
 
 export function expandWorktreeRoot(template: string, repoRoot: string) {

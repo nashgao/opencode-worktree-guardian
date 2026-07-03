@@ -4,7 +4,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { createRepo, createRepoWithOrigin, git, installFakeGh } from "./helpers.ts";
-import { DEFAULT_CONFIG } from "../src/config.ts";
+import { CONFIG_PATH, DEFAULT_CONFIG } from "../src/config.ts";
 import { guardianStart } from "../src/tools.ts";
 import { getGuardianPaths } from "../src/state.ts";
 
@@ -102,13 +102,31 @@ test("Codex pre-tool hook ignores malformed hook payloads", async () => {
 
 test("Codex tool command returns readable guardian status output", async () => {
   const repo = await createRepo();
+  const configPath = path.join(repo, CONFIG_PATH);
 
   const { stdout } = await runCodexCli(["tool", "guardian_status", JSON.stringify({ repoRoot: repo, cwd: repo })]);
 
   assert.match(stdout, /^\[GOOD\] Guardian Status: Clean/m);
+  assert.match(stdout, /Config\n  defaults active; .*worktree-guardian\.json not written\n  guardian_init to write repo config/);
   assert.match(stdout, /Work Now\n  Active sessions: 0\n  Worktrees: \d+\n  Dirty files: 0\n  Stashes: 0\n  Orphaned sessions: 0\n  Poisoned sessions: 0\n  Recovery candidates: 0/);
   assert.match(stdout, /History\n  Retained terminal sessions: 0\n  Safety refs: 0\n  Preserved refs: 0/);
   assert.match(stdout, new RegExp(repo.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.equal(await pathExists(configPath), false);
+});
+
+test("Codex guardian_init writes default repo config idempotently", async () => {
+  const repo = await createRepo();
+  const configPath = path.join(repo, CONFIG_PATH);
+
+  const created = await runCodexCli(["tool", "guardian_init", JSON.stringify({ repoRoot: repo, cwd: repo })]);
+  const existing = await runCodexCli(["tool", "guardian_init", JSON.stringify({ repoRoot: repo, cwd: repo })]);
+
+  assert.match(created.stdout, /\[GOOD\] guardian_init created/);
+  assert.match(created.stdout, /wrote default Guardian config/);
+  assert.match(existing.stdout, /\[INFO\] guardian_init exists/);
+  assert.match(existing.stdout, /config already exists; left unchanged/);
+  assert.equal(await pathExists(configPath), true);
+  assert.equal(JSON.parse(await fs.readFile(configPath, "utf8")).protectedPaths.includes(".milestones"), true);
 });
 
 test("Codex tool command rejects malformed JSON args", async () => {
@@ -227,6 +245,7 @@ test("Codex plugin payload is packaged and points at Guardian hooks", async () =
     "guardian-gc",
     "guardian-hud",
     "guardian-hygiene",
+    "guardian-init",
     "guardian-preserve",
     "guardian-project-status",
     "guardian-recover",

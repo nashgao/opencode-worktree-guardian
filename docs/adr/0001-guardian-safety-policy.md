@@ -77,6 +77,12 @@ Protected branches include the configured `protectedBranches`, with defaults inc
 
 When config context is available, Guardian blocks manual bypasses such as pushing `HEAD` or `guardian/*` directly to a protected branch, and merging `guardian/*` while already on a protected branch. Normal Guardian work must finish through `guardian_done` or the lower-level finish tools. A command wrapper must not ask the agent to bypass this policy with raw push, merge, switch, or branch commands.
 
+## Protected Repo Paths
+
+Repo-local config may declare `protectedPaths`, a hard-deny list of repo-relative file or directory roots. Config entries are additive with Guardian's default local agent-state roots: `.omo`, `.omc`, `.omx`, `.sisyphus`, and `.milestones`.
+
+Protected paths are not hygiene findings, do not receive cleanup suggestions, and are fatal blockers for `guardian_delete_paths` even when tracked, recursive, or ignored deletion would otherwise be allowed. This policy applies to repo-path deletion surfaces, not to worktree or branch cleanup; worktree deletion remains governed by its own dirty-state, ancestry, ownership, and safety-ref gates.
+
 ## `guardian_done` Implementation-Done Policy
 
 `guardian_done` is the user-facing implementation-done workflow. Run `mode: "plan"` first and inspect the selected lane, preflight facts, dirty files, blockers, and confirmation posture.

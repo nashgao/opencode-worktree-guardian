@@ -8,6 +8,7 @@ import { isEnoent, isSameOrInside, lstatOrMissing, normalizeRelativePath, parseN
 import { getGuardianPaths, readState } from "./state.ts";
 import { protectedDirReason, scanWorkspaceHygiene } from "./hygiene-scan.ts";
 import type { HygieneCategory, HygieneSeverity } from "./hygiene-scan.ts";
+import { protectedPathsFromConfig } from "./protected-paths.ts";
 
 type CleanupPathKind = "directory" | "file" | "other";
 type CleanupBlocker = { path?: string; category?: string; reason: string; fatal: boolean };
@@ -56,7 +57,9 @@ async function collectCleanupProtectedRoots(repoRoot: string, config: Record<str
         roots.set(path.resolve(sessionRecord.worktree_path), "registered Guardian session worktree path");
       }
     }
-  } catch {}
+  } catch (error) {
+    if (!(error instanceof Error)) throw error;
+  }
   return [...roots.entries()].map(([root, reason]) => ({ root, reason })).sort((left, right) => left.root.localeCompare(right.root));
 }
 
@@ -116,6 +119,7 @@ async function buildHygieneCleanupPreflight(input: Record<string, unknown>) {
   const repoRoot = typeof input.repoRoot === "string" ? input.repoRoot : await getRepoRoot(cwd);
   const loadedConfig = input.config && typeof input.config === "object" ? { config: input.config as Record<string, unknown> } : await loadConfig(repoRoot);
   const config = loadedConfig.config;
+  const protectedPaths = protectedPathsFromConfig(config);
   const rawAllowCategories = stringArray(input.allowCategories);
   const invalidAllowCategories = rawAllowCategories.filter((category) => !CLEANUP_CATEGORIES.has(category as HygieneCategory));
   const allowCategories = rawAllowCategories.length > 0
@@ -153,7 +157,7 @@ async function buildHygieneCleanupPreflight(input: Record<string, unknown>) {
     const pathBlockers: CleanupBlocker[] = [];
     if (!isSameOrInside(absolutePath, path.resolve(repoRoot))) pathBlockers.push({ path: cleanupPath, reason: "cleanup path is outside the repository root", fatal: true });
     if (relative === "." || relative === ".git" || relative.startsWith(".git/")) pathBlockers.push({ path: relative, reason: "repository root and .git metadata cannot be cleanup roots", fatal: true });
-    const protectedReason = protectedDirReason(relative);
+    const protectedReason = protectedDirReason(relative, protectedPaths);
     if (protectedReason) pathBlockers.push({ path: relative, reason: protectedReason, fatal: true });
     const protectedRoot = protectedRootBlocker(absolutePath, protectedRoots);
     if (protectedRoot) pathBlockers.push({ path: relative, reason: protectedRoot.reason, fatal: true });

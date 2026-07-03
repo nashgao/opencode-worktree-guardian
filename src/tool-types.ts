@@ -117,6 +117,7 @@ export const GUARDIAN_TOOL_NAMES = [
   "guardian_finish_workflow",
   "guardian_gc",
   "guardian_hygiene",
+  "guardian_init",
   "guardian_preserve",
   "guardian_project_status",
   "guardian_recover",

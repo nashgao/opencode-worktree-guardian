@@ -3,6 +3,7 @@ import { expandWorktreeRoot, loadConfig } from "./config.ts";
 import { collectDeleteFingerprint } from "./deletion-fingerprint.ts";
 import { getRepoRoot, listWorktrees, runGit, tryGit } from "./git.ts";
 import { isEnoent, isSameOrInside, lstatOrMissing, normalizeRelativePath, parseNullSeparated, recordValue, relativePath, stringArray, uniqueSorted } from "./filesystem-boundaries.ts";
+import { protectedPathMatch, protectedPathsFromConfig } from "./protected-paths.ts";
 import { getGuardianPaths, readState } from "./state.ts";
 
 export type DeletePathKind = "directory" | "file" | "symlink" | "other" | "missing";
@@ -44,8 +45,10 @@ async function isIgnoredPath(repoRoot: string, relative: string) {
   return result.ok;
 }
 
-function protectedPathReason(relative: string) {
+function protectedPathReason(relative: string, protectedPaths: readonly string[]) {
   if (relative === ".git" || relative.startsWith(".git/")) return "git metadata";
+  const protectedPath = protectedPathMatch(relative, protectedPaths);
+  if (protectedPath) return protectedPath.reason;
   const firstPart = relative.split("/").filter(Boolean)[0] ?? "";
   return PROTECTED_PATH_ROOTS.has(firstPart) ? `protected ${firstPart} path` : null;
 }
@@ -57,7 +60,9 @@ async function collectDeleteProtectedRoots(repoRoot: string, cwd: string, config
   try {
     const currentRoot = await getRepoRoot(cwd);
     roots.set(path.resolve(currentRoot), { reason: "current worktree root", blockInside: false });
-  } catch {}
+  } catch (error) {
+    if (!(error instanceof Error)) throw error;
+  }
   for (const entry of await listWorktrees(repoRoot)) {
     const worktreePath = path.resolve(String(entry.path));
     if (worktreePath !== path.resolve(repoRoot)) roots.set(worktreePath, { reason: "registered Git worktree path", blockInside: true });
@@ -70,7 +75,9 @@ async function collectDeleteProtectedRoots(repoRoot: string, cwd: string, config
         roots.set(path.resolve(sessionRecord.worktree_path), { reason: "registered Guardian session worktree path", blockInside: true });
       }
     }
-  } catch {}
+  } catch (error) {
+    if (!(error instanceof Error)) throw error;
+  }
   return [...roots.entries()].map(([root, metadata]) => ({ root, ...metadata })).sort((left, right) => left.root.localeCompare(right.root));
 }
 
@@ -97,6 +104,7 @@ export async function buildDeletePathsPreflight(input: Record<string, unknown>) 
   const repoRoot = path.resolve(typeof input.repoRoot === "string" ? input.repoRoot : await getRepoRoot(cwd));
   const loadedConfig = input.config && typeof input.config === "object" ? { config: input.config as Record<string, unknown> } : await loadConfig(repoRoot);
   const config = loadedConfig.config;
+  const protectedPaths = protectedPathsFromConfig(config);
   const allowTracked = input.allowTracked === true;
   const allowRecursive = input.allowRecursive === true;
   const paths = uniqueSorted(stringArray(input.paths));
@@ -110,7 +118,7 @@ export async function buildDeletePathsPreflight(input: Record<string, unknown>) 
     const pathBlockers: DeletePathBlocker[] = [];
     if (!isSameOrInside(absolutePath, repoRoot)) pathBlockers.push({ path: requestedPath, reason: "delete path is outside the repository root", fatal: true });
     if (relative === ".") pathBlockers.push({ path: relative, reason: "repository root cannot be deleted by guardian_delete_paths", fatal: true });
-    const protectedReason = protectedPathReason(relative);
+    const protectedReason = protectedPathReason(relative, protectedPaths);
     if (protectedReason) pathBlockers.push({ path: relative, reason: protectedReason, fatal: true });
     const protectedRoot = protectedRootBlocker(absolutePath, protectedRoots);
     if (protectedRoot) pathBlockers.push({ path: relative, reason: protectedRoot.reason, fatal: true });

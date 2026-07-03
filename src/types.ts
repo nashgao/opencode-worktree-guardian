@@ -21,6 +21,7 @@ export type GuardianConfig = {
   readonly allowStashIfUnrelated: boolean;
   readonly allowBaseWorktreePreserveReset: boolean;
   readonly allowDirtyPaths: readonly string[];
+  readonly protectedPaths: readonly string[];
   readonly protectedBranches: readonly string[];
   readonly trustedUpstreamRemotes: readonly string[];
   readonly lockTimeoutMs: number;

@@ -1,103 +1,21 @@
 import fs from "node:fs/promises";
-import path from "node:path";
 import { loadConfig } from "../config.ts";
 import { getCurrentBranch } from "../git.ts";
 import { classifyGuardCommand, classifyNormalAgentGitCommand, classifyReadOnlyInspectionCommand, extractCommandText } from "../guards.ts";
-import { guardianStart } from "../start.ts";
 import { collectKnownWorktreePaths, resolveSessionWorktree } from "../session/worktree-binding.ts";
 import { recordLastSafeState } from "../session/last-safe-state.ts";
 import { runGuardianTool } from "../tool-registry.ts";
-import type { GuardCommandPayload, GuardianConfig, GuardianToolInput, GuardianToolResult, HookContext, PlanTokenCache, PluginServerOptions, RecordLike, SessionWorktreeResult } from "../types.ts";
+import type { GuardCommandPayload, GuardianToolInput, GuardianToolResult, HookContext, PlanTokenCache, PluginServerOptions, RecordLike, SessionWorktreeResult } from "../types.ts";
 import { errorMessage, isRecordLike } from "../types.ts";
 import { routeDirectFileMutation, directFileMutationPathArg } from "./direct-file-routing.ts";
 import { writeLog, createEvent } from "./event-log.ts";
+import { tryInvisibleStart, tryLazyStart } from "./auto-start.ts";
 import { collectGuardContext } from "./guard-context.ts";
 import { getExecutionCwd, getIdleEventSessionId, getSessionId, getStringSessionId } from "./hook-context.ts";
 import { injectInvisiblePolicy } from "./invisible-policy.ts";
-import { guardianTool } from "./native-tool.ts";
 import { rewriteGuardianCommand } from "./slash-commands.ts";
 import { canFallbackToNormalGit, getActualWorktree, pathExists, rememberSessionWorktree, resolveActualWorktreeOrPath, routeRecordedSessionCommand } from "./session-routing.ts";
-
-async function tryInvisibleStart(input: GuardCommandPayload, context: HookContext, config: GuardianConfig) {
-  const sessionId = getSessionId(input);
-  if (!config.autoStart || config.autoStartMode !== "eager" || !sessionId || !context.directory) return null;
-  try {
-    return await guardianStart({
-      repoRoot: context.directory,
-      cwd: context.worktree ?? context.directory,
-      sessionId,
-      taskName: input?.taskName ?? "session",
-      createWorktree: context.worktree == null || context.worktree === context.directory,
-      config,
-    });
-  } catch (error) {
-    return { ok: false, reason: errorMessage(error) };
-  }
-}
-
-function isPathInside(parent: string, candidate: string) {
-  const relative = path.relative(path.resolve(parent), path.resolve(candidate));
-  return relative === "" || Boolean(relative) && !relative.startsWith("..") && !path.isAbsolute(relative);
-}
-
-function directFileMutationTargetsRepo(input: GuardCommandPayload, output: GuardCommandPayload, repoRoot: string | undefined) {
-  const pathArg = directFileMutationPathArg(input, output);
-  return Boolean(pathArg && repoRoot && isPathInside(repoRoot, pathArg.value));
-}
-
-async function tryLazyStart(input: GuardCommandPayload, output: GuardCommandPayload, context: HookContext, config: GuardianConfig | null, sessionWorktree: SessionWorktreeResult | null, command: unknown, readOnly: { readonly allowed: boolean }, guardBlocked: boolean, executionCwd: string, cache: Map<string, string>) {
-  const sessionId = getSessionId(input);
-  const shouldStart = config?.autoStart === true
-    && config.autoStartMode === "lazy"
-    && !guardBlocked
-    && Boolean(sessionId)
-    && Boolean(context.directory)
-    && sessionWorktree?.terminal !== true
-    && typeof sessionWorktree?.expectedWorktree !== "string"
-    && (directFileMutationTargetsRepo(input, output, context.directory) || Boolean(typeof command === "string" && command.length > 0 && !readOnly.allowed));
-  if (!shouldStart || !sessionId || !context.directory) return null;
-
-  const result = await guardianStart({
-    repoRoot: context.directory,
-    cwd: executionCwd,
-    sessionId,
-    taskName: input.taskName ?? "session",
-    createWorktree: true,
-    config,
-  });
-  rememberSessionWorktree(cache, sessionId, result);
-  if (result.ok !== true) return { result, sessionWorktree };
-
-  const actualWorktree = await resolveActualWorktreeOrPath(executionCwd);
-  const resolved = await resolveSessionWorktree({
-    repoRoot: context.directory,
-    cwd: executionCwd,
-    actualWorktree,
-    sessionId,
-    cache,
-    validateBinding: true,
-  });
-  return { result, sessionWorktree: resolved };
-}
-
-function createTools(planCache: PlanTokenCache) {
-  return {
-    guardian_done: guardianTool("guardian_done", "Plan or apply the safest implementation-done path for this repository state, including default repo-wide session finish, local base sync, and redundant cleanup sweep planning.", planCache),
-    guardian_start: guardianTool("guardian_start", "Create or attach this OpenCode session to a guardian-owned worktree.", planCache),
-    guardian_status: guardianTool("guardian_status", "Report guardian state, worktrees, safety refs, stash inventory, and blockers without mutating the repo.", planCache),
-    guardian_delete_paths: guardianTool("guardian_delete_paths", "Plan or apply exact path deletion with confirm-token, fingerprint, tracked-file, recursive, and protected-root gates.", planCache),
-    guardian_delete_worktree: guardianTool("guardian_delete_worktree", "Plan or apply safe Guardian-mediated worktree deletion with confirm-token and safety-ref gates.", planCache),
-    guardian_unblock_finish: guardianTool("guardian_unblock_finish", "Plan or apply safe finish blocker resolution, such as committing review artifacts with confirm-token gates.", planCache),
-    guardian_finish_workflow: guardianTool("guardian_finish_workflow", "Plan or apply an implementation-done workflow that verifies clean state and removes redundant merged worktrees and branches through Guardian gates.", planCache),
-    guardian_finish: guardianTool("guardian_finish", "Apply the configured gated finish mode for the current Guardian worktree.", planCache),
-    guardian_preserve: guardianTool("guardian_preserve", "Mark the current Guardian worktree as terminal/preserved with a safety ref.", planCache),
-    guardian_project_status: guardianTool("guardian_project_status", "Read project roadmap, milestone, plan, and ULW evidence into a static project intelligence snapshot.", planCache),
-    guardian_recover: guardianTool("guardian_recover", "List recovery refs, orphaned sessions, stash inventory, and suggested recovery commands without mutation.", planCache),
-    guardian_report_html: guardianTool("guardian_report_html", "Write a static offline HTML report for guardian sessions, worktrees, branches, risks, and recovery commands.", planCache),
-    guardian_hygiene: guardianTool("guardian_hygiene", "Scan, plan, or apply token-gated cleanup for workspace hygiene findings.", planCache),
-    guardian_gc: guardianTool("guardian_gc", "Plan or apply record-only Guardian state cleanup of stale terminal, poisoned, and orphaned session records.", planCache),
-  };
-}
+import { createTools } from "./tool-definitions.ts";
 
 async function resolveHookSessionWorktree(input: GuardCommandPayload, output: GuardCommandPayload, context: HookContext, pluginDirectory: string | undefined, sessionWorktreeCache: Map<string, string>) {
   const command = extractCommandText(input, output);
@@ -116,6 +34,7 @@ async function resolveHookSessionWorktree(input: GuardCommandPayload, output: Gu
       validateBinding: true,
     }) : { ok: true, sessionId: getStringSessionId(input), expectedWorktree: null, actualWorktree: executionCwd, matches: true, source: "unavailable" };
   } catch (error) {
+    if (!(error instanceof Error)) throw error;
     sessionWorktree = { ok: false, reason: errorMessage(error), sessionId: getStringSessionId(input), expectedWorktree: null, actualWorktree: executionCwd };
   }
   return { command, executionCwd, sessionWorktree };
@@ -145,6 +64,7 @@ const WorktreeGuardianPlugin = {
             rememberSessionWorktree(sessionWorktreeCache, getSessionId(input), invisibleStart);
           }
         } catch (error) {
+          if (!(error instanceof Error)) throw error;
           invisibleStart = { ok: false, reason: errorMessage(error) };
         }
         await writeLog(client, createEvent("chat.system.transform", input, output, context, { invisibleStart }));
@@ -158,7 +78,9 @@ const WorktreeGuardianPlugin = {
         let knownWorktreePaths = typeof worktree === "string" ? [worktree] : [];
         try {
           knownWorktreePaths = await collectKnownWorktreePaths({ cwd: effectiveCwd, repoRoot: directory, currentWorktree: worktree });
-        } catch {}
+        } catch (error) {
+          if (!(error instanceof Error)) throw error;
+        }
         const guardContext = await collectGuardContext({ pluginDirectory, effectiveCwd });
         let guard = classifyGuardCommand(command, {
           cwd: effectiveCwd,
@@ -180,7 +102,18 @@ const WorktreeGuardianPlugin = {
           currentBranch: guardContext.currentBranch,
         });
         let routed = false;
-        const lazyStart = await tryLazyStart(input, output, context, guardContext.guardConfig, sessionWorktree, command, readOnly, guard.blocked, effectiveCwd, sessionWorktreeCache);
+        const lazyStart = await tryLazyStart({
+          input,
+          output,
+          context,
+          config: guardContext.guardConfig,
+          sessionWorktree,
+          command,
+          readOnly,
+          guardBlocked: guard.blocked,
+          executionCwd: effectiveCwd,
+          cache: sessionWorktreeCache,
+        });
         if (lazyStart?.result.ok === false) {
           if (input.callID) activeToolCalls.delete(input.callID);
           await writeLog(client, createEvent("tool.execute.before", input, output, context, { guard, sessionWorktree, readOnly, normalAgentGit, routed, lazyStart: lazyStart.result }));
@@ -205,7 +138,10 @@ const WorktreeGuardianPlugin = {
             effectiveCwd = typeof output.args?.workdir === "string" ? output.args.workdir : effectiveCwd;
             routed = true;
             knownWorktreePaths = await collectKnownWorktreePaths({ cwd: effectiveCwd, repoRoot: directory, currentWorktree: worktree });
-            const currentBranch = await getCurrentBranch(effectiveCwd).catch(() => null);
+            const currentBranch = await getCurrentBranch(effectiveCwd).catch((error: unknown) => {
+              if (error instanceof Error) return null;
+              throw error;
+            });
             guard = classifyGuardCommand(command, {
               cwd: effectiveCwd,
               repoRoot: directory,
@@ -217,6 +153,7 @@ const WorktreeGuardianPlugin = {
               currentBranch,
             });
           } catch (error) {
+            if (!(error instanceof Error)) throw error;
             await writeLog(client, createEvent("tool.execute.before", input, output, context, { guard, sessionWorktree, readOnly, normalAgentGit, routed, routeError: errorMessage(error) }));
             if (!canFallbackToNormalGit(error, normalAgentGit)) {
               if (input.callID) activeToolCalls.delete(input.callID);
@@ -256,6 +193,7 @@ const WorktreeGuardianPlugin = {
           }
           lastSafeState = await recordLastSafeState({ cwd: executionCwd, repoRoot: directory, sessionId: getStringSessionId(input), tool: input.tool });
         } catch (error) {
+          if (!(error instanceof Error)) throw error;
           lastSafeState = { ok: false, reason: errorMessage(error) };
         }
         await writeLog(client, createEvent("tool.execute.after", input, output, context, { lastSafeState }));
@@ -299,6 +237,7 @@ const WorktreeGuardianPlugin = {
                 if (autoFinish?.ok === true) autoFinishedSessions.add(sessionId);
               }
             } catch (error) {
+              if (!(error instanceof Error)) throw error;
               autoFinish = { ok: false, reason: errorMessage(error) };
             }
           }

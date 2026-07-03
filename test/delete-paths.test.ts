@@ -125,6 +125,24 @@ test("guardian_delete_paths can plan exact reviewable handoff paths blocked by h
   assert.equal(hasFatalBlocker(protectedBlocked.blockers, "node_modules", /protected node_modules/), true);
 });
 
+test("guardian_delete_paths blocks configured protected paths", async () => {
+  const repo = await createRepo();
+  const config = { ...DEFAULT_CONFIG, protectedPaths: [...DEFAULT_CONFIG.protectedPaths, ".agent-state"] };
+  await fs.mkdir(path.join(repo, ".agent-state", "logs"), { recursive: true });
+  await fs.writeFile(path.join(repo, ".agent-state", "logs", "run.jsonl"), "state\n");
+
+  const blocked = await guardianDeletePaths({
+    repoRoot: repo,
+    config,
+    mode: "plan",
+    paths: [".agent-state/logs"],
+    allowRecursive: true,
+  });
+
+  assert.equal(blocked.status, "blocked");
+  assert.equal(hasFatalBlocker(blocked.blockers, ".agent-state/logs", /configured protected path \.agent-state/), true);
+});
+
 test("guardian_delete_paths blocks stale tokens after path content changes", async () => {
   const repo = await createRepo();
   await fs.writeFile(path.join(repo, "scratch.txt"), "original\n");

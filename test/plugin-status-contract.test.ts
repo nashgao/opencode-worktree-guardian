@@ -111,9 +111,12 @@ test("guardian_status tool execute returns readable output with raw metadata", a
   assert.equal(typeof result.metadata, "object");
   assert.deepEqual(metadataCalls, [{ title: "guardian_status" }]);
   assert.equal(result.metadata.repoRoot, repo);
+  assert.equal(result.metadata.configSource, "defaults");
+  assert.equal(result.metadata.configLoaded, false);
   assert.match(result.output, /^\[FAIL\] Guardian Status: Blocked/m);
   assert.doesNotMatch(result.output, /guardian_status snapshot/);
   assert.match(result.output, /Repo\n  /);
+  assert.match(result.output, /Config\n  defaults active; .*worktree-guardian\.json not written\n  guardian_init to write repo config/);
   assert.match(result.output, /Work Now\n  Active sessions: 1\n  Worktrees: \d+\n  Dirty files: 0\n  Stashes: 0\n  Orphaned sessions: 0\n  Poisoned sessions: 1\n  Recovery candidates: 0/);
   assert.match(result.output, /Problems\n  Poisoned sessions: 1\n    - ses_contract_status_active/);
   assert.match(result.output, /History\n  Retained terminal sessions: 4\n  deleted: 1\n  finished: 1\n  preserved: 1\n  superseded: 1\n  Safety refs: 0\n  Preserved refs: 0/);
@@ -121,6 +124,22 @@ test("guardian_status tool execute returns readable output with raw metadata", a
   assert.doesNotMatch(result.output, /\[INFO\] terminal sessions:/);
   assert.doesNotMatch(result.output, /ses_contract_status_terminal/);
   assert.match(result.output, /Current Worktrees\n  main /);
+});
+
+test("guardian_init tool execute writes readable config result", async () => {
+  const repo = await createRepo();
+  const hooks = await plugin.server({ directory: repo, worktree: repo });
+  const { context } = createToolContext();
+  context.directory = repo;
+  context.worktree = repo;
+
+  const result = await runTool(hooks.tool.guardian_init.execute, { repoRoot: repo }, context);
+
+  assert.equal(result.title, "guardian_init");
+  assert.equal(result.metadata.status, "created");
+  assert.equal(result.metadata.created, true);
+  assert.match(result.output, /\[GOOD\] guardian_init created/);
+  assert.match(result.output, /wrote default Guardian config/);
 });
 
 test("unrelated lifecycle tools ignore project status schema fields", async () => {

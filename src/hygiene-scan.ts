@@ -3,6 +3,7 @@ import path from "node:path";
 import { expandWorktreeRoot, loadConfig } from "./config.ts";
 import { getRepoRoot, listWorktrees, runGitNullSeparated, tryGit } from "./git.ts";
 import { isEnoent, isSameOrInside, normalizeRelativePath, relativePath } from "./filesystem-boundaries.ts";
+import { DEFAULT_PROTECTED_PATHS, protectedPathMatch, protectedPathsFromConfig } from "./protected-paths.ts";
 
 export type HygieneSeverity = "warn" | "fail";
 export type HygieneCategory = "known-cleanable" | "nested-git" | "suspicious";
@@ -18,28 +19,13 @@ type ReviewableCandidate = {
 };
 
 const PROTECTED_DIR_NAMES = new Set([
-  "node_modules",
-  "vendor",
-  "target",
-  "dist",
-  "build",
-  "coverage",
-  ".cache",
-  ".next",
-  ".turbo",
-  ".vite",
-  ".parcel-cache",
-  ".pnpm-store",
-  "out",
-  "tmp",
-  "temp",
+  "node_modules", "vendor", "target", "dist", "build", "coverage",
+  ".cache", ".next", ".turbo", ".vite", ".parcel-cache", ".pnpm-store",
+  "out", "tmp", "temp",
 ]);
 
 const SUSPICIOUS_NAME_PATTERN = /(^|[-_.])(clone|clones|research|dump|dumps|scratch|sandbox|experiment|prototype|poc|checkout|repo)([-_.]|$)/i;
 const RESIDUE_ROOT_PATTERN = /^(guardian-[^/]+|guardian-origin-[^/]+|opencode-temp-[^/]+|omo-research-[^/]+|opencode-research-[^/]+|git-docs-research)$/;
-const LOCAL_AGENT_STATE_DIRS = new Set([".omo", ".omc", ".omx", ".sisyphus", ".milestones"]);
-
-function errorMessage(error: unknown) { return error instanceof Error ? error.message : String(error); }
 
 async function listCandidatePaths(repoRoot: string) {
   const untracked = await runGitNullSeparated(repoRoot, ["ls-files", "--others", "--exclude-standard", "-z"]);
@@ -56,23 +42,26 @@ async function listCandidatePaths(repoRoot: string) {
     .sort((left, right) => left.path.localeCompare(right.path));
 }
 
-export function protectedDirReason(relative: string) {
+export function protectedDirReason(relative: string, protectedPaths: readonly string[] = DEFAULT_PROTECTED_PATHS) {
   const parts = relative.split("/").filter(Boolean);
   if (relative === ".git" || relative.startsWith(".git/")) {
     return relative === ".git/worktrees" || relative.startsWith(".git/worktrees/") ? "git worktree metadata" : "git metadata";
   }
+  const protectedPath = protectedPathMatch(relative, protectedPaths);
+  if (protectedPath) return protectedPath.reason;
   const protectedPart = parts.find((part) => PROTECTED_DIR_NAMES.has(part));
   return protectedPart ? `protected ${protectedPart} directory` : null;
 }
 
-function protectedDirExclusionPath(relative: string) {
+function protectedDirExclusionPath(relative: string, protectedPaths: readonly string[]) {
+  const protectedPath = protectedPathMatch(relative, protectedPaths);
+  if (protectedPath) return protectedPath.path;
   const parts = relative.split("/").filter(Boolean);
   return parts.slice(0, parts.findIndex((part) => PROTECTED_DIR_NAMES.has(part)) + 1).join("/") || parts[0] || relative;
 }
 
 function knownCleanableMatch(relative: string) {
   const parts = relative.split("/").filter(Boolean);
-  if (LOCAL_AGENT_STATE_DIRS.has(parts[0] ?? "")) return { path: parts[0], reason: "local agent state directory" };
   if (parts.length === 1 && /^[^/]+\.tsv$/i.test(parts[0] ?? "")) return { path: parts[0], reason: "generated TSV artifact" };
   if (parts[0] === "data" && /^test-wal-[^/]+$/.test(parts[1] ?? "")) return { path: `data/${parts[1]}`, reason: "known test WAL scratch artifact" };
   for (const [index, part] of parts.entries()) {
@@ -194,6 +183,7 @@ export async function scanWorkspaceHygiene(input: Record<string, unknown> = {}) 
     const repoRoot = typeof input.repoRoot === "string" ? input.repoRoot : await getRepoRoot(cwd);
     const loadedConfig = input.config && typeof input.config === "object" ? { config: input.config as Record<string, string> } : await loadConfig(repoRoot);
     const config = loadedConfig.config;
+    const protectedPaths = protectedPathsFromConfig(config);
     const worktrees = await listWorktrees(repoRoot);
     const configuredWorktreeRoot = path.resolve(repoRoot, expandWorktreeRoot(String(config.worktreeRoot), repoRoot));
     const protectedRoots = worktrees.map((entry) => path.resolve(String(entry.path))).filter((entry) => entry !== path.resolve(repoRoot));
@@ -203,21 +193,13 @@ export async function scanWorkspaceHygiene(input: Record<string, unknown> = {}) 
     const reviewableCandidateInputs: ReviewableCandidateInput[] = [];
     const seenFindings = new Set<string>();
     const candidates = await listCandidatePaths(repoRoot);
-    const trackedRootCache = new Map<string, boolean>();
-    const trackedRootHasCommittedFiles = async (relative: string) => {
-      const cached = trackedRootCache.get(relative);
-      if (cached !== undefined) return cached;
-      const value = await hasTrackedEntriesUnder(repoRoot, relative);
-      trackedRootCache.set(relative, value);
-      return value;
-    };
     for (const candidate of candidates) {
       const absolutePath = path.resolve(repoRoot, candidate.path);
       const relative = relativePath(repoRoot, absolutePath);
-      const protectedReason = protectedDirReason(relative);
+      const protectedReason = protectedDirReason(relative, protectedPaths);
       const protectedRoot = protectedRoots.find((root) => isSameOrInside(absolutePath, root));
       if (protectedReason || protectedRoot) {
-        const exclusionPath = protectedRoot ? relativePath(repoRoot, protectedRoot) : protectedDirExclusionPath(relative);
+        const exclusionPath = protectedRoot ? relativePath(repoRoot, protectedRoot) : protectedDirExclusionPath(relative, protectedPaths);
         exclusionsByPath.set(exclusionPath, { path: exclusionPath, reason: protectedReason ?? "configured or registered Git worktree path" });
         continue;
       }
@@ -234,16 +216,12 @@ export async function scanWorkspaceHygiene(input: Record<string, unknown> = {}) 
       }
       const knownMatch = knownCleanableMatch(relative);
       if (knownMatch) {
-        const collapsedRoot = typeof knownMatch.path === "string" ? knownMatch.path : "";
-        const committedAgentStateRoot = LOCAL_AGENT_STATE_DIRS.has(collapsedRoot) && await trackedRootHasCommittedFiles(collapsedRoot);
-        if (!committedAgentStateRoot) {
-          const key = `known-cleanable:${knownMatch.path}`;
-          if (!seenFindings.has(key)) {
-            findings.push({ path: knownMatch.path, category: "known-cleanable" satisfies HygieneCategory, severity: "warn" satisfies HygieneSeverity, reason: knownMatch.reason, source: "git ls-files --others/--ignored" });
-            seenFindings.add(key);
-          }
-          continue;
+        const key = `known-cleanable:${knownMatch.path}`;
+        if (!seenFindings.has(key)) {
+          findings.push({ path: knownMatch.path, category: "known-cleanable" satisfies HygieneCategory, severity: "warn" satisfies HygieneSeverity, reason: knownMatch.reason, source: "git ls-files --others/--ignored" });
+          seenFindings.add(key);
         }
+        continue;
       }
       const residue = residueRoot(relative);
       if (residue) {
@@ -280,6 +258,7 @@ export async function scanWorkspaceHygiene(input: Record<string, unknown> = {}) 
     const nestedCommands = findings.filter((finding) => finding.category === "nested-git").map((finding) => `git -C ${shellQuote(String(finding.path))} status --short`);
     return { ok: true, repoRoot, summary, findings, exclusions, reviewableCandidates: reviewableSummary.reviewableCandidates, scannedAt, suggestedCommands: ["guardian_hygiene", "guardian_status", "git status --short --ignored", ...nestedCommands] };
   } catch (error) {
-    return { ok: false, status: "failed", reason: errorMessage(error), failureReason: errorMessage(error), summary: { scanFailed: true, candidateCount: 0, findingCount: 0, exclusionCount: 0, reviewableCandidateCount: 0, reviewableShownCount: 0, reviewableOmittedCount: 0, reviewableTruncated: false, bySeverity: { warn: 0, fail: 0 }, byCategory: { "known-cleanable": 0, "nested-git": 0, suspicious: 0 } }, findings: [], exclusions: [], reviewableCandidates: [], scannedAt, suggestedCommands: ["guardian_hygiene", "guardian_status"] };
+    if (!(error instanceof Error)) throw error;
+    return { ok: false, status: "failed", reason: error.message, failureReason: error.message, summary: { scanFailed: true, candidateCount: 0, findingCount: 0, exclusionCount: 0, reviewableCandidateCount: 0, reviewableShownCount: 0, reviewableOmittedCount: 0, reviewableTruncated: false, bySeverity: { warn: 0, fail: 0 }, byCategory: { "known-cleanable": 0, "nested-git": 0, suspicious: 0 } }, findings: [], exclusions: [], reviewableCandidates: [], scannedAt, suggestedCommands: ["guardian_hygiene", "guardian_status"] };
   }
 }

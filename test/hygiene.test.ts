@@ -53,7 +53,6 @@ function hasFatalBlocker(records: unknown, predicate: (entry: Record<string, unk
 
 test("hygiene scanner detects known scratch artifact patterns", async () => {
   const repo = await createRepo();
-  await writeArtifact(repo, ".omo/run-continuation/session.json");
   await writeArtifact(repo, "librarian-alpha/file.txt");
   await writeArtifact(repo, "alpha-librarian/file.txt");
   await writeArtifact(repo, "hyperf-demo/file.txt");
@@ -68,7 +67,6 @@ test("hygiene scanner detects known scratch artifact patterns", async () => {
   const result = await scanWorkspaceHygiene({ repoRoot: repo, config: DEFAULT_CONFIG });
   assert.equal(result.ok, true);
   assert.deepEqual(findingPaths(result), [
-    ".omo",
     "alpha-librarian",
     "data/test-wal-001",
     "export.tsv",
@@ -80,9 +78,8 @@ test("hygiene scanner detects known scratch artifact patterns", async () => {
     "test-phpkafka",
     "tsx-501",
   ]);
-  assert.equal(result.summary.byCategory["known-cleanable"], 11);
+  assert.equal(result.summary.byCategory["known-cleanable"], 10);
   const reasons = new Map((result.findings as Array<Record<string, unknown>>).map((finding) => [finding.path, finding.reason]));
-  assert.equal(reasons.get(".omo"), "local agent state directory");
   assert.equal(reasons.get("export.tsv"), "generated TSV artifact");
   assert.equal(reasons.get("node-compile-cache"), "generated Node compile cache");
   assert.equal(reasons.get("node-coverage-123"), "generated Node coverage cache");
@@ -166,8 +163,8 @@ test("hygiene scanner exposes reviewable scan inventory separately from cleanup 
   const result = await scanWorkspaceHygiene({ repoRoot: repo, config: DEFAULT_CONFIG });
 
   assert.equal(result.ok, true);
-  assert.deepEqual(findingPaths(result), [".omo"]);
-  assert.deepEqual(pathsFromRecords(result.exclusions), ["node_modules"]);
+  assert.deepEqual(findingPaths(result), []);
+  assert.deepEqual(pathsFromRecords(result.exclusions), [".omo", "node_modules"]);
   assert.deepEqual(
     {
       summary: {
@@ -184,8 +181,8 @@ test("hygiene scanner exposes reviewable scan inventory separately from cleanup 
     {
       summary: {
         candidateCount: 16,
-        findingCount: 1,
-        exclusionCount: 1,
+        findingCount: 0,
+        exclusionCount: 2,
         reviewableCandidateCount: 14,
         reviewableShownCount: 12,
         reviewableOmittedCount: 2,
@@ -256,33 +253,37 @@ test("hygiene scanner keeps nested protected exclusions from suppressing reviewa
   ]);
 });
 
-test("hygiene scanner does not flag a committed agent-state directory for cleanup", async () => {
+test("hygiene scanner excludes agent-state directories from cleanup findings", async () => {
   const repo = await createRepo();
   await fs.writeFile(path.join(repo, ".gitignore"), "logs/\n");
-  await writeArtifact(repo, ".milestones/active/milestone-001.yaml");
-  await git(repo, ["add", ".gitignore", ".milestones/active/milestone-001.yaml"]);
-  await git(repo, ["commit", "-m", "track milestone deliverables"]);
   await writeArtifact(repo, ".milestones/logs/progress-events.jsonl");
+  await writeArtifact(repo, ".omc/session.json");
+  await writeArtifact(repo, ".omo/plan.md");
+  await writeArtifact(repo, ".omx/cache.json");
+  await writeArtifact(repo, ".sisyphus/state.json");
+  await git(repo, ["add", ".gitignore"]);
+  await git(repo, ["commit", "-m", "track ignore rules"]);
 
   const result = await scanWorkspaceHygiene({ repoRoot: repo, config: DEFAULT_CONFIG });
 
   assert.equal(result.ok, true);
-  assert.equal(findingPaths(result).includes(".milestones"), false);
-  assert.deepEqual(recordField(result, "reviewableCandidates"), [
-    { path: ".milestones/logs", status: "ignored", reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=[".milestones/logs"] allowRecursive=true' },
-  ]);
+  assert.equal(result.summary.findingCount, 0);
+  assert.deepEqual(pathsFromRecords(result.exclusions), [".milestones", ".omc", ".omo", ".omx", ".sisyphus"]);
+  assert.deepEqual(recordField(result, "reviewableCandidates"), []);
 });
 
-test("hygiene scanner still flags an agent-state directory with only untracked scratch", async () => {
+test("hygiene scanner excludes configured protected paths from cleanup findings", async () => {
   const repo = await createRepo();
-  await writeArtifact(repo, ".milestones/logs/progress-events.jsonl");
+  const config = { ...DEFAULT_CONFIG, protectedPaths: [...DEFAULT_CONFIG.protectedPaths, ".agent-state"] };
+  await writeArtifact(repo, ".agent-state/node-compile-cache/cache.blob");
+  await writeArtifact(repo, ".agent-state/research-dump/file.txt");
 
-  const result = await scanWorkspaceHygiene({ repoRoot: repo, config: DEFAULT_CONFIG });
+  const result = await scanWorkspaceHygiene({ repoRoot: repo, config });
 
   assert.equal(result.ok, true);
-  assert.equal(findingPaths(result).includes(".milestones"), true);
-  const reasons = new Map((result.findings as Array<Record<string, unknown>>).map((finding) => [finding.path, finding.reason]));
-  assert.equal(reasons.get(".milestones"), "local agent state directory");
+  assert.equal(result.summary.findingCount, 0);
+  assert.deepEqual(pathsFromRecords(result.exclusions), [".agent-state"]);
+  assert.deepEqual(recordField(result, "reviewableCandidates"), []);
 });
 
 test("hygiene scanner collapses known residue names to cleanup roots", async () => {

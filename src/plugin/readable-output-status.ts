@@ -75,6 +75,27 @@ function statusHeader(name: string, result: Record<string, unknown>) {
   return `${marker} Guardian Status: ${state}`;
 }
 
+function configLines(result: Record<string, unknown>) {
+  const source = textValue(result.configSource, "");
+  if (source === "input") return ["input override"];
+  const configPath = textValue(result.configPath);
+  if (source === "file") return [`file ${configPath}`];
+  if (source === "defaults") return [`defaults active; ${configPath} not written`, "guardian_init to write repo config"];
+  return [];
+}
+
+export function formatGuardianInitOutput(rawResult: unknown) {
+  const result = recordValue(rawResult);
+  const status = textValue(result.status, result.ok === false ? "blocked" : "completed");
+  const created = result.created === true;
+  return [
+    `${result.ok === false ? "[FAIL]" : created ? "[GOOD]" : "[INFO]"} guardian_init ${status}`,
+    `[INFO] repoRoot: ${textValue(result.repoRoot)}`,
+    `[INFO] configPath: ${textValue(result.configPath)}`,
+    `[INFO] ${created ? "wrote default Guardian config" : "config already exists; left unchanged"}`,
+  ].join("\n");
+}
+
 function statusVerdict(result: Record<string, unknown>) {
   return result.ok === false ? null : computeGuardianVerdict(result);
 }
@@ -86,6 +107,7 @@ export function formatGuardianStatusOutput(name: string, rawResult: unknown) {
   if (verdict) addSection(lines, "Reason", [verdict.headline]);
   if (verdict?.nextAction) addSection(lines, "Next", [verdict.nextAction]);
   addSection(lines, "Repo", [textValue(result.repoRoot)]);
+  addSection(lines, "Config", configLines(result));
   const reason = textValue(result.reason, "");
   if (result.ok === false || reason) addSection(lines, "Problem", [reason || "guardian tool reported failure"]);
   const activeSessions = arrayValue(result.activeSessions);

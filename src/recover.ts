@@ -7,7 +7,7 @@ import type { GitBranchEntry, GitRefEntry, GitStashEntry } from "./git.ts";
 import { scanWorkspaceHygiene } from "./hygiene.ts";
 import { isActiveSession, isTerminalSession } from "./lifecycle.ts";
 import { getGuardianPaths, readState } from "./state.ts";
-import type { GuardianConfig, GuardianSession, GuardianToolInput, GuardianToolResult, WorktreeEntry } from "./types.ts";
+import type { GuardianConfig, GuardianSession, GuardianToolInput, GuardianToolResult, LoadedGuardianConfig, WorktreeEntry } from "./types.ts";
 import { errorMessage, isRecordLike } from "./types.ts";
 
 type WorktreeAnnotationMetadata = {
@@ -55,6 +55,9 @@ type HygieneStatus = Record<string, unknown> & {
 type GuardianStatusResult = Omit<GuardianToolResult, "activeSessions" | "terminalSessions" | "worktrees" | "safetyRefs" | "sessions"> & {
   readonly repoRoot: string;
   readonly config: GuardianConfig;
+  readonly configPath: string | null;
+  readonly configLoaded: boolean;
+  readonly configSource: "defaults" | "file" | "input";
   readonly stateVersion: number | undefined;
   readonly sessions: readonly GuardianSession[];
   readonly activeSessions: readonly GuardianSession[];
@@ -81,7 +84,8 @@ async function pathExists(candidate: string) {
   try {
     await fs.access(candidate);
     return true;
-  } catch {
+  } catch (error) {
+    if (!(error instanceof Error)) throw error;
     return false;
   }
 }
@@ -145,16 +149,33 @@ function annotatePoisonedSession(session: GuardianSession, repoRoot: string, con
   };
 }
 
-async function configFromInput(input: GuardianToolInput, repoRoot: string): Promise<GuardianConfig> {
-  if (input.config === undefined || input.config === null) return (await loadConfig(repoRoot)).config;
+type StatusConfig = {
+  readonly config: GuardianConfig;
+  readonly path: string | null;
+  readonly loaded: boolean;
+  readonly source: "defaults" | "file" | "input";
+};
+
+function statusConfigFromLoaded(loaded: LoadedGuardianConfig): StatusConfig {
+  return {
+    config: loaded.config,
+    path: loaded.path,
+    loaded: loaded.loaded,
+    source: loaded.loaded ? "file" : "defaults",
+  };
+}
+
+async function configFromInput(input: GuardianToolInput, repoRoot: string): Promise<StatusConfig> {
+  if (input.config === undefined || input.config === null) return statusConfigFromLoaded(await loadConfig(repoRoot));
   if (!isRecordLike(input.config)) throw new Error("config must be an object");
-  return normalizeConfig(input.config);
+  return { config: normalizeConfig(input.config), path: null, loaded: true, source: "input" };
 }
 
 export async function guardianStatus(input: GuardianToolInput = {}): Promise<GuardianStatusResult> {
   const cwd = typeof input.cwd === "string" ? input.cwd : process.cwd();
   const repoRoot = typeof input.repoRoot === "string" ? input.repoRoot : await getRepoRoot(cwd);
-  const config = await configFromInput(input, repoRoot);
+  const statusConfig = await configFromInput(input, repoRoot);
+  const config = statusConfig.config;
   const paths = await getGuardianPaths(repoRoot);
   const state = await readState(paths, { repoRoot, config });
   const worktrees = await listWorktrees(repoRoot);
@@ -193,6 +214,9 @@ export async function guardianStatus(input: GuardianToolInput = {}): Promise<Gua
   return {
     repoRoot,
     config,
+    configPath: statusConfig.path,
+    configLoaded: statusConfig.loaded,
+    configSource: statusConfig.source,
     stateVersion: state.state_version,
     sessions,
     activeSessions,
