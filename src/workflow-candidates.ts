@@ -6,6 +6,12 @@ import { getDirtyFiles, getRepoRoot, isAncestor, listBranches, listRemoteBranche
 
 export const MAX_WORKFLOW_CLEANUP_CANDIDATES = 25;
 
+const RESERVED_CLEANUP_BRANCH_PREFIXES = ["rescue/"] as const;
+
+export function isReservedCleanupBranch(branch: string): boolean {
+  return RESERVED_CLEANUP_BRANCH_PREFIXES.some((prefix) => branch.startsWith(prefix));
+}
+
 export function samePath(left: string, right: string): boolean {
   return path.resolve(left) === path.resolve(right);
 }
@@ -104,11 +110,13 @@ export async function discoverCandidates(repoRoot: string, cwd: string, config: 
     if (!branch.name || !branch.commit) continue;
     if (branch.name === String(config.baseBranch)) continue;
     if (excludedBranchSet.has(branch.name)) continue;
-    if (branchPrefix.length === 0 || !branch.name.startsWith(branchPrefix)) continue;
+    if (isReservedCleanupBranch(branch.name)) continue;
     if (checkedOutBranches.has(branch.name)) continue;
     if ((config.protectedBranches as string[]).includes(branch.name)) continue;
+    const guardianPrefixed = branchPrefix.length > 0 && branch.name.startsWith(branchPrefix);
     const ancestryProven = await isAncestor(repoRoot, branch.commit, baseRef);
-    if (!ancestryProven && !allowAbandonUnmerged) continue;
+    const abandonUnmergedBranch = guardianPrefixed && allowAbandonUnmerged;
+    if (!ancestryProven && !abandonUnmergedBranch) continue;
     const candidate = await plannedCandidate(repoRoot, config, {
       branch: branch.name,
       allowIgnoredFiles,
@@ -119,18 +127,16 @@ export async function discoverCandidates(repoRoot: string, cwd: string, config: 
   }
 
   const remote = String(config.remote);
-  if (branchPrefix.length > 0) {
-    const remoteBranches = await listRemoteBranches(repoRoot, remote);
-    for (const remoteBranch of remoteBranches) {
-      if (!remoteBranch.branch || !remoteBranch.commit) continue;
-      if (!remoteBranch.branch.startsWith(branchPrefix)) continue;
-      if (remoteBranch.branch === String(config.baseBranch)) continue;
-      if (excludedBranchSet.has(remoteBranch.branch)) continue;
-      if ((config.protectedBranches as string[]).includes(remoteBranch.branch)) continue;
-      if (checkedOutBranches.has(remoteBranch.branch) && !cleanableCheckedOutBranches.has(remoteBranch.branch)) continue;
-      if (!(await isAncestor(repoRoot, remoteBranch.commit, baseRef))) continue;
-      candidates.push({ kind: "remote-branch", targetKind: "remote-branch", remote, remoteBranch: remoteBranch.branch, branch: remoteBranch.branch, head: remoteBranch.commit, localBranchExists: localBranches.has(remoteBranch.branch) });
-    }
+  const remoteBranches = await listRemoteBranches(repoRoot, remote);
+  for (const remoteBranch of remoteBranches) {
+    if (!remoteBranch.branch || !remoteBranch.commit) continue;
+    if (remoteBranch.branch === String(config.baseBranch)) continue;
+    if (excludedBranchSet.has(remoteBranch.branch)) continue;
+    if (isReservedCleanupBranch(remoteBranch.branch)) continue;
+    if ((config.protectedBranches as string[]).includes(remoteBranch.branch)) continue;
+    if (checkedOutBranches.has(remoteBranch.branch) && !cleanableCheckedOutBranches.has(remoteBranch.branch)) continue;
+    if (!(await isAncestor(repoRoot, remoteBranch.commit, baseRef))) continue;
+    candidates.push({ kind: "remote-branch", targetKind: "remote-branch", remote, remoteBranch: remoteBranch.branch, branch: remoteBranch.branch, head: remoteBranch.commit, localBranchExists: localBranches.has(remoteBranch.branch) });
   }
 
   if (candidates.length > MAX_WORKFLOW_CLEANUP_CANDIDATES) {
