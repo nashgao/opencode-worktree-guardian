@@ -1,6 +1,7 @@
 import { formatGuardianDeleteOutput, formatGuardianDeletePathsOutput, formatGuardianHygieneOutput, formatGuardianUnblockFinishOutput } from "./readable-output-cleanup.ts";
+import { formatGuardianFinishWorkflowOutput } from "./readable-output-finish-workflow.ts";
 import { formatGuardianInitOutput, formatGuardianReportOutput, formatGuardianStatusOutput } from "./readable-output-status.ts";
-import { formatGuardianDoneOutput, formatGuardianFinishWorkflowOutput } from "./readable-output-workflow.ts";
+import { formatGuardianDoneOutput } from "./readable-output-workflow.ts";
 import { formatProjectStatusOutput } from "../project/readable-output.ts";
 
 export const READABLE_GUARDIAN_TOOLS = new Set(["guardian_status", "guardian_recover", "guardian_report_html", "guardian_project_status", "guardian_hygiene", "guardian_init", "guardian_delete_paths", "guardian_delete_worktree", "guardian_unblock_finish", "guardian_finish_workflow", "guardian_done"]);

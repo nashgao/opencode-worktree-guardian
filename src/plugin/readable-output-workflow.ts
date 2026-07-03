@@ -1,51 +1,5 @@
 import { arrayValue, recordValue, shortCommit, textValue } from "./readable-output-values.ts";
 
-export function formatGuardianFinishWorkflowOutput(rawResult: unknown) {
-  const result = recordValue(rawResult);
-  const preflight = recordValue(result.preflight);
-  const candidates = arrayValue(result.candidates);
-  const blockers = arrayValue(result.blockers);
-  const results = arrayValue(result.results);
-  const scanStatus = textValue(preflight.candidateScanStatus, "unknown");
-  const lines = [
-    `${statusPrefix(result)} guardian_finish_workflow ${textValue(result.status)}`,
-    `[INFO] mode: ${textValue(preflight.mode)} | branch: ${textValue(preflight.currentBranch)} | baseRef: ${textValue(preflight.baseRef)} | baseRefOid: ${shortCommit(preflight.baseRefOid)}`,
-  ];
-  if (scanStatus === "completed") {
-    lines.push(`[INFO] candidateScan: completed | candidates: ${Number(preflight.candidateCount ?? candidates.length)} | blockers: ${Number(preflight.blockerCount ?? blockers.length)} | maxCandidates: ${Number(preflight.maxCandidateCount ?? 0)} | dirty: ${Number(preflight.dirtyFileCount ?? 0)} | stashes: ${Number(preflight.stashCount ?? 0)}`);
-  } else {
-    const scanReason = scanStatus === "skipped" ? textValue(preflight.candidateScanSkippedReason) : textValue(preflight.candidateScanFailedReason);
-    lines.push(`[WARN] candidateScan: ${scanStatus} | reason: ${scanReason} | maxCandidates: ${Number(preflight.maxCandidateCount ?? 0)} | dirty: ${Number(preflight.dirtyFileCount ?? 0)} | stashes: ${Number(preflight.stashCount ?? 0)}`);
-  }
-  const reason = textValue(result.reason, "");
-  if (result.ok === false || reason) lines.push(`[FAIL] ${reason || "guardian_finish_workflow blocked"}`);
-  if (typeof result.confirmToken === "string") lines.push(`[WARN] confirmToken: ${result.confirmToken}`);
-  if (candidates.length > 0) {
-    lines.push("[INFO] cleanup candidates:");
-    for (const entry of candidates.slice(0, 8)) {
-      const candidate = recordValue(entry);
-      const abandon = candidate.abandonUnmerged === true ? " abandonUnmerged=true" : "";
-      lines.push(`  - kind=${textValue(candidate.kind)} targetKind=${textValue(candidate.targetKind)} branch=${textValue(candidate.branch)} path=${textValue(candidate.targetPath)} head=${shortCommit(candidate.head)}${abandon}`);
-    }
-  }
-  if (blockers.length > 0) {
-    lines.push("[WARN] cleanup blockers:");
-    for (const entry of blockers.slice(0, 8)) {
-      const blocker = recordValue(entry);
-      lines.push(`  - kind=${textValue(blocker.kind)} branch=${textValue(blocker.branch)} path=${textValue(blocker.targetPath)} reason=${textValue(blocker.reason)}`);
-    }
-  }
-  if (results.length > 0) {
-    lines.push("[INFO] cleanup results:");
-    for (const entry of results.slice(0, 8)) {
-      const item = recordValue(entry);
-      const abandon = item.abandonUnmerged === true ? " abandonUnmerged=true" : "";
-      lines.push(`  - status=${textValue(item.status)} branch=${textValue(item.branch)} worktreeRemoved=${String(item.worktreeRemoved === true)} branchDeleted=${String(item.branchDeleted === true)}${abandon}`);
-    }
-  }
-  return lines.join("\n");
-}
-
 function statusPrefix(result: Record<string, unknown>): "[FAIL]" | "[WARN]" | "[GOOD]" {
   if (result.ok === false) return "[FAIL]";
   return result.status === "planned" || result.status === "planned-partial" ? "[WARN]" : "[GOOD]";

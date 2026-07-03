@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import test from "node:test";
 import plugin from "../src/index.ts";
-import { createToolContext, metadataArray, metadataRecord, runTool } from "./plugin-contract-helpers.ts";
+import { createToolContext, metadataArray, metadataRecord, metadataRecords, runTool } from "./plugin-contract-helpers.ts";
 
 test("guardian_finish_workflow tool execute returns readable plan output with raw metadata", async () => {
   const { createRepoWithOrigin, git } = await import("./helpers.ts");
@@ -62,7 +62,7 @@ test("guardian_finish_workflow tool execute reports completed empty candidate sc
   assert.match(result.output, /candidates: 0/);
 });
 
-test("guardian_finish_workflow tool execute dirty primary candidate scan reports blocked inventory", async () => {
+test("guardian_finish_workflow tool execute dirty primary candidate scan reports planned partial inventory", async () => {
   const { createRepoWithOrigin, git } = await import("./helpers.ts");
   const path = await import("node:path");
   const { base, repo } = await createRepoWithOrigin();
@@ -86,18 +86,18 @@ test("guardian_finish_workflow tool execute dirty primary candidate scan reports
 
   const result = await runTool(execute, { repoRoot: repo, cwd: repo, mode: "plan" }, context);
 
-  assert.equal(result.metadata.status, "blocked");
-  assert.equal(result.metadata.confirmToken, undefined);
+  assert.equal(result.metadata.status, "planned-partial");
+  assert.equal(typeof result.metadata.confirmToken, "string");
   const preflight = metadataRecord(result.metadata, "preflight");
   assert.equal(preflight.candidateScanStatus, "completed");
   assert.equal(preflight.candidateCount, 1);
   assert.equal(metadataArray(result.metadata, "candidates").length, 1);
-  assert.match(String(result.metadata.reason), /primary worktree/);
-  assert.match(result.output, /\[FAIL\] guardian_finish_workflow blocked/);
+  assert.equal(metadataRecords(result.metadata, "remaining").some((remaining) => remaining.kind === "primary-dirty"), true);
+  assert.match(result.output, /\[WARN\] guardian_finish_workflow planned-partial/);
   assert.match(result.output, /candidateScan: completed/);
   assert.match(result.output, /candidates: 1/);
   assert.match(result.output, /primary worktree has uncommitted changes/);
-  assert.doesNotMatch(result.output, /confirmToken:/);
+  assert.match(result.output, /confirmToken:/);
 });
 
 test("guardian_finish_workflow tool execute returns readable blocked output with raw metadata", async () => {

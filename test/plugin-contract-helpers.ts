@@ -50,6 +50,10 @@ export function metadataArray(metadata: RecordLike, key: string): readonly unkno
   return Array.isArray(metadata[key]) ? metadata[key] : [];
 }
 
+export function metadataRecords(metadata: RecordLike, key: string): readonly RecordLike[] {
+  return metadataArray(metadata, key).filter(isRecordLike);
+}
+
 export function createToolContext() {
   const metadataCalls: { readonly title?: string; readonly metadata?: RecordLike }[] = [];
   return {

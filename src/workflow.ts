@@ -104,7 +104,6 @@ export async function guardianFinishWorkflow(input: Record<string, unknown> = {}
   preflight.ignoredGuardianWorktreeFiles = ignoredGuardianWorktreeFiles;
   preflight.ignoredGuardianWorktreeFileCount = ignoredGuardianWorktreeFiles.length;
   const dirtyPrimaryReason = "primary worktree has uncommitted changes; commit implemented code before finish workflow cleanup";
-  if (blockingDirtyFiles.length > 0) addPreflightBlocker(preflight, dirtyPrimaryReason);
 
   const stashes = await listStashes(repoRoot);
   preflight.stashCount = stashes.length;
@@ -130,25 +129,29 @@ export async function guardianFinishWorkflow(input: Record<string, unknown> = {}
     return blocked("candidate discovery failed; cleanup inventory is incomplete", { candidates: [], blockers: [] }, preflight);
   }
 
-  if (preflightBlockers(preflight).length > 0) return blocked(dirtyPrimaryReason, { dirtyFiles: blockingDirtyFiles, candidates, blockers }, preflight);
   const hardBlocker = blockers.find((blocker) => blocker.kind === "candidate-bound");
+  const primaryDirtyBlocksCleanup = blockingDirtyFiles.length > 0 && (candidates.length === 0 || preflightBlockers(preflight).length > 0 || Boolean(hardBlocker));
+  if (primaryDirtyBlocksCleanup) return blocked(dirtyPrimaryReason, { dirtyFiles: blockingDirtyFiles, candidates, blockers }, preflight);
+  const preflightBlocker = preflightBlockers(preflight)[0];
+  if (preflightBlocker) return blocked(preflightBlocker, { dirtyFiles: blockingDirtyFiles, candidates, blockers }, preflight);
   if (hardBlocker) return blocked("cleanup candidate count exceeds bounded automation limit", { candidates, blockers }, preflight);
   if (blockers.length > 0 && candidates.length === 0) {
     return blocked("cleanup blockers must be resolved before apply", { candidates, blockers }, preflight);
   }
   const confirmToken = createWorkflowToken(preflight, candidates);
+  const primaryDirtyRemaining = blockingDirtyFiles.length > 0 ? [{ kind: "primary-dirty", status: "blocked", reason: dirtyPrimaryReason, blockingDirtyFiles }] : [];
   if (mode === "plan") {
     const finalPostflight = input.skipFinalPostflight === true
       ? { ok: true, status: "skipped", reason: "internal cleanup sweep skips final postflight" }
-      : await runFinalCleanupPostflight({ repoRoot, config, plannedBaseSync: candidates.length > 0, ...plannedCleanupAllowances(candidates) });
-    const remaining = finalPostflight.ok === true ? blockers : [...blockers, { kind: "final-postflight", status: "blocked", reason: finalPostflight.reason ?? "final cleanup postflight failed", finalPostflight }];
+      : await runFinalCleanupPostflight({ repoRoot, config, plannedBaseSync: candidates.length > 0 && blockingDirtyFiles.length === 0, ...plannedCleanupAllowances(candidates) });
+    const remaining = finalPostflight.ok === true ? [...blockers, ...primaryDirtyRemaining] : [...blockers, ...primaryDirtyRemaining, { kind: "final-postflight", status: "blocked", reason: finalPostflight.reason ?? "final cleanup postflight failed", finalPostflight }];
     return { ok: true, status: remaining.length > 0 ? "planned-partial" : "planned", confirmToken, preflight, candidates, blockers, remaining, finalPostflight };
   }
   if (input.confirmToken !== confirmToken) return blocked("confirm token mismatch; re-run mode=plan and use the returned confirmToken", { tokenMatched: false, candidates, blockers }, preflight);
 
   const applyBlockers = [...blockers];
   let baseSync: Record<string, unknown> | undefined;
-  if (candidates.length > 0) {
+  if (candidates.length > 0 && blockingDirtyFiles.length === 0) {
     baseSync = await syncLocalBase(repoRoot, config);
     if (baseSync.ok !== true) {
       applyBlockers.push({
@@ -158,6 +161,8 @@ export async function guardianFinishWorkflow(input: Record<string, unknown> = {}
         baseSync,
       });
     }
+  } else if (candidates.length > 0) {
+    applyBlockers.push({ kind: "base-sync-skipped", status: "blocked", reason: "primary worktree has uncommitted changes; base sync skipped", blockingDirtyFiles });
   }
 
   const results: Record<string, unknown>[] = [];
