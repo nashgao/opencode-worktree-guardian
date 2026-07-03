@@ -19,7 +19,7 @@ export type DeletePathTarget = {
   fingerprint: Array<Record<string, string | number>>;
 };
 
-const PROTECTED_PATH_ROOTS = new Set([".opencode", "node_modules", "vendor", ".pnpm-store"]);
+const PROTECTED_PATH_ROOTS = new Set(["node_modules", "vendor", ".pnpm-store"]);
 
 function pathKind(stat: Awaited<ReturnType<typeof lstatOrMissing>>): DeletePathKind {
   if (!stat) return "missing";

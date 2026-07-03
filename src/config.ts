@@ -1,33 +1,16 @@
+import { readFileSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { DEFAULT_PROTECTED_PATHS, normalizeProtectedPaths } from "./protected-paths.ts";
+import { normalizeProtectedPaths } from "./protected-paths.ts";
 import type { GuardianAutoStartMode, GuardianConfig, GuardianFinishMode, LoadedGuardianConfig, LoadConfigOptions, RecordLike } from "./types.ts";
 import { errorCode, isRecordLike } from "./types.ts";
 
 export const CONFIG_PATH = path.join(".opencode", "worktree-guardian.json");
+const DEFAULT_CONFIG_TEMPLATE_URL = new URL("../templates/worktree-guardian.json", import.meta.url);
+const DEFAULT_CONFIG_TEMPLATE = readFileSync(DEFAULT_CONFIG_TEMPLATE_URL, "utf8");
 
 export const FINISH_MODES = new Set(["preserve-only", "push-branch", "create-pr", "merge-to-base"]);
 export const AUTO_START_MODES = new Set(["eager", "lazy"]);
-
-export const DEFAULT_CONFIG: GuardianConfig = Object.freeze({
-  remote: "origin",
-  baseBranch: "main",
-  worktreeRoot: ".worktrees/$REPO",
-  branchPrefix: "guardian/",
-  finishMode: "create-pr",
-  autoStart: true,
-  autoStartMode: "eager",
-  autoFinish: false,
-  autoCleanup: false,
-  safetyRefRetentionDays: 30,
-  allowStashIfUnrelated: false,
-  allowBaseWorktreePreserveReset: false,
-  allowDirtyPaths: [],
-  protectedPaths: DEFAULT_PROTECTED_PATHS,
-  protectedBranches: ["main", "master", "develop", "production"],
-  trustedUpstreamRemotes: [],
-  lockTimeoutMs: 5_000,
-});
 
 export type ConfigErrorKind = "unsupported_finish_mode" | "unsupported_auto_start_mode";
 export type ConfigBoundaryError = Error & { readonly configErrorKind: ConfigErrorKind };
@@ -47,6 +30,64 @@ function isGuardianFinishMode(value: unknown): value is GuardianFinishMode {
 function isGuardianAutoStartMode(value: unknown): value is GuardianAutoStartMode {
   return typeof value === "string" && AUTO_START_MODES.has(value);
 }
+
+function templateError(message: string) {
+  return new Error(`Invalid worktree guardian default config template: ${message}`);
+}
+
+function stringField(record: RecordLike, key: string) {
+  const value = record[key];
+  if (typeof value !== "string") throw templateError(`${key} must be a string`);
+  return value;
+}
+
+function booleanField(record: RecordLike, key: string) {
+  const value = record[key];
+  if (typeof value !== "boolean") throw templateError(`${key} must be a boolean`);
+  return value;
+}
+
+function numberField(record: RecordLike, key: string) {
+  const value = record[key];
+  if (typeof value !== "number" || !Number.isFinite(value)) throw templateError(`${key} must be a finite number`);
+  return value;
+}
+
+function stringArrayField(record: RecordLike, key: string) {
+  const value = record[key];
+  if (!Array.isArray(value) || !value.every((entry) => typeof entry === "string")) throw templateError(`${key} must be a string array`);
+  return value;
+}
+
+function parseDefaultConfigTemplate(raw: string): GuardianConfig {
+  const value: unknown = JSON.parse(raw);
+  if (!isRecordLike(value)) throw templateError("root must be an object");
+  const finishMode = value.finishMode;
+  if (!isGuardianFinishMode(finishMode)) throw templateError("finishMode is unsupported");
+  const autoStartMode = value.autoStartMode;
+  if (!isGuardianAutoStartMode(autoStartMode)) throw templateError("autoStartMode is unsupported");
+  return {
+    remote: stringField(value, "remote"),
+    baseBranch: stringField(value, "baseBranch"),
+    worktreeRoot: stringField(value, "worktreeRoot"),
+    branchPrefix: stringField(value, "branchPrefix"),
+    finishMode,
+    autoStart: booleanField(value, "autoStart"),
+    autoStartMode,
+    autoFinish: booleanField(value, "autoFinish"),
+    autoCleanup: booleanField(value, "autoCleanup"),
+    safetyRefRetentionDays: numberField(value, "safetyRefRetentionDays"),
+    allowStashIfUnrelated: booleanField(value, "allowStashIfUnrelated"),
+    allowBaseWorktreePreserveReset: booleanField(value, "allowBaseWorktreePreserveReset"),
+    allowDirtyPaths: uniqueStrings(stringArrayField(value, "allowDirtyPaths")),
+    protectedPaths: normalizeProtectedPaths(stringArrayField(value, "protectedPaths")),
+    protectedBranches: uniqueStrings(stringArrayField(value, "protectedBranches")),
+    trustedUpstreamRemotes: uniqueStrings(stringArrayField(value, "trustedUpstreamRemotes")),
+    lockTimeoutMs: numberField(value, "lockTimeoutMs"),
+  };
+}
+
+export const DEFAULT_CONFIG: GuardianConfig = Object.freeze(parseDefaultConfigTemplate(DEFAULT_CONFIG_TEMPLATE));
 
 export function normalizeConfig(input: RecordLike = {}): GuardianConfig {
   const config = { ...DEFAULT_CONFIG, ...input };
@@ -71,7 +112,7 @@ export function normalizeConfig(input: RecordLike = {}): GuardianConfig {
     allowStashIfUnrelated: config.allowStashIfUnrelated === true,
     allowBaseWorktreePreserveReset: config.allowBaseWorktreePreserveReset === true,
     allowDirtyPaths: uniqueStrings(Array.isArray(input.allowDirtyPaths) ? input.allowDirtyPaths : []),
-    protectedPaths: normalizeProtectedPaths(Array.isArray(input.protectedPaths) ? input.protectedPaths : []),
+    protectedPaths: normalizeProtectedPaths(Array.isArray(config.protectedPaths) ? config.protectedPaths : []),
     protectedBranches,
     trustedUpstreamRemotes: uniqueStrings(Array.isArray(input.trustedUpstreamRemotes) ? input.trustedUpstreamRemotes : []),
     lockTimeoutMs: typeof config.lockTimeoutMs === "number" && Number.isFinite(config.lockTimeoutMs) ? config.lockTimeoutMs : DEFAULT_CONFIG.lockTimeoutMs,
@@ -99,7 +140,7 @@ export async function loadConfig(repoRoot: string, options: LoadConfigOptions = 
 }
 
 export function defaultConfigFileContent() {
-  return `${JSON.stringify(DEFAULT_CONFIG, null, 2)}\n`;
+  return DEFAULT_CONFIG_TEMPLATE.endsWith("\n") ? DEFAULT_CONFIG_TEMPLATE : `${DEFAULT_CONFIG_TEMPLATE}\n`;
 }
 
 async function configFileExists(configPath: string) {

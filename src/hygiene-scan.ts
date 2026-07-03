@@ -3,7 +3,7 @@ import path from "node:path";
 import { expandWorktreeRoot, loadConfig } from "./config.ts";
 import { getRepoRoot, listWorktrees, runGitNullSeparated, tryGit } from "./git.ts";
 import { isEnoent, isSameOrInside, normalizeRelativePath, relativePath } from "./filesystem-boundaries.ts";
-import { DEFAULT_PROTECTED_PATHS, protectedPathMatch, protectedPathsFromConfig } from "./protected-paths.ts";
+import { protectedPathMatch, protectedPathsFromConfig } from "./protected-paths.ts";
 
 export type HygieneSeverity = "warn" | "fail";
 export type HygieneCategory = "known-cleanable" | "nested-git" | "suspicious";
@@ -42,7 +42,7 @@ async function listCandidatePaths(repoRoot: string) {
     .sort((left, right) => left.path.localeCompare(right.path));
 }
 
-export function protectedDirReason(relative: string, protectedPaths: readonly string[] = DEFAULT_PROTECTED_PATHS) {
+export function protectedDirReason(relative: string, protectedPaths: readonly string[] = []) {
   const parts = relative.split("/").filter(Boolean);
   if (relative === ".git" || relative.startsWith(".git/")) {
     return relative === ".git/worktrees" || relative.startsWith(".git/worktrees/") ? "git worktree metadata" : "git metadata";

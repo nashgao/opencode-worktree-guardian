@@ -1,0 +1,33 @@
+{
+  "remote": "origin",
+  "baseBranch": "main",
+  "worktreeRoot": ".worktrees/$REPO",
+  "branchPrefix": "guardian/",
+  "finishMode": "create-pr",
+  "autoStart": true,
+  "autoStartMode": "eager",
+  "autoFinish": false,
+  "autoCleanup": false,
+  "safetyRefRetentionDays": 30,
+  "allowStashIfUnrelated": false,
+  "allowBaseWorktreePreserveReset": false,
+  "allowDirtyPaths": [],
+  "protectedPaths": [
+    ".omo",
+    ".omc",
+    ".omx",
+    ".sisyphus",
+    ".milestones",
+    ".opencode",
+    ".codegraph",
+    ".worktrees"
+  ],
+  "protectedBranches": [
+    "main",
+    "master",
+    "develop",
+    "production"
+  ],
+  "trustedUpstreamRemotes": [],
+  "lockTimeoutMs": 5000
+}

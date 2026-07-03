@@ -107,7 +107,7 @@ export const expectedPackageExports = {
   "./server": "./src/index.ts",
   "./tui": "./src/tui.ts",
 } as const;
-export const expectedPackageFiles = ["CHANGELOG.md", "codex", "commands", "docs", "src", "scripts", "skills", "README.md", "LICENSE"] as const;
+export const expectedPackageFiles = ["CHANGELOG.md", "codex", "commands", "docs", "src", "scripts", "skills", "templates", "README.md", "LICENSE"] as const;
 export const legacyHygieneCommandNameParts = ["hygiene", "cleanup"] as const;
 export const publicDriftScanEntries = ["README.md", "docs", "commands", "skills", "codex", "src", "test", "package.json", "package-lock.json"] as const;
 
