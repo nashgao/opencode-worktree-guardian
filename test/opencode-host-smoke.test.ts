@@ -28,6 +28,15 @@ function createClient(records: HostLogRecord[]) {
   };
 }
 
+function isHostLogRecord(value: unknown): value is HostLogRecord {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function recordValue(value: unknown): HostLogRecord {
+  if (!isHostLogRecord(value)) throw new TypeError("expected host log record");
+  return value;
+}
+
 function createToolContext(repo: string) {
   return {
     sessionID: "ses_host",
@@ -101,21 +110,26 @@ test("host-like chat transform preserves OpenCode client method binding", async 
   assert.equal(records[0].message, "chat.system.transform");
 });
 
-test("host-like smoke blocks destructive commands before disposable repo mutation", async (t) => {
+test("host-like smoke audits destructive commands by default", async (t) => {
   const { repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(path.dirname(repo), { recursive: true, force: true }));
+  const records: HostLogRecord[] = [];
   const before = await git(repo, ["rev-parse", "HEAD"]);
-  const hooks = await plugin.server({ directory: repo, worktree: repo, client: createClient([]) });
+  const hooks = await plugin.server({ directory: repo, worktree: repo, client: createClient(records) });
 
-  await assert.rejects(
+  await assert.doesNotReject(
     () => hooks["tool.execute.before"](
       { tool: "bash", sessionID: "ses_host", callID: "call_host" },
       { args: { command: "git reset --hard HEAD~1" } },
     ),
-    /Worktree Guardian blocked command/,
   );
   const after = await git(repo, ["rev-parse", "HEAD"]);
   assert.equal(after.stdout, before.stdout);
+  const logged = records.find((record) => record.message === "tool.execute.before");
+  assert.ok(logged);
+  const guard = recordValue(logged.guard);
+  assert.equal(guard.blocked, true);
+  assert.equal(logged.auditOnly, true);
 });
 
 test("host-like smoke handles quoted worktree paths with spaces", async (t) => {
@@ -132,12 +146,17 @@ test("host-like smoke handles quoted worktree paths with spaces", async (t) => {
     worktreePath,
     config,
   });
-  const hooks = await plugin.server({ directory: repo, worktree: repo, client: createClient([]) });
-  await assert.rejects(
+  const records: HostLogRecord[] = [];
+  const hooks = await plugin.server({ directory: repo, worktree: repo, client: createClient(records) });
+  await assert.doesNotReject(
     () => hooks["tool.execute.before"](
       { tool: "bash", sessionID: "ses_host", callID: "call_host" },
       { args: { command: `rm -rf ${JSON.stringify(worktree.session.worktree_path)}` } },
     ),
-    /Worktree Guardian blocked command/,
   );
+  const logged = records.find((record) => record.message === "tool.execute.before");
+  assert.ok(logged);
+  const guard = recordValue(logged.guard);
+  assert.equal(guard.blocked, true);
+  assert.equal(logged.auditOnly, true);
 });
