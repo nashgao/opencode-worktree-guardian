@@ -45,6 +45,11 @@ async function enableLazyAutoStart(repo: string) {
   await git(repo, ["commit", "-m", "enable lazy guardian auto start"]);
 }
 
+async function writeGuardianConfig(repo: string, config: LooseRecord) {
+  await fs.mkdir(path.join(repo, ".opencode"), { recursive: true });
+  await fs.writeFile(path.join(repo, ".opencode", "worktree-guardian.json"), JSON.stringify(config));
+}
+
 test("tool.execute.before routes mutating commands to the default auto-start owned worktree", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
@@ -125,7 +130,8 @@ test("tool.execute.before allows normal git when stale guardian state cannot rou
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
   const sessionID = "ses_stale_normal_git";
-  const hooks = await plugin.server({ directory: repo, worktree: repo, client: createClient([]) });
+  const records: Array<LooseRecord> = [];
+  const hooks = await plugin.server({ directory: repo, worktree: repo, client: createClient(records) });
   const missingWorktree = `${repo}/.worktrees/opencode-worktree-guardian/missing-normal-git`;
   const { stdout: head } = await git(repo, ["rev-parse", "HEAD"]);
   await recordSession(repo, DEFAULT_CONFIG, {
@@ -145,9 +151,38 @@ test("tool.execute.before allows normal git when stale guardian state cannot rou
     ), command);
   }
 
-  await assert.rejects(
+  await assert.doesNotReject(
     () => hooks["tool.execute.before"](
       { tool: "bash", sessionID, callID: "call_stale_destructive" },
+      { args: { command: "git reset --hard" } },
+    ),
+  );
+
+  const logged = records.find((record) => record.auditOnly === true && isLooseRecord(record.guard) && record.guard.blocked === true);
+  assert.ok(logged);
+});
+
+test("tool.execute.before blocks stale guardian destructive commands in strict mode", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  await writeGuardianConfig(repo, { commandInterceptionMode: "strict" });
+  const sessionID = "ses_stale_normal_git_strict";
+  const hooks = await plugin.server({ directory: repo, worktree: repo, client: createClient([]) });
+  const missingWorktree = `${repo}/.worktrees/opencode-worktree-guardian/missing-normal-git-strict`;
+  const { stdout: head } = await git(repo, ["rev-parse", "HEAD"]);
+  await recordSession(repo, DEFAULT_CONFIG, {
+    session_id: sessionID,
+    status: "active",
+    branch: "guardian/missing-normal-git-strict",
+    worktree_path: missingWorktree,
+    base_ref: "origin/main",
+    head_commit: head,
+    safety_refs: [],
+  });
+
+  await assert.rejects(
+    () => hooks["tool.execute.before"](
+      { tool: "bash", sessionID, callID: "call_stale_destructive_strict" },
       { args: { command: "git reset --hard" } },
     ),
     /Worktree Guardian blocked command/,
