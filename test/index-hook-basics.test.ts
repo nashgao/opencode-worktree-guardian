@@ -153,6 +153,21 @@ test("tool.execute.before throws for destructive commands in strict mode", async
   );
 });
 
+test("tool.execute.before fails closed when commandInterceptionMode is invalid", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  await writeGuardianConfig(repo, { commandInterceptionMode: "enforce" });
+  const hooks = await plugin.server({ directory: repo, worktree: repo, client: createClient([]) });
+
+  await assert.rejects(
+    () => hooks["tool.execute.before"](
+      { tool: "bash", sessionID: "ses_invalid_mode", callID: "call_invalid_mode" },
+      { args: { command: `git worktree remove ${path.join(repo, ".worktrees", "example")}` } },
+    ),
+    /Unsupported worktree guardian commandInterceptionMode: enforce/,
+  );
+});
+
 test("tool.execute.before audits context-mode code payload worktree creation by default", async () => {
   const records: Array<LooseRecord> = [];
   const hooks = await plugin.server({ client: createClient(records), directory: "/repo", worktree: "/repo/.worktrees/example" });
