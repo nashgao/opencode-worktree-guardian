@@ -33,9 +33,14 @@ OpenCode slash commands and packaged `commands/*.md` wrappers are prompt surface
 
 The Codex adapter is also a first-class public surface. It must invoke the same Guardian tool policies through the adapter CLI and hooks, not through raw destructive Git or shell commands.
 
-## Raw Destructive Git And Shell Blocks
+## Command Interception Audit And Strict Blocks
 
-Guardian blocks raw destructive shell and Git commands in `tool.execute.before`. Blocked command classes include:
+Guardian classifies raw destructive shell and Git commands in `tool.execute.before`. `commandInterceptionMode` controls the consequence:
+
+- `audit` is the default. Guardian logs the classification with `auditOnly: true` and allows the command to proceed.
+- `strict` preserves fail-closed interception. Guardian throws before execution for the same command classes.
+
+Classified command classes include:
 
 - hard reset and forced clean,
 - raw worktree removal or prune,
@@ -49,13 +54,15 @@ Guardian blocks raw destructive shell and Git commands in `tool.execute.before`.
 
 Agents must use Guardian-native tools for lifecycle and deletion work. A prompt, slash command, skill, or adapter invocation cannot override these blocks.
 
+Native Guardian deletion, hygiene, finish, and done tools keep their token, confirmation, ownership, protected-path, and safety-ref gates regardless of command interception mode. Audit mode changes only raw command interception consequences.
+
 ## Read-Only And Normal Safe Git Allowances
 
 Read-only inventory and recovery surfaces are allowed through `guardian_status`, `guardian_project_status`, `guardian_recover`, and `guardian_hygiene` without `mode`. Their output is evidence only and does not authorize cleanup.
 
 `guardian_project_status` reads roadmap, milestone review, plan, and ULW loop artifacts from explicit project roots or the current repo root. It does not establish project ownership, worktree ownership, or lifecycle authority. Its default call must not mutate Git, Guardian state, scanned repositories, or project artifacts. Its explicit `writeReport: true` report path is limited to `.git/opencode-guardian/project-report.html`.
 
-When a session owns a valid Guardian worktree, normal safe mutating commands such as `git add` and `git commit` may proceed through Guardian routing. Without recorded ownership, normal non-destructive commands may run in the current worktree, but destructive cleanup, reset, stash, force-push, worktree-removal, and protected-branch bypass guards still apply.
+When a session owns a valid Guardian worktree, normal safe mutating commands such as `git add` and `git commit` may proceed through Guardian routing. Without recorded ownership, normal non-destructive commands may run in the current worktree. Destructive cleanup, reset, stash, force-push, worktree-removal, and protected-branch bypass guards are audited by default and block only when `commandInterceptionMode` is `strict`.
 
 ## `guardian_start` Session And Worktree Ownership
 
@@ -69,13 +76,13 @@ If older or corrupted state records an active session on the primary repo worktr
 
 Guardian hooks do not move the OpenCode host process cwd. Before safe shell or Git tools run, Guardian rewrites the execution directory to the recorded worktree and then reapplies destructive-command guards.
 
-Direct file mutation tool paths under the primary repo are rewritten into the recorded worktree when the session owns one. They are blocked when the recorded worktree cannot be validated. Missing, unresolvable, unrecorded, stale, primary-worktree, or protected-branch session bindings fail closed.
+Direct file mutation tool paths under the primary repo are rewritten into the recorded worktree when the session owns one. When the recorded worktree cannot be validated, the failure is audited by default and blocks only when `commandInterceptionMode` is `strict`. Missing, unresolvable, unrecorded, stale, primary-worktree, or protected-branch session bindings remain fail-closed for native Guardian tool preflights.
 
 ## Protected Branch Bypass Prevention
 
 Protected branches include the configured `protectedBranches`, with defaults including `main`, `master`, `develop`, and `production`.
 
-When config context is available, Guardian blocks manual bypasses such as pushing `HEAD` or `guardian/*` directly to a protected branch, and merging `guardian/*` while already on a protected branch. Normal Guardian work must finish through `guardian_done` or the lower-level finish tools. A command wrapper must not ask the agent to bypass this policy with raw push, merge, switch, or branch commands.
+When config context is available, Guardian classifies manual bypasses such as pushing `HEAD` or `guardian/*` directly to a protected branch, and merging `guardian/*` while already on a protected branch. These classifications are audited by default and block only when `commandInterceptionMode` is `strict`. Normal Guardian work must finish through `guardian_done` or the lower-level finish tools. A command wrapper must not ask the agent to bypass this policy with raw push, merge, switch, or branch commands.
 
 ## Protected Repo Paths
 
