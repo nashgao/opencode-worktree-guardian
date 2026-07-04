@@ -6,6 +6,7 @@ export type MutableRecord = {
 
 export type GuardianFinishMode = "preserve-only" | "push-branch" | "create-pr" | "merge-to-base";
 export type GuardianAutoStartMode = "eager" | "lazy";
+export type GuardianCommandInterceptionMode = "audit" | "strict";
 
 export type GuardianGoalConfig = {
   readonly commitDirty: boolean;
@@ -22,6 +23,7 @@ export type GuardianConfig = {
   readonly worktreeRoot: string;
   readonly branchPrefix: string;
   readonly finishMode: GuardianFinishMode;
+  readonly commandInterceptionMode: GuardianCommandInterceptionMode;
   readonly autoStart: boolean;
   readonly autoStartMode: GuardianAutoStartMode;
   readonly autoFinish: boolean;

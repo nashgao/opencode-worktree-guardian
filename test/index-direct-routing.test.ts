@@ -45,6 +45,11 @@ async function enableLazyAutoStart(repo: string) {
   await git(repo, ["commit", "-m", "enable lazy guardian auto start"]);
 }
 
+async function writeGuardianConfig(repo: string, config: LooseRecord) {
+  await fs.mkdir(path.join(repo, ".opencode"), { recursive: true });
+  await fs.writeFile(path.join(repo, ".opencode", "worktree-guardian.json"), JSON.stringify(config));
+}
+
 test("tool.execute.before rewrites direct file mutations from primary into the recorded worktree", async (t) => {
   const path = await import("node:path");
   const { base, repo } = await createRepoWithOrigin();
@@ -71,18 +76,39 @@ test("tool.execute.before leaves direct file mutations alone without a recorded 
   assert.equal(output.args.filePath, path.join(repo, "README.md"));
 });
 
-test("tool.execute.before blocks direct file mutations when the recorded worktree is missing", async (t) => {
+test("tool.execute.before audits direct file mutations when the recorded worktree is missing", async (t) => {
   const path = await import("node:path");
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
   const sessionID = "ses_direct_file_missing";
   const started = await (await import("../src/tools.ts")).guardianStart({ repoRoot: repo, cwd: repo, sessionId: sessionID, taskName: "direct file missing", createWorktree: true, config: DEFAULT_CONFIG });
   await fs.rm(started.session.worktree_path, { recursive: true, force: true });
+  const records: Array<LooseRecord> = [];
+  const hooks = await plugin.server({ directory: repo, worktree: repo, client: createClient(records) });
+  const output = { args: { filePath: path.join(repo, "README.md"), content: "updated\n" } };
+
+  await assert.doesNotReject(
+    () => hooks["tool.execute.before"]({ tool: "write", sessionID, callID: "call_direct_file_missing" }, output),
+  );
+  const logged = recordValue(records[0]);
+  const directFileRoute = recordValue(logged.directFileRoute);
+  assert.equal(directFileRoute.blocked, true);
+  assert.equal(logged.auditOnly, true);
+});
+
+test("tool.execute.before blocks direct file mutations when the recorded worktree is missing in strict mode", async (t) => {
+  const path = await import("node:path");
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  await writeGuardianConfig(repo, { commandInterceptionMode: "strict" });
+  const sessionID = "ses_direct_file_missing_strict";
+  const started = await (await import("../src/tools.ts")).guardianStart({ repoRoot: repo, cwd: repo, sessionId: sessionID, taskName: "direct file missing strict", createWorktree: true, config: DEFAULT_CONFIG });
+  await fs.rm(started.session.worktree_path, { recursive: true, force: true });
   const hooks = await plugin.server({ directory: repo, worktree: repo, client: createClient([]) });
   const output = { args: { filePath: path.join(repo, "README.md"), content: "updated\n" } };
 
   await assert.rejects(
-    () => hooks["tool.execute.before"]({ tool: "write", sessionID, callID: "call_direct_file_missing" }, output),
+    () => hooks["tool.execute.before"]({ tool: "write", sessionID, callID: "call_direct_file_missing_strict" }, output),
     /blocked direct file mutation.*recorded worktree/,
   );
 });
@@ -123,7 +149,7 @@ test("tool.execute.before routes mutating commands outside a recorded session wo
   assert.equal(output.args.cwd, started.session.worktree_path);
 });
 
-test("tool.execute.before blocks routed mutating commands when recorded branch binding is stale", async (t) => {
+test("tool.execute.before audits routed mutating commands when recorded branch binding is stale", async (t) => {
   const { createRepoWithOrigin, git } = await import("./helpers.ts");
   const { guardianStart } = await import("../src/tools.ts");
   const { DEFAULT_CONFIG } = await import("../src/config.ts");
@@ -133,11 +159,37 @@ test("tool.execute.before blocks routed mutating commands when recorded branch b
   t.after(() => fs.rm(path.dirname(repo), { recursive: true, force: true }));
   const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_stale_branch", taskName: "stale branch", createWorktree: true, config: DEFAULT_CONFIG });
   await git(started.session.worktree_path, ["checkout", "-b", "feature/tampered-binding"]);
+  const records: Array<LooseRecord> = [];
+  const hooks = await plugin.server({ directory: repo, worktree: repo, client: createClient(records) });
+  const output: { args: { command: string; workdir?: string; cwd?: string } } = { args: { command: "git add README.md" } };
+
+  await assert.doesNotReject(
+    () => hooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_stale_branch", callID: "call_stale_branch" }, output),
+  );
+  const logged = records.find((record) => typeof record.routeError === "string");
+  assert.ok(logged);
+  assert.match(String(logged.routeError), /recorded branch does not match checked-out worktree branch/);
+  assert.equal(logged.auditOnly, true);
+  assert.equal(output.args.workdir, undefined);
+  assert.equal(output.args.cwd, undefined);
+});
+
+test("tool.execute.before blocks routed mutating commands when recorded branch binding is stale in strict mode", async (t) => {
+  const { createRepoWithOrigin, git } = await import("./helpers.ts");
+  const { guardianStart } = await import("../src/tools.ts");
+  const { DEFAULT_CONFIG } = await import("../src/config.ts");
+  const fs = await import("node:fs/promises");
+  const path = await import("node:path");
+  const { repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(path.dirname(repo), { recursive: true, force: true }));
+  await writeGuardianConfig(repo, { commandInterceptionMode: "strict" });
+  const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_stale_branch_strict", taskName: "stale branch strict", createWorktree: true, config: DEFAULT_CONFIG });
+  await git(started.session.worktree_path, ["checkout", "-b", "feature/tampered-binding"]);
   const hooks = await plugin.server({ directory: repo, worktree: repo });
   const output: { args: { command: string; workdir?: string; cwd?: string } } = { args: { command: "git add README.md" } };
 
   await assert.rejects(
-    () => hooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_stale_branch", callID: "call_stale_branch" }, output),
+    () => hooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_stale_branch_strict", callID: "call_stale_branch_strict" }, output),
     /recorded branch does not match checked-out worktree branch/,
   );
   assert.equal(output.args.workdir, undefined);

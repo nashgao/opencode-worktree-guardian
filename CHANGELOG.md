@@ -11,6 +11,7 @@ All notable public-surface changes are tracked here.
 
 ### Changed
 
+- Command interception now defaults to audit mode. Raw destructive command classifications, direct file routing failures, route errors, and session/worktree mismatches are logged with `auditOnly: true` and allowed to proceed by default; set `commandInterceptionMode: "strict"` in `.opencode/worktree-guardian.json` to retain the previous hard-blocking behavior.
 - `guardian_finish` `merge-to-base` now self-heals a clean primary repo worktree that is on the wrong branch. Under `allowMergeToBase: true` it creates safety refs for the primary worktree's original HEAD and the local base branch head, then repositions the primary worktree onto the base branch with `git checkout --no-overwrite-ignore` before the fast-forward merge. This removes the previous dead-end where the agent was blocked from positioning the base worktree but the tool refused to do it itself. A dirty primary worktree still blocks: Guardian never self-heals uncommitted base-worktree work. A base branch checked out in another worktree, a missing local base branch, a non-fast-forward merge, and post-merge push or remote-proof failures all fail closed with safety refs recorded.
 
 ### Fixed

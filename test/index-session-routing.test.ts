@@ -29,6 +29,11 @@ function createClient(records: Array<LooseRecord>) {
   };
 }
 
+async function writeGuardianConfig(repo: string, config: LooseRecord) {
+  await fs.mkdir(path.join(repo, ".opencode"), { recursive: true });
+  await fs.writeFile(path.join(repo, ".opencode", "worktree-guardian.json"), JSON.stringify(config));
+}
+
 function requireSession(session: GuardianSession | undefined): GuardianSession {
   assert.ok(session);
   return session;
@@ -57,11 +62,30 @@ test("session idle auto-finish is opt-in and deduplicated", async () => {
   assert.equal(records.some((record) => record.message === "event"), false);
 });
 
+test("hook audits rm -rf against sibling guardian worktree by default", async () => {
+  const { createRepoWithOrigin } = await import("./helpers.ts");
+  const { guardianStart } = await import("../src/tools.ts");
+  const { DEFAULT_CONFIG } = await import("../src/config.ts");
+  const { repo } = await createRepoWithOrigin();
+  const a = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_hook_a_audit", taskName: "a audit", createWorktree: true, config: DEFAULT_CONFIG });
+  const b = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_hook_b_audit", taskName: "b audit", createWorktree: true, config: DEFAULT_CONFIG });
+  const records: Array<LooseRecord> = [];
+  const hooks = await plugin.server({ directory: repo, worktree: a.session.worktree_path, client: createClient(records) });
+
+  await assert.doesNotReject(
+    () => hooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_hook_a_audit", callID: "call_audit" }, { args: { command: `rm -rf ${b.session.worktree_path}` } }),
+  );
+
+  const logged = records.find((record) => record.auditOnly === true && isLooseRecord(record.guard) && record.guard.blocked === true);
+  assert.ok(logged);
+});
+
 test("hook blocks rm -rf against sibling guardian worktree", async () => {
   const { createRepoWithOrigin } = await import("./helpers.ts");
   const { guardianStart } = await import("../src/tools.ts");
   const { DEFAULT_CONFIG } = await import("../src/config.ts");
   const { repo } = await createRepoWithOrigin();
+  await writeGuardianConfig(repo, { commandInterceptionMode: "strict" });
   const a = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_hook_a", taskName: "a", createWorktree: true, config: DEFAULT_CONFIG });
   const b = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_hook_b", taskName: "b", createWorktree: true, config: DEFAULT_CONFIG });
   const hooks = await plugin.server({ directory: repo, worktree: a.session.worktree_path });
@@ -71,8 +95,32 @@ test("hook blocks rm -rf against sibling guardian worktree", async () => {
   );
 });
 
+test("hook audits rm -rf blocking to the known repo root by default", async (t) => {
+  const { repo } = await createRepoWithOrigin();
+  const outside = await fs.mkdtemp(`${repo}-outside-`);
+  t.after(() => fs.rm(outside, { recursive: true, force: true }));
+  await fs.mkdir(`${outside}/scratch`);
+  const records: Array<LooseRecord> = [];
+  const hooks = await plugin.server({ directory: repo, worktree: repo, client: createClient(records) });
+
+  await assert.doesNotReject(
+    () => hooks["tool.execute.before"]({ tool: "bash", callID: "call_repo_rm_audit" }, { args: { command: "rm -rf src", cwd: repo } }),
+  );
+  await assert.doesNotReject(
+    () => hooks["tool.execute.before"]({ tool: "bash", callID: "call_shell_repo_rm_audit" }, { args: { command: "bash -lc \"rm -rf src\"", cwd: repo } }),
+  );
+  await assert.doesNotReject(() => hooks["tool.execute.before"](
+    { tool: "bash", callID: "call_outside_rm_audit" },
+    { args: { command: `rm -rf ${outside}/scratch`, cwd: outside } },
+  ));
+
+  const auditedBlocks = records.filter((record) => record.auditOnly === true && isLooseRecord(record.guard) && record.guard.blocked === true);
+  assert.equal(auditedBlocks.length, 2);
+});
+
 test("hook scopes rm -rf blocking to the known repo root", async (t) => {
   const { repo } = await createRepoWithOrigin();
+  await writeGuardianConfig(repo, { commandInterceptionMode: "strict" });
   const outside = await fs.mkdtemp(`${repo}-outside-`);
   t.after(() => fs.rm(outside, { recursive: true, force: true }));
   await fs.mkdir(`${outside}/scratch`);
@@ -111,11 +159,31 @@ test("hook routes recorded session mutating git commands to the owned worktree",
   assert.equal(commitOutput.args.cwd, start.session.worktree_path);
 });
 
+test("hook audits destructive recorded session commands without blocking by default", async () => {
+  const { createRepoWithOrigin } = await import("./helpers.ts");
+  const { guardianStart } = await import("../src/tools.ts");
+  const { DEFAULT_CONFIG } = await import("../src/config.ts");
+  const { repo } = await createRepoWithOrigin();
+  const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_destructive_audit", taskName: "destructive audit", createWorktree: true, config: DEFAULT_CONFIG });
+  const records: Array<LooseRecord> = [];
+  const hooks = await plugin.server({ directory: repo, worktree: repo, client: createClient(records) });
+  const output: { args: { command: string; workdir?: string } } = { args: { command: "git reset --hard HEAD~1" } };
+
+  await assert.doesNotReject(
+    () => hooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_destructive_audit", callID: "call_audit" }, output),
+  );
+
+  const logged = records.find((record) => record.auditOnly === true && isLooseRecord(record.guard) && record.guard.blocked === true);
+  assert.ok(logged);
+  assert.equal(output.args.workdir, started.session.worktree_path);
+});
+
 test("hook still blocks destructive recorded session commands instead of routing them", async () => {
   const { createRepoWithOrigin } = await import("./helpers.ts");
   const { guardianStart } = await import("../src/tools.ts");
   const { DEFAULT_CONFIG } = await import("../src/config.ts");
   const { repo } = await createRepoWithOrigin();
+  await writeGuardianConfig(repo, { commandInterceptionMode: "strict" });
   await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_destructive", taskName: "destructive", createWorktree: true, config: DEFAULT_CONFIG });
   const hooks = await plugin.server({ directory: repo, worktree: repo });
   const output: { args: { command: string; workdir?: string } } = { args: { command: "git reset --hard HEAD~1" } };

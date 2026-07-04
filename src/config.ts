@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { normalizeProtectedPaths } from "./protected-paths.ts";
-import type { GuardianAutoStartMode, GuardianConfig, GuardianFinishMode, GuardianGoalConfig, LoadedGuardianConfig, LoadConfigOptions, RecordLike } from "./types.ts";
+import type { GuardianAutoStartMode, GuardianCommandInterceptionMode, GuardianConfig, GuardianFinishMode, GuardianGoalConfig, LoadedGuardianConfig, LoadConfigOptions, RecordLike } from "./types.ts";
 import { errorCode, isRecordLike } from "./types.ts";
 
 export const CONFIG_PATH = path.join(".opencode", "worktree-guardian.json");
@@ -11,8 +11,9 @@ const DEFAULT_CONFIG_TEMPLATE = readFileSync(DEFAULT_CONFIG_TEMPLATE_URL, "utf8"
 
 export const FINISH_MODES = new Set(["preserve-only", "push-branch", "create-pr", "merge-to-base"]);
 export const AUTO_START_MODES = new Set(["eager", "lazy"]);
+export const COMMAND_INTERCEPTION_MODES = new Set(["audit", "strict"]);
 
-export type ConfigErrorKind = "unsupported_finish_mode" | "unsupported_auto_start_mode";
+export type ConfigErrorKind = "unsupported_finish_mode" | "unsupported_auto_start_mode" | "unsupported_command_interception_mode";
 export type ConfigBoundaryError = Error & { readonly configErrorKind: ConfigErrorKind };
 
 function configError(kind: ConfigErrorKind, message: string): ConfigBoundaryError {
@@ -29,6 +30,10 @@ function isGuardianFinishMode(value: unknown): value is GuardianFinishMode {
 
 function isGuardianAutoStartMode(value: unknown): value is GuardianAutoStartMode {
   return typeof value === "string" && AUTO_START_MODES.has(value);
+}
+
+function isGuardianCommandInterceptionMode(value: unknown): value is GuardianCommandInterceptionMode {
+  return typeof value === "string" && COMMAND_INTERCEPTION_MODES.has(value);
 }
 
 function templateError(message: string) {
@@ -79,12 +84,15 @@ function parseDefaultConfigTemplate(raw: string): GuardianConfig {
   if (!isGuardianFinishMode(finishMode)) throw templateError("finishMode is unsupported");
   const autoStartMode = value.autoStartMode;
   if (!isGuardianAutoStartMode(autoStartMode)) throw templateError("autoStartMode is unsupported");
+  const commandInterceptionMode = value.commandInterceptionMode;
+  if (!isGuardianCommandInterceptionMode(commandInterceptionMode)) throw templateError("commandInterceptionMode is unsupported");
   return {
     remote: stringField(value, "remote"),
     baseBranch: stringField(value, "baseBranch"),
     worktreeRoot: stringField(value, "worktreeRoot"),
     branchPrefix: stringField(value, "branchPrefix"),
     finishMode,
+    commandInterceptionMode,
     autoStart: booleanField(value, "autoStart"),
     autoStartMode,
     autoFinish: booleanField(value, "autoFinish"),
@@ -123,6 +131,9 @@ export function normalizeConfig(input: RecordLike = {}): GuardianConfig {
   if (!isGuardianAutoStartMode(config.autoStartMode)) {
     throw configError("unsupported_auto_start_mode", `Unsupported worktree guardian autoStartMode: ${String(config.autoStartMode)}`);
   }
+  if (!isGuardianCommandInterceptionMode(config.commandInterceptionMode)) {
+    throw configError("unsupported_command_interception_mode", `Unsupported worktree guardian commandInterceptionMode: ${String(config.commandInterceptionMode)}`);
+  }
 
   const protectedBranches = uniqueStrings([
     ...DEFAULT_CONFIG.protectedBranches,
@@ -131,6 +142,7 @@ export function normalizeConfig(input: RecordLike = {}): GuardianConfig {
 
   return {
     ...config,
+    commandInterceptionMode: config.commandInterceptionMode,
     autoStart: config.autoStart !== false,
     autoStartMode: config.autoStartMode,
     autoFinish: config.autoFinish === true,

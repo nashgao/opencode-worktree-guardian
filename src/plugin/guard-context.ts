@@ -25,13 +25,15 @@ export async function collectGuardContext(input: {
   let guardConfig: GuardianConfig | null = null;
   let guardianBranches: string[] = [];
   let protectedBranchWorktreePaths: string[] = [];
-  try {
-    if (input.pluginDirectory !== undefined && await pathExists(input.pluginDirectory)) {
-      guardConfig = (await loadConfig(input.pluginDirectory)).config;
+  if (input.pluginDirectory !== undefined && await pathExists(input.pluginDirectory)) {
+    guardConfig = (await loadConfig(input.pluginDirectory)).config;
+    try {
       guardianBranches = await collectRecordedBranches(input.pluginDirectory, guardConfig);
       protectedBranchWorktreePaths = await collectProtectedBranchWorktrees(input.pluginDirectory, guardConfig);
+    } catch (error) {
+      if (!(error instanceof Error)) throw error;
     }
-  } catch {}
+  }
   let currentBranch: string | null = null;
   try {
     currentBranch = await getCurrentBranch(input.effectiveCwd);
