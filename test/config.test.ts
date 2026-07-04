@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { CONFIG_PATH, DEFAULT_CONFIG, initializeConfig, loadConfig, normalizeConfig } from "../src/config.ts";
+import { isRecordLike } from "../src/types.ts";
 import { createTempDir } from "./helpers.ts";
 
 const TEMPLATE_PROTECTED_PATHS = [".omo", ".omc", ".omx", ".sisyphus", ".milestones", ".opencode", ".codegraph", ".worktrees"];
@@ -10,6 +11,7 @@ const TEMPLATE_PROTECTED_PATHS = [".omo", ".omc", ".omx", ".sisyphus", ".milesto
 test("config defaults are delivery-first and cleanup-conservative", () => {
   const config = normalizeConfig();
   assert.equal(config.finishMode, "create-pr");
+  assert.equal(config.commandInterceptionMode, "audit");
   assert.equal(config.autoStart, true);
   assert.equal(config.autoStartMode, "eager");
   assert.equal(config.autoFinish, false);
@@ -18,6 +20,22 @@ test("config defaults are delivery-first and cleanup-conservative", () => {
   assert.deepEqual(config.allowDirtyPaths, []);
   assert.deepEqual(config.protectedPaths, TEMPLATE_PROTECTED_PATHS);
   assert.deepEqual(config.protectedBranches, DEFAULT_CONFIG.protectedBranches);
+});
+
+test("command interception defaults to audit", () => {
+  assert.equal(DEFAULT_CONFIG.commandInterceptionMode, "audit");
+  assert.equal(normalizeConfig({}).commandInterceptionMode, "audit");
+});
+
+test("command interception accepts strict mode", () => {
+  assert.equal(normalizeConfig({ commandInterceptionMode: "strict" }).commandInterceptionMode, "strict");
+});
+
+test("invalid command interception modes fail closed", () => {
+  assert.throws(
+    () => normalizeConfig({ commandInterceptionMode: "block" }),
+    (error: unknown) => isRecordLike(error) && error.configErrorKind === "unsupported_command_interception_mode",
+  );
 });
 
 test("repo-local config replaces template protected paths", async () => {
