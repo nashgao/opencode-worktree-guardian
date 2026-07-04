@@ -29,6 +29,11 @@ function createClient(records: Array<LooseRecord>) {
   };
 }
 
+async function writeGuardianConfig(repo: string, config: LooseRecord) {
+  await fs.mkdir(path.join(repo, ".opencode"), { recursive: true });
+  await fs.writeFile(path.join(repo, ".opencode", "worktree-guardian.json"), JSON.stringify(config));
+}
+
 function requireSession(session: GuardianSession | undefined): GuardianSession {
   assert.ok(session);
   return session;
@@ -115,32 +120,62 @@ test("hook logs redact likely secret values", async () => {
   assert.match(logged, /<redacted>/);
 });
 
-test("tool.execute.before throws to block destructive commands", async () => {
-  const hooks = await plugin.server({ directory: "/repo", worktree: "/repo/.worktrees/example" });
-  await assert.rejects(
+test("tool.execute.before audits destructive commands by default", async () => {
+  const records: Array<LooseRecord> = [];
+  const hooks = await plugin.server({ client: createClient(records), directory: "/repo", worktree: "/repo/.worktrees/example" });
+
+  await assert.doesNotReject(
     () => hooks["tool.execute.before"](
       { tool: "bash", sessionID: "ses_123", callID: "call_123" },
       { args: { command: "git worktree remove /repo/.worktrees/example" } },
+    ),
+  );
+
+  const logged = records.find((record) => record.message === "tool.execute.before");
+  assert.ok(logged);
+  const guard = recordValue(logged.guard);
+  assert.equal(guard.blocked, true);
+  assert.equal(logged.auditOnly, true);
+});
+
+test("tool.execute.before throws for destructive commands in strict mode", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  await writeGuardianConfig(repo, { commandInterceptionMode: "strict" });
+  const hooks = await plugin.server({ directory: repo, worktree: repo, client: createClient([]) });
+
+  await assert.rejects(
+    () => hooks["tool.execute.before"](
+      { tool: "bash", sessionID: "ses_123", callID: "call_123" },
+      { args: { command: `git worktree remove ${path.join(repo, ".worktrees", "example")}` } },
     ),
     /Worktree Guardian blocked command/,
   );
 });
 
-test("tool.execute.before blocks context-mode code payload worktree creation", async () => {
-  const hooks = await plugin.server({ directory: "/repo", worktree: "/repo/.worktrees/example" });
-  await assert.rejects(
+test("tool.execute.before audits context-mode code payload worktree creation by default", async () => {
+  const records: Array<LooseRecord> = [];
+  const hooks = await plugin.server({ client: createClient(records), directory: "/repo", worktree: "/repo/.worktrees/example" });
+
+  await assert.doesNotReject(
     () => hooks["tool.execute.before"](
       { tool: "context-mode_ctx_execute", sessionID: "ses_123", callID: "call_code", args: { code: "git worktree add /tmp/unmanaged main" } },
       {},
     ),
-    /git worktree add outside Guardian-owned roots/,
   );
+
+  const logged = records.find((record) => record.message === "tool.execute.before");
+  assert.ok(logged);
+  const guard = recordValue(logged.guard);
+  assert.equal(guard.blocked, true);
+  assert.equal(logged.auditOnly, true);
 });
 
 
 test("tool.execute.before blocks manual protected-branch finish bypasses", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
+  await writeGuardianConfig(repo, { commandInterceptionMode: "strict" });
   const hooks = await plugin.server({ directory: repo, worktree: repo, client: createClient([]) });
 
   await assert.rejects(
