@@ -4,8 +4,20 @@ import path from "node:path";
 import test from "node:test";
 import plugin from "../src/index.ts";
 import { formatGuardianOutput } from "../src/plugin/readable-output.ts";
+import { guardianStart } from "../src/start.ts";
+import { isRecordLike } from "../src/types.ts";
 import { createToolContext, metadataRecords, runTool } from "./plugin-contract-helpers.ts";
 import { createRepoWithOrigin, git } from "./helpers.ts";
+
+function requireRecord(value: unknown, name: string): Record<string, unknown> {
+  if (isRecordLike(value)) return value;
+  throw new TypeError(`${name} must be an object`);
+}
+
+function requireString(value: unknown, name: string): string {
+  if (typeof value === "string" && value.length > 0) return value;
+  throw new TypeError(`${name} must be a non-empty string`);
+}
 
 test("guardian_goal tool plans configured repo goal with readable output", async () => {
   const { base, repo } = await createRepoWithOrigin();
@@ -58,6 +70,44 @@ test("guardian_goal applies safe hygiene before committing primary work", async 
   const { stdout: committedFiles } = await git(repo, ["show", "--name-only", "--format=", String(apply.metadata.commit)]);
   assert.match(committedFiles, /goal-code\.txt/);
   assert.doesNotMatch(committedFiles, /node-compile-cache/);
+});
+
+test("guardian_goal delegates already-landed redundant dirty session cleanup without commitMessage", async () => {
+  const { base, repo } = await createRepoWithOrigin();
+  test.after(() => fs.rm(base, { recursive: true, force: true }));
+  const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_goal_redundant_dirty", taskName: "goal redundant dirty", createWorktree: true });
+  const session = requireRecord(started.session, "started.session");
+  const branch = requireString(session.branch, "started.session.branch");
+  const worktree = requireString(session.worktree_path, "started.session.worktree_path");
+  const featureFile = "goal-redundant-dirty.txt";
+  await fs.writeFile(path.join(worktree, featureFile), "landed content\n");
+  await git(worktree, ["add", featureFile]);
+  await git(worktree, ["commit", "-m", "add goal redundant dirty fixture"]);
+  await git(repo, ["merge", "--no-ff", branch, "-m", "merge goal redundant dirty fixture"]);
+  await git(repo, ["push", "origin", "main"]);
+  await fs.writeFile(path.join(repo, featureFile), "advanced base content\n");
+  await git(repo, ["add", featureFile]);
+  await git(repo, ["commit", "-m", "advance goal redundant dirty base"]);
+  await git(repo, ["push", "origin", "main"]);
+  await fs.writeFile(path.join(worktree, featureFile), "advanced base content\n");
+  const hooks = await plugin.server({ directory: repo, worktree: repo });
+  const { context } = createToolContext();
+  context.directory = repo;
+  context.worktree = repo;
+
+  const result = await runTool(hooks.tool.guardian_goal.execute, { repoRoot: repo, cwd: repo, mode: "plan" }, context);
+
+  assert.equal(result.metadata.ok, true, JSON.stringify(result.metadata));
+  assert.equal(result.metadata.status, "planned");
+  assert.doesNotMatch(result.output, /commitMessage is required/);
+  const steps = metadataRecords(result.metadata, "steps");
+  const doneStep = steps.find((step) => step.tool === "guardian_done");
+  const doneResult = requireRecord(doneStep?.result, "guardian_done step result");
+  assert.equal(doneStep?.ok, true);
+  assert.equal(doneResult.action, "already-landed-clean");
+  assert.equal(doneResult.branch, branch);
+  assert.equal(doneResult.worktreePath, worktree);
+  assert.deepEqual(doneResult.dirtyFiles, [featureFile]);
 });
 
 test("guardian_goal readable output summarizes blockers", () => {
