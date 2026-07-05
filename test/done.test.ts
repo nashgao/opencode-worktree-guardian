@@ -14,6 +14,7 @@ import { createRepoWithOrigin, git, seedSession } from "./helpers.ts";
 type LooseRecord = Record<string, unknown>;
 type DoneResult = LooseRecord & {
   readonly candidates: readonly { readonly branch?: string; readonly plan?: LooseRecord }[];
+  readonly cleanup?: unknown;
   readonly cleanupPlan: { readonly status?: unknown; readonly candidates: readonly { readonly branch?: string }[] };
   readonly cleanupSweep: { readonly ok?: boolean; readonly status?: unknown; readonly candidateCount?: number; readonly cleanedCount?: number; readonly apply?: { readonly results?: readonly { readonly branch?: string; readonly worktreeRemoved?: boolean; readonly branchDeleted?: boolean }[] } };
   readonly commit: string;
@@ -30,6 +31,11 @@ type DoneResult = LooseRecord & {
 
 function asDone(result: LooseRecord): DoneResult {
   return result as DoneResult;
+}
+
+function requireLooseRecord(value: unknown, name: string): LooseRecord {
+  if (isRecordLike(value)) return value;
+  throw new TypeError(`${name} must be an object`);
 }
 
 async function pathExists(filePath: string) {
@@ -548,6 +554,47 @@ test("guardian_done blocks a dirty active session without commitMessage", async 
   assert.equal(result.status, "blocked");
   assert.equal(result.lane, "session-finish");
   assert.match(result.reason, /commitMessage/);
+});
+
+test("guardian_done plans already-landed redundant dirty session cleanup without commitMessage", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_done_redundant_dirty", taskName: "done redundant dirty", createWorktree: true, config: DEFAULT_CONFIG });
+  const branch = String(started.session.branch);
+  const worktree = started.session.worktree_path;
+  const featureFile = "redundant-dirty.txt";
+  await fs.writeFile(path.join(worktree, featureFile), "landed content\n");
+  await git(worktree, ["add", featureFile]);
+  await git(worktree, ["commit", "-m", "add redundant dirty fixture"]);
+  const head = (await git(worktree, ["rev-parse", "HEAD"])).stdout;
+  await git(repo, ["merge", "--no-ff", branch, "-m", "merge redundant dirty fixture"]);
+  await git(repo, ["push", "origin", "main"]);
+  await fs.writeFile(path.join(repo, featureFile), "advanced base content\n");
+  await git(repo, ["add", featureFile]);
+  await git(repo, ["commit", "-m", "advance redundant dirty base"]);
+  await git(repo, ["push", "origin", "main"]);
+  await fs.writeFile(path.join(worktree, featureFile), "advanced base content\n");
+
+  const result = asDone(await guardianDone({ repoRoot: repo, cwd: repo, mode: "plan", timestamp: "20260609T070707", config: DEFAULT_CONFIG }));
+
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(result.lane, "session-finish");
+  assert.equal(result.status, "planned");
+  assert.equal(result.action, "already-landed-clean");
+  assert.equal(result.branch, branch);
+  assert.equal(result.worktreePath, worktree);
+  assert.equal(result.head, head);
+  assert.deepEqual(result.dirtyFiles, [featureFile]);
+  assert.equal(result.reason, undefined);
+  const cleanup = requireLooseRecord(result.cleanup, "result.cleanup");
+  assert.equal(cleanup.status, "planned");
+  assert.equal(typeof cleanup.confirmToken, "string");
+  const preflight = requireLooseRecord(cleanup.preflight, "result.cleanup.preflight");
+  assert.equal(preflight.allowRedundantDirtyPaths, true);
+  assert.equal(preflight.redundantDirtyFileCount, 1);
+  assert.equal(await pathExists(worktree), true);
+  assert.deepEqual(await guardianRefNames(repo), []);
+  await git(repo, ["merge-base", "--is-ancestor", head, "origin/main"]);
 });
 
 test("guardian_done previews a session targeted by branch name from the primary", async (t) => {

@@ -186,7 +186,7 @@ The canonical Guardian safety policy is [ADR 0001: Guardian Safety Policy](docs/
 - Use `guardian_hygiene` for hygiene scan/plan/apply cleanup. Scan output is evidence only. Cleanup requires `mode: "plan"`, exact-target review, explicit confirmation, then `mode: "apply"` with `confirmDelete: true`.
   `reviewableCandidates` are scan-only inventory and are not accepted by the hygiene cleanup preflight.
 - Use `guardian_delete_paths` for intentional exact file or directory deletion, including tracked source only when explicitly allowed. Worktree deletion is separate and must use `guardian_delete_worktree`.
-- Use `guardian_delete_worktree` for Guardian worktree, orphan-branch, stale-branch, redundant-dirty worktree, or explicit unmerged-abandon cleanup. Run plan first, inspect blockers and safety evidence, then apply only through the native tool. Redundant dirty cleanup is direct-tool-only and requires `allowRedundantDirtyPaths: true`; high-level `guardian_done` does not silently opt into dirty cleanup.
+- Use `guardian_delete_worktree` for Guardian worktree, orphan-branch, stale-branch, redundant-dirty worktree, or explicit unmerged-abandon cleanup. Run plan first, inspect blockers and safety evidence, then apply only through the native tool. Redundant dirty cleanup requires `allowRedundantDirtyPaths: true`; outside the active-session already-landed path, high-level cleanup tools do not silently opt into dirty cleanup.
 - Use `guardian_status`, `guardian_recover`, and `guardian_report_html` as read-only evidence/report surfaces. Their output can identify candidates but never authorizes deletion by itself.
 - Use `guardian_unblock_finish` only for the narrow generated review-artifact finish blocker described in the ADR.
 

@@ -35,6 +35,11 @@ type LandCleanPreflight =
       readonly baseBranch: string;
     };
 
+type CleanupLandedSessionOptions = {
+  readonly allowRedundantDirtyPaths?: boolean;
+  readonly ancestryBaseRef?: string;
+};
+
 function blocked(reason: string, extra: Record<string, unknown> = {}): BlockedResult {
   return { ok: false, status: "blocked", reason, ...extra };
 }
@@ -80,13 +85,15 @@ function withMaintenanceOutcome(result: Record<string, unknown>, maintenance: Re
   return { ...result, ...maintenance };
 }
 
-async function cleanupLandedSession(context: LandCleanContext, failurePrefix: string) {
+async function cleanupLandedSession(context: LandCleanContext, failurePrefix: string, options: CleanupLandedSessionOptions = {}) {
   const cleanupPlan = await guardianDeleteWorktree({
     repoRoot: context.repoRoot,
     cwd: context.repoRoot,
     mode: "plan",
     sessionId: context.sessionId,
     deleteBranch: true,
+    allowRedundantDirtyPaths: options.allowRedundantDirtyPaths === true,
+    ancestryBaseRef: options.ancestryBaseRef,
     timestamp: context.input.timestamp,
     config: context.config,
   });
@@ -99,12 +106,72 @@ async function cleanupLandedSession(context: LandCleanContext, failurePrefix: st
     mode: "apply",
     sessionId: context.sessionId,
     deleteBranch: true,
+    allowRedundantDirtyPaths: options.allowRedundantDirtyPaths === true,
+    ancestryBaseRef: options.ancestryBaseRef,
     confirmToken: cleanupPlan.confirmToken,
     timestamp: context.input.timestamp,
     config: context.config,
   });
   if (cleanup.ok !== true) return { ok: false, status: "cleanup-blocked", reason: `${failurePrefix} but stale worktree cleanup failed`, cleanup };
   return cleanup;
+}
+
+async function planAlreadyLandedRedundantDirtyCleanup(context: LandCleanContext, preflight: Extract<LandCleanPreflight, { readonly ok: true }>, baseRef: string): Promise<Record<string, unknown>> {
+  const cleanup = await guardianDeleteWorktree({
+    repoRoot: context.repoRoot,
+    cwd: context.repoRoot,
+    mode: "plan",
+    sessionId: context.sessionId,
+    deleteBranch: true,
+    allowRedundantDirtyPaths: true,
+    ancestryBaseRef: baseRef,
+    timestamp: context.input.timestamp,
+    config: context.config,
+  });
+  if (cleanup.ok !== true || typeof cleanup.confirmToken !== "string") {
+    return blocked("already-landed dirty session work could not be proven redundant; commitMessage is required to preserve it", {
+      branch: preflight.branch,
+      worktreePath: preflight.worktreePath,
+      dirtyFiles: preflight.dirtyFiles,
+      baseRef,
+      cleanup,
+    });
+  }
+  return {
+    ...preflight,
+    status: "planned",
+    action: "already-landed-clean",
+    baseRef,
+    cleanup,
+    nextAction: "guardian_done mode=apply confirm=true",
+  };
+}
+
+async function applyAlreadyLandedRedundantDirtyCleanup(context: LandCleanContext, preflight: Extract<LandCleanPreflight, { readonly ok: true }>, baseRef: string): Promise<Record<string, unknown>> {
+  if (context.input.confirm !== true) {
+    return blocked("guardian_done apply requires confirm=true before cleaning the already-landed dirty session", {
+      action: "already-landed-clean",
+      branch: preflight.branch,
+      worktreePath: preflight.worktreePath,
+      dirtyFiles: preflight.dirtyFiles,
+      baseRef,
+    });
+  }
+  const cleanup = await cleanupLandedSession(context, "session commit is already reachable from the remote base branch", { allowRedundantDirtyPaths: true, ancestryBaseRef: baseRef });
+  if (cleanup.ok !== true) return cleanup;
+  const maintenance = await postFinishMaintenance(context, [{ commit: preflight.head, source: preflight.branch, reason: "landed session commit must be present on final base" }]);
+  return withMaintenanceOutcome({
+    ok: true,
+    status: "already-landed-and-cleaned",
+    action: "already-landed-clean",
+    branch: preflight.branch,
+    head: preflight.head,
+    dirtyFiles: preflight.dirtyFiles,
+    baseRef,
+    cleanup,
+    worktreeRemoved: cleanup.worktreeRemoved === true,
+    branchDeleted: cleanup.branchDeleted === true,
+  }, maintenance);
 }
 
 async function landCleanPreflight(context: LandCleanContext): Promise<LandCleanPreflight> {
@@ -146,6 +213,12 @@ export async function guardianDoneLandClean(context: LandCleanContext): Promise<
   const allowAdminBypass = context.input.allowAdminBypass === true;
   const message = commitMessage(context.input);
   if (preflight.dirtyFiles.length > 0 && !message) {
+    await fetchRemote(context.repoRoot, preflight.remote);
+    const baseRef = `${preflight.remote}/${preflight.baseBranch}`;
+    if (await isAncestor(context.repoRoot, preflight.head, baseRef)) {
+      if (context.input.mode !== "apply") return planAlreadyLandedRedundantDirtyCleanup(context, preflight, baseRef);
+      return applyAlreadyLandedRedundantDirtyCleanup(context, preflight, baseRef);
+    }
     return blocked("commitMessage is required for dirty session work", {
       branch: preflight.branch,
       worktreePath: preflight.worktreePath,
