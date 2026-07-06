@@ -1,10 +1,22 @@
 import type { GuardCommandPayload, GuardDecision, GuardOptions } from "../types.ts";
 import { isRecordLike } from "../types.ts";
 import { classifySegment } from "./destructive-classifier.ts";
-import type { GuardBlockDecision } from "./guard-types.ts";
-import { stringOption } from "./options.ts";
-import { cdTarget } from "./shell-prefix.ts";
+import type { CommandSegment, GuardBlockDecision, SegmentSeparator } from "./guard-types.ts";
+import { block, stringOption } from "./options.ts";
+import { cdTarget, stripCommandWrappers } from "./shell-prefix.ts";
 import { commandSegmentsWithSeparators, findBacktickPayloads, tokenizeCommand } from "./shell-parser.ts";
+
+function isRecursiveForceRm(tokens: CommandSegment): boolean {
+  const stripped = stripCommandWrappers(tokens);
+  if (stripped[0] !== "rm") return false;
+  const flags = stripped.slice(1).filter((token) => token.startsWith("-"));
+  return flags.some((flag) => flag.includes("r") || flag.includes("R")) && flags.some((flag) => flag.includes("f") || flag.includes("F"));
+}
+
+function classifyDynamicRmTarget(segment: CommandSegment, nextSeparator: SegmentSeparator | null): GuardBlockDecision | null {
+  if (nextSeparator !== "(" || !isRecursiveForceRm(segment)) return null;
+  return block("rm -rf with command substitution or dynamic target is blocked; use guardian_delete_paths or guardian_hygiene", stripCommandWrappers(segment));
+}
 
 export function classifyGuardCommand(command: unknown, options: GuardOptions = {}): GuardDecision {
   if (typeof command !== "string" || command.trim() === "") {
@@ -18,6 +30,8 @@ export function classifyGuardCommand(command: unknown, options: GuardOptions = {
   let effectiveCwd = stringOption(options, "cwd") ?? process.cwd();
   for (const { segment, nextSeparator } of commandSegmentsWithSeparators(tokens)) {
     const scopedOptions = { ...options, cwd: effectiveCwd };
+    const dynamicRmTarget = classifyDynamicRmTarget(segment, nextSeparator);
+    if (dynamicRmTarget) return { ...dynamicRmTarget, tokens };
     const result = classifySegment(segment, scopedOptions, (payload, inheritedEnvAssignments) => {
       const nested = classifyGuardCommand(payload, { ...scopedOptions, inheritedEnvAssignments });
       return nested.blocked ? nested : null;
