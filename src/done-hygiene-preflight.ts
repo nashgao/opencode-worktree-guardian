@@ -1,5 +1,6 @@
 import path from "node:path";
 import { guardianDeletePaths } from "./delete-paths-apply.ts";
+import { runGitNullSeparated } from "./git.ts";
 import { guardianHygiene, scanWorkspaceHygiene } from "./hygiene.ts";
 import type { GuardianConfig } from "./types.ts";
 import { isRecordLike } from "./types.ts";
@@ -39,7 +40,7 @@ function generatedReviewableArtifact(relativePath: string): boolean {
   const extension = path.extname(relativePath).toLowerCase();
   if ([".csv", ".tsv", ".log", ".jsonl"].includes(extension)) return true;
   const baseName = path.basename(relativePath).toLowerCase();
-  return extension === ".md" && /(manifest|report|summary|values|rating|review)/.test(baseName);
+  return extension === ".md" && /(manifest|report|summary|values|rating|review|people-counter)/.test(baseName);
 }
 
 function filterKnownCleanable(records: readonly Record<string, unknown>[]): readonly Record<string, unknown>[] {
@@ -61,6 +62,12 @@ function coveredByAnyRoot(dirtyFile: string, roots: readonly string[]): boolean 
   return roots.some((root) => pathCoversDirtyFile(root, dirtyFile));
 }
 
+async function untrackedOrIgnoredDirtyFiles(cwd: string): Promise<ReadonlySet<string>> {
+  const untracked = await runGitNullSeparated(cwd, ["ls-files", "--others", "--exclude-standard", "-z"]);
+  const ignored = await runGitNullSeparated(cwd, ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"]);
+  return new Set([...untracked, ...ignored]);
+}
+
 function nextActions(input: {
   readonly knownCleanablePaths: readonly string[];
   readonly reviewablePaths: readonly string[];
@@ -78,7 +85,9 @@ function nextActions(input: {
 
 export async function planDoneHygienePreflight(context: DoneHygieneContext, dirtyFiles: readonly string[]): Promise<Record<string, unknown> | null> {
   if (dirtyFiles.length === 0) return null;
-  const scan = await scanWorkspaceHygiene({ repoRoot: context.cwd, cwd: context.cwd, config: context.config });
+  const hygieneDirtyFiles = await untrackedOrIgnoredDirtyFiles(context.cwd);
+  if (dirtyFiles.some((dirtyFile) => !hygieneDirtyFiles.has(dirtyFile))) return null;
+  const scan = await scanWorkspaceHygiene({ repoRoot: context.cwd, cwd: context.cwd, config: context.config, includeAllReviewableCandidates: true });
   if (scan.ok !== true) return null;
   const findings = recordArrayField(scan, "findings");
   const exclusions = recordArrayField(scan, "exclusions");

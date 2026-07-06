@@ -18,6 +18,16 @@ function requireString(value: unknown, name: string): string {
   throw new TypeError(`${name} must be a non-empty string`);
 }
 
+function requireStringArray(value: unknown, name: string): readonly string[] {
+  if (Array.isArray(value) && value.every((entry) => typeof entry === "string")) return value;
+  throw new TypeError(`${name} must be an array of strings`);
+}
+
+function pathsFromRecordArray(value: unknown, name: string): readonly string[] {
+  if (!Array.isArray(value)) throw new TypeError(`${name} must be an array`);
+  return value.map((entry, index) => requireString(requireRecord(entry, `${name}[${index}]`).path, `${name}[${index}].path`));
+}
+
 async function createCommittedSession(sessionId: string, taskName: string) {
   const { repo } = await createRepoWithOrigin();
   const started = await guardianStart({
@@ -127,6 +137,43 @@ test("guardian_done blocks dirty session apply without an explicit commit messag
   await assert.rejects(git(repo, ["merge-base", "--is-ancestor", head, "origin/main"]));
 });
 
+test("guardian_done still requires a commit message for tracked source dirt", async () => {
+  const sessionId = "land-clean-source-dirty-no-message";
+  const { repo, worktree, branch, head } = await createCommittedSession(sessionId, "source-dirty-no-message");
+  await fs.writeFile(path.join(worktree, "README.md"), "changed source content\n", "utf8");
+
+  const result = await guardianDone({ repoRoot: repo, cwd: worktree, sessionId, mode: "plan", config: DEFAULT_CONFIG });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, "blocked");
+  assert.match(String(result.reason), /commitMessage/);
+  assert.equal(result.commitMessageRequired, undefined);
+  await assertWorktreePresent(repo, worktree);
+  await git(repo, ["rev-parse", "--verify", `refs/heads/${branch}`]);
+  await assert.rejects(git(repo, ["merge-base", "--is-ancestor", head, "origin/main"]));
+});
+
+test("guardian_done still requires a commit message for tracked source dirt under a hygiene root", async () => {
+  const sessionId = "land-clean-source-under-hygiene-root";
+  const { repo, worktree, branch, head } = await createCommittedSession(sessionId, "source-under-hygiene-root");
+  await fs.mkdir(path.join(worktree, "sample-librarian", "src"), { recursive: true });
+  await fs.writeFile(path.join(worktree, "sample-librarian", "src", "index.ts"), "export const value = 1;\n", "utf8");
+  await git(worktree, ["add", "sample-librarian/src/index.ts"]);
+  await git(worktree, ["commit", "-m", "add tracked source under hygiene root"]);
+  await fs.writeFile(path.join(worktree, "sample-librarian", "src", "index.ts"), "export const value = 2;\n", "utf8");
+  await fs.writeFile(path.join(worktree, "sample-librarian", "scratch.log"), "generated\n", "utf8");
+
+  const result = await guardianDone({ repoRoot: repo, cwd: worktree, sessionId, mode: "plan", config: DEFAULT_CONFIG });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, "blocked");
+  assert.match(String(result.reason), /commitMessage/);
+  assert.equal(result.commitMessageRequired, undefined);
+  await assertWorktreePresent(repo, worktree);
+  await git(repo, ["rev-parse", "--verify", `refs/heads/${branch}`]);
+  await assert.rejects(git(repo, ["merge-base", "--is-ancestor", head, "origin/main"]));
+});
+
 test("guardian_done plans cleanup guidance for hygiene-only dirty session work", async () => {
   const sessionId = "land-clean-hygiene-only";
   const { repo, worktree, branch, head } = await createCommittedSession(sessionId, "hygiene-only");
@@ -150,6 +197,51 @@ test("guardian_done plans cleanup guidance for hygiene-only dirty session work",
   const deletePathsPlan = requireRecord(result.deletePathsPlan, "result.deletePathsPlan");
   assert.equal(deletePathsPlan.ok, true);
   assert.equal(deletePathsPlan.status, "planned");
+  await assertWorktreePresent(repo, worktree);
+  await git(repo, ["rev-parse", "--verify", `refs/heads/${branch}`]);
+  await assert.rejects(git(repo, ["merge-base", "--is-ancestor", head, "origin/main"]));
+});
+
+test("guardian_done classifies complete hygiene inventory before commit message enforcement", async () => {
+  const sessionId = "land-clean-hygiene-overflow";
+  const { repo, worktree, branch, head } = await createCommittedSession(sessionId, "hygiene-overflow");
+  await fs.mkdir(path.join(worktree, ".omc"), { recursive: true });
+  await fs.writeFile(path.join(worktree, ".omc", "session.json"), "{}\n", "utf8");
+  await fs.mkdir(path.join(worktree, ".playwright-mcp"), { recursive: true });
+  await fs.writeFile(path.join(worktree, ".playwright-mcp", "state.json"), "{}\n", "utf8");
+  for (let index = 0; index < 14; index += 1) {
+    await fs.writeFile(path.join(worktree, `people-counter-${String(index).padStart(2, "0")}.csv`), "area,total\n", "utf8");
+  }
+  await fs.writeFile(path.join(worktree, "people-counter-raw.md"), "# people counter\n", "utf8");
+  const nested = path.join(worktree, "emqx-postgres-persistence-librarian");
+  await fs.mkdir(nested, { recursive: true });
+  await git(nested, ["init", "-b", "main"]);
+  await git(nested, ["config", "user.email", "guardian@example.test"]);
+  await git(nested, ["config", "user.name", "Guardian Test"]);
+  await fs.writeFile(path.join(nested, "README.md"), "nested\n", "utf8");
+  await git(nested, ["add", "README.md"]);
+  await git(nested, ["commit", "-m", "nested initial"]);
+
+  const result = await guardianDone({ repoRoot: repo, cwd: worktree, sessionId, mode: "plan", config: DEFAULT_CONFIG });
+
+  const expectedReviewablePaths = [
+    ".playwright-mcp",
+    ...Array.from({ length: 14 }, (_unused, index) => `people-counter-${String(index).padStart(2, "0")}.csv`),
+    "people-counter-raw.md",
+  ];
+  assert.equal(result.ok, false);
+  assert.equal(result.status, "blocked-workspace-hygiene-required");
+  assert.equal(result.commitMessageRequired, false);
+  assert.doesNotMatch(String(result.reason), /commitMessage/);
+  assert.deepEqual(requireStringArray(result.knownCleanablePaths, "result.knownCleanablePaths"), []);
+  assert.deepEqual(requireStringArray(result.reviewablePaths, "result.reviewablePaths"), expectedReviewablePaths);
+  assert.deepEqual(requireStringArray(result.ignoreCandidates, "result.ignoreCandidates"), [".omc"]);
+  assert.deepEqual(requireStringArray(result.manualReviewCandidates, "result.manualReviewCandidates"), ["emqx-postgres-persistence-librarian"]);
+  assert.equal(result.hygienePlan, null);
+  const deletePathsPlan = requireRecord(result.deletePathsPlan, "result.deletePathsPlan");
+  assert.equal(deletePathsPlan.ok, true);
+  assert.equal(deletePathsPlan.status, "planned");
+  assert.deepEqual(pathsFromRecordArray(deletePathsPlan.targets, "result.deletePathsPlan.targets"), expectedReviewablePaths);
   await assertWorktreePresent(repo, worktree);
   await git(repo, ["rev-parse", "--verify", `refs/heads/${branch}`]);
   await assert.rejects(git(repo, ["merge-base", "--is-ancestor", head, "origin/main"]));

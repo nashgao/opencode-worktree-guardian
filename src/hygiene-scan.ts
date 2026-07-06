@@ -26,6 +26,7 @@ const PROTECTED_DIR_NAMES = new Set([
 
 const SUSPICIOUS_NAME_PATTERN = /(^|[-_.])(clone|clones|research|dump|dumps|scratch|sandbox|experiment|prototype|poc|checkout|repo)([-_.]|$)/i;
 const RESIDUE_ROOT_PATTERN = /^(guardian-[^/]+|guardian-origin-[^/]+|opencode-temp-[^/]+|omo-research-[^/]+|opencode-research-[^/]+|git-docs-research)$/;
+const DEFAULT_REVIEWABLE_CANDIDATE_LIMIT = 12;
 
 async function listCandidatePaths(repoRoot: string) {
   const untracked = await runGitNullSeparated(repoRoot, ["ls-files", "--others", "--exclude-standard", "-z"]);
@@ -124,7 +125,7 @@ function mergeReviewableStatus(current: HygieneCandidateStatus | undefined, next
   return current === "ignored" || next === "ignored" ? "ignored" : "untracked";
 }
 
-async function buildReviewableCandidates(repoRoot: string, candidates: readonly ReviewableCandidateInput[], blockedRoots: Set<string>) {
+async function buildReviewableCandidates(repoRoot: string, candidates: readonly ReviewableCandidateInput[], blockedRoots: Set<string>, visibleLimit: number | null) {
   const collapsedByPath = new Map<string, HygieneCandidateStatus>();
   for (const candidate of candidates) {
     const collapsedPath = await reviewablePath(repoRoot, candidate.path, blockedRoots);
@@ -134,7 +135,7 @@ async function buildReviewableCandidates(repoRoot: string, candidates: readonly 
   const collapsed = [...collapsedByPath.entries()]
     .map(([candidatePath, status]) => ({ path: candidatePath, status }))
     .sort((left, right) => left.path.localeCompare(right.path));
-  const visible = collapsed.slice(0, 12);
+  const visible = visibleLimit === null ? collapsed : collapsed.slice(0, visibleLimit);
   const reviewableCandidates: ReviewableCandidate[] = [];
   for (const candidate of visible) {
     const kind = await pathKind(path.resolve(repoRoot, candidate.path));
@@ -247,7 +248,8 @@ export async function scanWorkspaceHygiene(input: Record<string, unknown> = {}) 
     findings.sort((left, right) => String(left.path).localeCompare(String(right.path)) || String(left.category).localeCompare(String(right.category)));
     const exclusions = [...exclusionsByPath.values()].sort((left, right) => String(left.path).localeCompare(String(right.path)));
     const blockedReviewableRoots = new Set([...findings.map((finding) => String(finding.path)), ...exclusions.map((exclusion) => String(exclusion.path))]);
-    const reviewableSummary = await buildReviewableCandidates(repoRoot, reviewableCandidateInputs, blockedReviewableRoots);
+    const reviewableLimit = input.includeAllReviewableCandidates === true ? null : DEFAULT_REVIEWABLE_CANDIDATE_LIMIT;
+    const reviewableSummary = await buildReviewableCandidates(repoRoot, reviewableCandidateInputs, blockedReviewableRoots, reviewableLimit);
     const summary = { candidateCount: candidates.length, findingCount: findings.length, exclusionCount: exclusions.length, reviewableCandidateCount: reviewableSummary.reviewableCandidateCount, reviewableShownCount: reviewableSummary.reviewableShownCount, reviewableOmittedCount: reviewableSummary.reviewableOmittedCount, reviewableTruncated: reviewableSummary.reviewableTruncated, bySeverity: { warn: 0, fail: 0 } as Record<string, number>, byCategory: { "known-cleanable": 0, "nested-git": 0, suspicious: 0 } as Record<string, number> };
     for (const finding of findings) {
       const severity = String(finding.severity);
