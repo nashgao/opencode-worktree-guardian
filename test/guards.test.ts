@@ -422,6 +422,41 @@ test("blocks rm -rf for known worktree paths and repo-managed paths", () => {
   }).blocked, false);
 });
 
+test("blocks rm -rf with command substitution targets", () => {
+  for (const command of [
+    "rm -rf $(pwd)",
+    "rm -rf $(git rev-parse --show-toplevel)",
+    "bash -lc \"rm -rf $(pwd)\"",
+  ]) {
+    const result = classifyGuardCommand(command, {
+      cwd: "/tmp/repo",
+      repoRoot: "/tmp/repo",
+      knownWorktreePaths: ["/tmp/repo/.worktrees/a"],
+    });
+    assert.equal(result.blocked, true, command);
+    assert.match(String(result.reason), /command substitution|dynamic target|guardian_delete_paths|guardian_hygiene/);
+  }
+});
+
+test("blocks git path options with command substitution targets", () => {
+  for (const command of [
+    "git -C $(pwd) reset --hard",
+    "git --work-tree $(pwd) --git-dir .git clean -fd",
+    "git --git-dir=$(pwd)/.git reset --hard",
+    "bash -lc \"git -C $(git rev-parse --show-toplevel) clean -fd\"",
+  ]) {
+    const result = classifyGuardCommand(command, {
+      cwd: "/tmp/repo",
+      repoRoot: "/tmp/repo",
+      protectedBranches: ["main"],
+      currentBranch: "main",
+      protectedBranchWorktreePaths: ["/tmp/repo"],
+    });
+    assert.equal(result.blocked, true, command);
+    assert.match(String(result.reason), /command substitution|dynamic .*target|git command/);
+  }
+});
+
 test("allows read-only stash inspection and normal push", () => {
   assert.equal(classifyGuardCommand("git stash list").blocked, false);
   assert.equal(classifyGuardCommand("git stash show -p stash@{0}").blocked, false);
