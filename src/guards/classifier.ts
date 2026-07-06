@@ -13,9 +13,22 @@ function isRecursiveForceRm(tokens: CommandSegment): boolean {
   return flags.some((flag) => flag.includes("r") || flag.includes("R")) && flags.some((flag) => flag.includes("f") || flag.includes("F"));
 }
 
-function classifyDynamicRmTarget(segment: CommandSegment, nextSeparator: SegmentSeparator | null): GuardBlockDecision | null {
-  if (nextSeparator !== "(" || !isRecursiveForceRm(segment)) return null;
-  return block("rm -rf with command substitution or dynamic target is blocked; use guardian_delete_paths or guardian_hygiene", stripCommandWrappers(segment));
+function hasDynamicGitPathOption(tokens: CommandSegment): boolean {
+  const stripped = stripCommandWrappers(tokens);
+  if (stripped[0] !== "git") return false;
+  const last = stripped[stripped.length - 1] ?? "";
+  return ["-C", "--git-dir", "--work-tree"].includes(last) || last === "--git-dir=" || last === "--work-tree=";
+}
+
+function classifyDynamicTarget(segment: CommandSegment, nextSeparator: SegmentSeparator | null): GuardBlockDecision | null {
+  if (nextSeparator !== "(") return null;
+  if (isRecursiveForceRm(segment)) {
+    return block("rm -rf with command substitution or dynamic target is blocked; use guardian_delete_paths or guardian_hygiene", stripCommandWrappers(segment));
+  }
+  if (hasDynamicGitPathOption(segment)) {
+    return block("git command with command substitution in a path option is blocked; avoid dynamic -C/--git-dir/--work-tree targets", stripCommandWrappers(segment));
+  }
+  return null;
 }
 
 export function classifyGuardCommand(command: unknown, options: GuardOptions = {}): GuardDecision {
@@ -30,8 +43,8 @@ export function classifyGuardCommand(command: unknown, options: GuardOptions = {
   let effectiveCwd = stringOption(options, "cwd") ?? process.cwd();
   for (const { segment, nextSeparator } of commandSegmentsWithSeparators(tokens)) {
     const scopedOptions = { ...options, cwd: effectiveCwd };
-    const dynamicRmTarget = classifyDynamicRmTarget(segment, nextSeparator);
-    if (dynamicRmTarget) return { ...dynamicRmTarget, tokens };
+    const dynamicTarget = classifyDynamicTarget(segment, nextSeparator);
+    if (dynamicTarget) return { ...dynamicTarget, tokens };
     const result = classifySegment(segment, scopedOptions, (payload, inheritedEnvAssignments) => {
       const nested = classifyGuardCommand(payload, { ...scopedOptions, inheritedEnvAssignments });
       return nested.blocked ? nested : null;
