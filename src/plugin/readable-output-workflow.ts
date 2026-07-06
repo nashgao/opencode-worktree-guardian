@@ -1,4 +1,5 @@
 import { arrayValue, recordValue, shortCommit, textValue } from "./readable-output-values.ts";
+import { appendDoneHygieneGuidance } from "./readable-output-hygiene.ts";
 
 function statusPrefix(result: Record<string, unknown>): "[FAIL]" | "[WARN]" | "[GOOD]" {
   if (result.ok === false) return "[FAIL]";
@@ -184,6 +185,7 @@ export function formatGuardianDoneOutput(rawResult: unknown) {
     lines.push("[INFO] dirty files:");
     for (const entry of dirtyPaths.slice(0, 8)) lines.push(`  - ${textValue(entry, String(entry))}`);
   }
+  appendDoneHygieneGuidance(lines, result);
   if (Object.keys(cleanupPlan).length > 0) {
     lines.push(`[INFO] cleanupPlan: ${textValue(cleanupPlan.status)} candidates=${arrayValue(cleanupPlan.candidates).length} blockers=${arrayValue(cleanupPlan.blockers).length}`);
   }

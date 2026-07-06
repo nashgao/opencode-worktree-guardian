@@ -178,6 +178,42 @@ test("guardian_done readable output shows selected target and dirty target choic
   assert.match(ambiguous, /guardian_done primary=true commitMessage=\.\.\./);
 });
 
+test("guardian_done readable output shows hygiene guidance for local artifacts", () => {
+  const output = formatGuardianOutput("guardian_done", {
+    ok: false,
+    status: "blocked-workspace-hygiene-required",
+    lane: "session-finish",
+    branch: "guardian/session-ses-hygiene",
+    dirtyFiles: [".omc/session.json", "export.tsv", "people-counter-report.csv", "nested-clone/file.txt"],
+    reason: "dirty session work is limited to hygiene or generated local artifacts; clean, delete, or ignore them before guardian_done",
+    knownCleanablePaths: ["export.tsv"],
+    reviewablePaths: ["people-counter-report.csv"],
+    ignoreCandidates: [".omc"],
+    manualReviewCandidates: ["nested-clone"],
+    hygienePlan: { ok: true, status: "planned", targets: [{ path: "export.tsv" }], blockers: [] },
+    deletePathsPlan: { ok: true, status: "planned", targets: [{ path: "people-counter-report.csv" }], blockers: [] },
+    nextActions: [
+      "plan/apply guardian_hygiene for known-cleanable paths",
+      "plan/apply guardian_delete_paths for generated reviewable artifacts",
+      "rerun guardian_done after cleanup or ignore rules are in place",
+    ],
+  });
+
+  assert.match(output, /guardian_done blocked-workspace-hygiene-required/);
+  assert.match(output, /guardian_hygiene candidates:/);
+  assert.match(output, /export.tsv/);
+  assert.match(output, /guardian_delete_paths candidates:/);
+  assert.match(output, /people-counter-report.csv/);
+  assert.match(output, /ignore candidates:/);
+  assert.match(output, /\.omc/);
+  assert.match(output, /manual review candidates:/);
+  assert.match(output, /nested-clone/);
+  assert.match(output, /hygienePlan: planned targets=1 blockers=0/);
+  assert.match(output, /deletePathsPlan: planned targets=1 blockers=0/);
+  assert.match(output, /next actions:/);
+  assert.doesNotMatch(output, /commitMessage is required/);
+});
+
 test("guardian_done tool execute treats empty optional strings as absent", async () => {
   const { createRepoWithOrigin } = await import("./helpers.ts");
   const path = await import("node:path");

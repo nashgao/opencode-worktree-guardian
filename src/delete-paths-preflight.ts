@@ -65,13 +65,13 @@ async function collectDeleteProtectedRoots(repoRoot: string, cwd: string, config
   }
   for (const entry of await listWorktrees(repoRoot)) {
     const worktreePath = path.resolve(String(entry.path));
-    if (worktreePath !== path.resolve(repoRoot)) roots.set(worktreePath, { reason: "registered Git worktree path", blockInside: true });
+    if (worktreePath !== path.resolve(repoRoot) && isSameOrInside(worktreePath, path.resolve(repoRoot))) roots.set(worktreePath, { reason: "registered Git worktree path", blockInside: true });
   }
   try {
     const state = await readState(await getGuardianPaths(repoRoot), { repoRoot, config });
     for (const session of Object.values(recordValue(state.sessions))) {
       const sessionRecord = recordValue(session);
-      if (typeof sessionRecord.worktree_path === "string" && path.resolve(sessionRecord.worktree_path) !== path.resolve(repoRoot)) {
+      if (typeof sessionRecord.worktree_path === "string" && path.resolve(sessionRecord.worktree_path) !== path.resolve(repoRoot) && isSameOrInside(path.resolve(sessionRecord.worktree_path), path.resolve(repoRoot))) {
         roots.set(path.resolve(sessionRecord.worktree_path), { reason: "registered Guardian session worktree path", blockInside: true });
       }
     }

@@ -186,7 +186,7 @@ export async function scanWorkspaceHygiene(input: Record<string, unknown> = {}) 
     const protectedPaths = protectedPathsFromConfig(config);
     const worktrees = await listWorktrees(repoRoot);
     const configuredWorktreeRoot = path.resolve(repoRoot, expandWorktreeRoot(String(config.worktreeRoot), repoRoot));
-    const protectedRoots = worktrees.map((entry) => path.resolve(String(entry.path))).filter((entry) => entry !== path.resolve(repoRoot));
+    const protectedRoots = worktrees.map((entry) => path.resolve(String(entry.path))).filter((entry) => entry !== path.resolve(repoRoot) && isSameOrInside(entry, path.resolve(repoRoot)));
     protectedRoots.push(configuredWorktreeRoot);
     const findings: Array<Record<string, unknown>> = [];
     const exclusionsByPath = new Map<string, Record<string, unknown>>();

@@ -127,6 +127,34 @@ test("guardian_done blocks dirty session apply without an explicit commit messag
   await assert.rejects(git(repo, ["merge-base", "--is-ancestor", head, "origin/main"]));
 });
 
+test("guardian_done plans cleanup guidance for hygiene-only dirty session work", async () => {
+  const sessionId = "land-clean-hygiene-only";
+  const { repo, worktree, branch, head } = await createCommittedSession(sessionId, "hygiene-only");
+  await fs.mkdir(path.join(worktree, ".omc"), { recursive: true });
+  await fs.writeFile(path.join(worktree, ".omc", "session.json"), "{}\n", "utf8");
+  await fs.writeFile(path.join(worktree, "export.tsv"), "area\ttotal\n", "utf8");
+  await fs.writeFile(path.join(worktree, "people-counter-report.csv"), "area,total\n", "utf8");
+
+  const result = await guardianDone({ repoRoot: repo, cwd: worktree, sessionId, mode: "plan", config: DEFAULT_CONFIG });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, "blocked-workspace-hygiene-required");
+  assert.equal(result.commitMessageRequired, false);
+  assert.doesNotMatch(String(result.reason), /commitMessage/);
+  assert.deepEqual(result.knownCleanablePaths, ["export.tsv"]);
+  assert.deepEqual(result.reviewablePaths, ["people-counter-report.csv"]);
+  assert.deepEqual(result.ignoreCandidates, [".omc"]);
+  const hygienePlan = requireRecord(result.hygienePlan, "result.hygienePlan");
+  assert.equal(hygienePlan.ok, true);
+  assert.equal(hygienePlan.status, "planned");
+  const deletePathsPlan = requireRecord(result.deletePathsPlan, "result.deletePathsPlan");
+  assert.equal(deletePathsPlan.ok, true);
+  assert.equal(deletePathsPlan.status, "planned");
+  await assertWorktreePresent(repo, worktree);
+  await git(repo, ["rev-parse", "--verify", `refs/heads/${branch}`]);
+  await assert.rejects(git(repo, ["merge-base", "--is-ancestor", head, "origin/main"]));
+});
+
 test("guardian_done only uses admin bypass when allowAdminBypass is explicit", async (t) => {
   const sessionId = "land-clean-admin";
   const { repo, worktree, branch, head } = await createCommittedSession(sessionId, "admin-bypass");

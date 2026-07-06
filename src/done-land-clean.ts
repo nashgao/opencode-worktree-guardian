@@ -1,7 +1,6 @@
 import { guardianDeleteWorktree } from "./delete-worktree.ts";
-import { finalPostflightCommitsFromCleanupSweep, runCleanupSweep } from "./done-cleanup-sweep.ts";
-import { syncLocalBase } from "./done-main-sync.ts";
-import { runFinalCleanupPostflight, type FinalPostflightCommit } from "./final-postflight.ts";
+import { cleanupLandedSession, postFinishMaintenance, withMaintenanceOutcome } from "./done-land-clean-maintenance.ts";
+import { planDoneHygienePreflight } from "./done-hygiene-preflight.ts";
 import { createSafetyRef, fetchRemote, getCurrentBranch, getDirtyFiles, getHeadCommit, isAncestor, pushBranch, runGit } from "./git.ts";
 import { getOrCreatePullRequest, mergePullRequest } from "./done-github-pr.ts";
 import type { GuardianConfig, GuardianSession } from "./types.ts";
@@ -35,11 +34,6 @@ type LandCleanPreflight =
       readonly baseBranch: string;
     };
 
-type CleanupLandedSessionOptions = {
-  readonly allowRedundantDirtyPaths?: boolean;
-  readonly ancestryBaseRef?: string;
-};
-
 function blocked(reason: string, extra: Record<string, unknown> = {}): BlockedResult {
   return { ok: false, status: "blocked", reason, ...extra };
 }
@@ -50,70 +44,6 @@ function sessionBranch(session: GuardianSession): string | null {
 
 function commitMessage(input: Record<string, unknown>): string {
   return typeof input.commitMessage === "string" ? input.commitMessage.trim() : "";
-}
-
-async function postFinishMaintenance(context: LandCleanContext, requiredCommits: readonly FinalPostflightCommit[]): Promise<Record<string, unknown>> {
-  if (context.input.skipPostFinishMaintenance === true) return {};
-  const mainSync = await syncLocalBase(context.repoRoot, context.config);
-  const cleanupSweep = await runCleanupSweep(context.repoRoot, context.config, context.input);
-  const finalPostflight = await runFinalCleanupPostflight({ repoRoot: context.repoRoot, config: context.config, requiredCommits: [...requiredCommits, ...finalPostflightCommitsFromCleanupSweep(cleanupSweep)] });
-  return { mainSync, cleanupSweep, finalPostflight };
-}
-
-function withMaintenanceOutcome(result: Record<string, unknown>, maintenance: Record<string, unknown>): Record<string, unknown> {
-  const mainSync = maintenance.mainSync;
-  const mainSyncOk = typeof mainSync === "object" && mainSync !== null && "ok" in mainSync
-    ? (mainSync as { readonly ok?: unknown }).ok
-    : undefined;
-  const cleanupSweep = maintenance.cleanupSweep;
-  const sweepOk = typeof cleanupSweep === "object" && cleanupSweep !== null && "ok" in cleanupSweep
-    ? (cleanupSweep as { readonly ok?: unknown }).ok
-    : undefined;
-  const finalPostflight = maintenance.finalPostflight;
-  const finalPostflightOk = typeof finalPostflight === "object" && finalPostflight !== null && "ok" in finalPostflight
-    ? (finalPostflight as { readonly ok?: unknown }).ok
-    : undefined;
-  if (mainSyncOk === false || sweepOk === false || finalPostflightOk === false) {
-    return {
-      ...result,
-      ...maintenance,
-      ok: false,
-      status: "partial",
-      reason: finalPostflightOk === false ? "session landed and cleaned, but final cleanup postflight failed" : mainSyncOk === false ? "session landed and cleaned, but local base sync was blocked" : "session landed and cleaned, but post-finish cleanup sweep was blocked",
-    };
-  }
-  return { ...result, ...maintenance };
-}
-
-async function cleanupLandedSession(context: LandCleanContext, failurePrefix: string, options: CleanupLandedSessionOptions = {}) {
-  const cleanupPlan = await guardianDeleteWorktree({
-    repoRoot: context.repoRoot,
-    cwd: context.repoRoot,
-    mode: "plan",
-    sessionId: context.sessionId,
-    deleteBranch: true,
-    allowRedundantDirtyPaths: options.allowRedundantDirtyPaths === true,
-    ancestryBaseRef: options.ancestryBaseRef,
-    timestamp: context.input.timestamp,
-    config: context.config,
-  });
-  if (cleanupPlan.ok !== true || typeof cleanupPlan.confirmToken !== "string") {
-    return { ok: false, status: "cleanup-blocked", reason: `${failurePrefix} but stale worktree cleanup could not be planned`, cleanup: cleanupPlan };
-  }
-  const cleanup = await guardianDeleteWorktree({
-    repoRoot: context.repoRoot,
-    cwd: context.repoRoot,
-    mode: "apply",
-    sessionId: context.sessionId,
-    deleteBranch: true,
-    allowRedundantDirtyPaths: options.allowRedundantDirtyPaths === true,
-    ancestryBaseRef: options.ancestryBaseRef,
-    confirmToken: cleanupPlan.confirmToken,
-    timestamp: context.input.timestamp,
-    config: context.config,
-  });
-  if (cleanup.ok !== true) return { ok: false, status: "cleanup-blocked", reason: `${failurePrefix} but stale worktree cleanup failed`, cleanup };
-  return cleanup;
 }
 
 async function planAlreadyLandedRedundantDirtyCleanup(context: LandCleanContext, preflight: Extract<LandCleanPreflight, { readonly ok: true }>, baseRef: string): Promise<Record<string, unknown>> {
@@ -218,6 +148,16 @@ export async function guardianDoneLandClean(context: LandCleanContext): Promise<
     if (await isAncestor(context.repoRoot, preflight.head, baseRef)) {
       if (context.input.mode !== "apply") return planAlreadyLandedRedundantDirtyCleanup(context, preflight, baseRef);
       return applyAlreadyLandedRedundantDirtyCleanup(context, preflight, baseRef);
+    }
+    const hygienePreflight = await planDoneHygienePreflight({ cwd: context.cwd, config: context.config }, preflight.dirtyFiles);
+    if (hygienePreflight !== null) {
+      return {
+        ...hygienePreflight,
+        branch: preflight.branch,
+        worktreePath: preflight.worktreePath,
+        head: preflight.head,
+        baseRef,
+      };
     }
     return blocked("commitMessage is required for dirty session work", {
       branch: preflight.branch,
