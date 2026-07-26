@@ -42,6 +42,11 @@ async function guardianRefNames(repo: string): Promise<readonly string[]> {
   return stdout.length === 0 ? [] : stdout.split("\n");
 }
 
+async function createAdvisoryStash(repo: string, name: string): Promise<void> {
+  await fs.writeFile(path.join(repo, name), "stashed\n");
+  await git(repo, ["stash", "push", "-u", "-m", name]);
+}
+
 async function makeAlreadyLandedDirtySession(options: { readonly sessionId: string; readonly finalWorktreeContent: string }): Promise<AlreadyLandedDirtyFixture> {
   const { base, repo } = await createRepoWithOrigin();
   const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: options.sessionId, taskName: "done redundant dirty", createWorktree: true, config: DEFAULT_CONFIG });
@@ -67,6 +72,7 @@ async function makeAlreadyLandedDirtySession(options: { readonly sessionId: stri
 test("guardian_done apply cleans already-landed redundant dirty sessions without creating a PR", async (t) => {
   const fixture = await makeAlreadyLandedDirtySession({ sessionId: "ses_done_apply_redundant_dirty", finalWorktreeContent: "advanced base content\n" });
   t.after(() => fs.rm(fixture.base, { recursive: true, force: true }));
+  await createAdvisoryStash(fixture.repo, "already-landed-redundant-stash");
   const plan = await guardianDone({ repoRoot: fixture.repo, cwd: fixture.repo, mode: "plan", timestamp: "20260609T080808", config: DEFAULT_CONFIG });
   const planRecord = requireRecord(plan, "plan");
 
@@ -74,11 +80,15 @@ test("guardian_done apply cleans already-landed redundant dirty sessions without
   const applyRecord = requireRecord(apply, "apply");
 
   assert.equal(planRecord.action, "already-landed-clean");
+  assert.equal(planRecord.stashCount, 1);
+  assert.equal(Array.isArray(planRecord.stashes) ? planRecord.stashes.length : 0, 1);
   assert.equal(applyRecord.ok, true, JSON.stringify(applyRecord));
   assert.equal(applyRecord.status, "already-landed-and-cleaned");
   assert.equal(applyRecord.action, "already-landed-clean");
   assert.equal(applyRecord.branch, fixture.branch);
   assert.equal(applyRecord.head, fixture.head);
+  assert.equal(applyRecord.stashCount, 1);
+  assert.equal(Array.isArray(applyRecord.stashes) ? applyRecord.stashes.length : 0, 1);
   assert.deepEqual(applyRecord.dirtyFiles, [fixture.featureFile]);
   assert.equal(applyRecord.worktreeRemoved, true);
   assert.equal(applyRecord.branchDeleted, true);
@@ -98,6 +108,7 @@ test("guardian_done apply cleans already-landed redundant dirty sessions without
 test("guardian_done preserves already-landed sessions with non-redundant dirty work", async (t) => {
   const fixture = await makeAlreadyLandedDirtySession({ sessionId: "ses_done_keep_unique_dirty", finalWorktreeContent: "unique user work\n" });
   t.after(() => fs.rm(fixture.base, { recursive: true, force: true }));
+  await createAdvisoryStash(fixture.repo, "non-redundant-dirty-stash");
 
   const result = await guardianDone({ repoRoot: fixture.repo, cwd: fixture.repo, mode: "plan", timestamp: "20260609T090909", config: DEFAULT_CONFIG });
   const resultRecord = requireRecord(result, "result");
@@ -106,11 +117,64 @@ test("guardian_done preserves already-landed sessions with non-redundant dirty w
   assert.equal(resultRecord.status, "blocked");
   assert.match(requireString(resultRecord.reason, "result.reason"), /could not be proven redundant/);
   assert.equal(resultRecord.branch, fixture.branch);
+  assert.equal(resultRecord.stashCount, 1);
+  assert.equal(Array.isArray(resultRecord.stashes) ? resultRecord.stashes.length : 0, 1);
   assert.deepEqual(resultRecord.dirtyFiles, [fixture.featureFile]);
   assert.equal(await pathExists(fixture.worktree), true);
   assert.equal(await branchExists(fixture.repo, fixture.branch), true);
   assert.equal((await git(fixture.repo, ["rev-parse", "origin/main"])).stdout, fixture.remoteMain);
   assert.deepEqual(await guardianRefNames(fixture.repo), []);
+});
+
+test("guardian_done retains advisory stash inventory when already-landed cleanup confirmation is missing", async (t) => {
+  const fixture = await makeAlreadyLandedDirtySession({ sessionId: "ses_done_already_landed_no_confirm", finalWorktreeContent: "advanced base content\n" });
+  t.after(() => fs.rm(fixture.base, { recursive: true, force: true }));
+  await createAdvisoryStash(fixture.repo, "already-landed-no-confirm-stash");
+
+  const result = requireRecord(await guardianDone({ repoRoot: fixture.repo, cwd: fixture.repo, mode: "apply", timestamp: "20260609T091010", config: DEFAULT_CONFIG }), "result");
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, "blocked");
+  assert.match(requireString(result.reason, "result.reason"), /confirm=true/);
+  assert.equal(result.stashCount, 1);
+  assert.equal(Array.isArray(result.stashes) ? result.stashes.length : 0, 1);
+});
+
+test("guardian_done retains advisory stash inventory when dirty work needs a commit message", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const sessionId = "land-clean-stash-no-message";
+  const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId, taskName: "stash no message", createWorktree: true, config: DEFAULT_CONFIG });
+  const session = requireRecord(started.session, "started.session");
+  const worktree = requireString(session.worktree_path, "started.session.worktree_path");
+  await fs.writeFile(path.join(worktree, "dirty.txt"), "needs a message\n");
+  await createAdvisoryStash(repo, "missing-message-stash");
+
+  const result = await guardianDone({ repoRoot: repo, cwd: worktree, sessionId, mode: "plan", config: DEFAULT_CONFIG });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, "blocked");
+  assert.match(String(result.reason), /commitMessage/);
+  assert.equal(result.stashCount, 1);
+  assert.equal(Array.isArray(result.stashes) ? result.stashes.length : 0, 1);
+});
+
+test("guardian_done retains advisory stash inventory when ordinary cleanup confirmation is missing", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const sessionId = "land-clean-stash-no-confirm";
+  const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId, taskName: "stash no confirm", createWorktree: true, config: DEFAULT_CONFIG });
+  const session = requireRecord(started.session, "started.session");
+  const worktree = requireString(session.worktree_path, "started.session.worktree_path");
+  await createAdvisoryStash(repo, "ordinary-no-confirm-stash");
+
+  const result = await guardianDone({ repoRoot: repo, cwd: worktree, sessionId, mode: "apply", config: DEFAULT_CONFIG });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, "blocked");
+  assert.match(String(result.reason), /confirm=true/);
+  assert.equal(result.stashCount, 1);
+  assert.equal(Array.isArray(result.stashes) ? result.stashes.length : 0, 1);
 });
 
 test("guardian_done proves redundant dirty work against current remote base, not stale session base_ref", async (t) => {

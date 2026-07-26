@@ -1,6 +1,7 @@
 import path from "node:path";
 import { resolveBaseRef } from "./done-base-ref.ts";
 import { fetchRemotePrune, getRefCommit, isAncestor, listBranches, listRefs, listRemoteBranches, listStashes, listWorktrees } from "./git.ts";
+import { hasBlockingStashInventory } from "./stash-policy.ts";
 
 export type FinalPostflightCommit = {
   readonly commit: string;
@@ -90,7 +91,7 @@ export async function runFinalCleanupPostflight(input: Record<string, unknown> =
     if (extraWorktrees.length > 0) blockers.push({ kind: "extra-worktrees", reason: "final cleanup requires no non-base worktrees", worktrees: extraWorktrees });
   }
 
-  if (stashes.length > 0 && config.allowStashIfUnrelated !== true) blockers.push({ kind: "stashes", reason: "stash inventory is non-empty", stashes });
+  if (hasBlockingStashInventory(config, stashes)) blockers.push({ kind: "stashes", reason: "stash inventory is non-empty", stashes });
 
   const droppedCommits = [];
   for (const required of requiredCommits) {

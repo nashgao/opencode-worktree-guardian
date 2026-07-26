@@ -57,12 +57,15 @@ test("guardian_delete_paths plugin confirmDelete reuses matching plan token and 
 });
 
 test("guardian_delete_worktree tool execute returns readable plan output with raw metadata", async () => {
-  const { createRepoWithOrigin } = await import("./helpers.ts");
+  const path = await import("node:path");
+  const { createRepoWithOrigin, git } = await import("./helpers.ts");
   const { guardianStart } = await import("../src/tools.ts");
   const { DEFAULT_CONFIG } = await import("../src/config.ts");
   const { base, repo } = await createRepoWithOrigin();
   test.after(() => fs.rm(base, { recursive: true, force: true }));
   const start = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_contract_delete", taskName: "contract delete", createWorktree: true, config: DEFAULT_CONFIG });
+  await fs.writeFile(path.join(repo, "contract-delete-stashed.txt"), "stashed\n");
+  await git(repo, ["stash", "push", "-u", "-m", "contract delete stash"]);
   const hooks = await plugin.server({ directory: repo, worktree: repo });
   const { context } = createToolContext();
   context.directory = repo;
@@ -75,6 +78,7 @@ test("guardian_delete_worktree tool execute returns readable plan output with ra
   assert.match(result.output, /guardian_delete_worktree planned/);
   assert.match(result.output, /targetKind: worktree/);
   assert.match(result.output, /worktreeRemoved: false/);
+  assert.match(result.output, /\[WARN\] repository stash inventory: 1/);
   assert.match(result.output, /confirmToken:/);
 });
 

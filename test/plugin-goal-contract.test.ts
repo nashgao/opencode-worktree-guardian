@@ -22,6 +22,8 @@ function requireString(value: unknown, name: string): string {
 test("guardian_goal tool plans configured repo goal with readable output", async () => {
   const { base, repo } = await createRepoWithOrigin();
   test.after(() => fs.rm(base, { recursive: true, force: true }));
+  await fs.writeFile(path.join(repo, "goal-stashed.txt"), "stashed\n");
+  await git(repo, ["stash", "push", "-u", "-m", "goal contract stash"]);
   await fs.mkdir(path.join(repo, "node-compile-cache"), { recursive: true });
   await fs.writeFile(path.join(repo, "node-compile-cache", "cache.bin"), "cache\n");
   await fs.writeFile(path.join(repo, "goal-code.txt"), "goal\n");
@@ -41,10 +43,39 @@ test("guardian_goal tool plans configured repo goal with readable output", async
   assert.match(result.output, /guardian_goal planned/);
   assert.match(result.output, /guardian_hygiene/);
   assert.match(result.output, /guardian_done/);
+  assert.match(result.output, /\[WARN\] repository stash inventory: 1/);
   assert.match(result.output, /commitDirty=true/);
   assert.doesNotMatch(result.output, /confirmToken:/);
   const steps = metadataRecords(result.metadata, "steps");
   assert.deepEqual(steps.map((step) => step.tool), ["guardian_hygiene", "guardian_done"]);
+  const doneResult = requireRecord(steps.find((step) => step.tool === "guardian_done")?.result, "guardian_done step result");
+  const donePreflight = requireRecord(doneResult.preflight, "guardian_done preflight");
+  assert.equal(donePreflight.stashCount, 1);
+});
+
+test("guardian_goal promotes strict stash inventory blockers from guardian_done", async () => {
+  const { base, repo } = await createRepoWithOrigin();
+  test.after(() => fs.rm(base, { recursive: true, force: true }));
+  await fs.mkdir(path.join(repo, ".opencode"), { recursive: true });
+  await fs.writeFile(path.join(repo, ".opencode", "worktree-guardian.json"), JSON.stringify({ requireEmptyStashInventory: true }));
+  await git(repo, ["add", ".opencode/worktree-guardian.json"]);
+  await git(repo, ["commit", "-m", "configure strict stash inventory"]);
+  await git(repo, ["push", "origin", "main"]);
+  await fs.writeFile(path.join(repo, "goal-stashed-strict.txt"), "stashed\n");
+  await git(repo, ["stash", "push", "-u", "-m", "strict goal stash"]);
+  await fs.writeFile(path.join(repo, "goal-code.txt"), "goal\n");
+  const hooks = await plugin.server({ directory: repo, worktree: repo });
+  const { context } = createToolContext();
+  context.directory = repo;
+  context.worktree = repo;
+
+  const result = await runTool(hooks.tool.guardian_goal.execute, { repoRoot: repo, cwd: repo, mode: "plan", commitMessage: "feat: strict goal contract" }, context);
+
+  assert.equal(result.metadata.ok, false);
+  assert.equal(result.metadata.status, "blocked");
+  assert.match(String(result.metadata.reason), /guardian_goal plan has blockers/);
+  const blockers = metadataRecords(result.metadata, "blockers");
+  assert.equal(blockers.some((blocker) => String(blocker.reason).includes("stash inventory")), true);
 });
 
 test("guardian_goal applies safe hygiene before committing primary work", async () => {
@@ -126,4 +157,36 @@ test("guardian_goal readable output summarizes blockers", () => {
   assert.match(output, /^\[FAIL\] guardian_goal blocked/);
   assert.match(output, /blockers: 1/);
   assert.match(output, /guardian_done: commitMessage is required/);
+});
+
+test("guardian_goal readable output warns about done-all stash inventory", () => {
+  const output = formatGuardianOutput("guardian_goal", {
+    ok: true,
+    status: "planned",
+    lane: "goal",
+    goal: { commitDirty: true, landToBase: true, pushBase: true, cleanupWorktrees: true, cleanupBranches: true, cleanupHygiene: true },
+    steps: [
+      { tool: "guardian_hygiene", status: "noop", ok: true },
+      { tool: "guardian_done", status: "planned", ok: true, result: { lane: "done-all", cleanupPlan: { preflight: { stashCount: 1 } } } },
+    ],
+    blockers: [],
+  });
+
+  assert.match(output, /\[WARN\] repository stash inventory: 1/);
+});
+
+test("guardian_goal readable output warns about completed done-all stash inventory", () => {
+  const output = formatGuardianOutput("guardian_goal", {
+    ok: true,
+    status: "complete",
+    lane: "goal",
+    goal: { commitDirty: true, landToBase: true, pushBase: true, cleanupWorktrees: true, cleanupBranches: true, cleanupHygiene: true },
+    steps: [
+      { tool: "guardian_hygiene", status: "noop", ok: true },
+      { tool: "guardian_done", status: "finished", ok: true, result: { lane: "done-all", stashCount: 1, stashes: [{ name: "stash@{0}" }] } },
+    ],
+    blockers: [],
+  });
+
+  assert.match(output, /\[WARN\] repository stash inventory: 1/);
 });

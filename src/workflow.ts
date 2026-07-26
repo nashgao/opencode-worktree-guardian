@@ -5,6 +5,7 @@ import { syncLocalBase } from "./done-main-sync.ts";
 import { guardianDeleteWorktree } from "./delete.ts";
 import { createSafetyRef, deleteRemoteBranch, fetchRemotePrune, getCurrentBranch, getDirtyFiles, getRefCommit, getRepoRoot, listStashes } from "./git.ts";
 import { runFinalCleanupPostflight } from "./final-postflight.ts";
+import { hasBlockingStashInventory } from "./stash-policy.ts";
 import { isRecordLike } from "./types.ts";
 import { candidateTokenMaterial, createWorkflowToken, discoverCandidates, isGuardianWorktreeStatusPath, MAX_WORKFLOW_CLEANUP_CANDIDATES } from "./workflow-candidates.ts";
 
@@ -107,7 +108,8 @@ export async function guardianFinishWorkflow(input: Record<string, unknown> = {}
 
   const stashes = await listStashes(repoRoot);
   preflight.stashCount = stashes.length;
-  if (stashes.length > 0 && config.allowStashIfUnrelated !== true) {
+  preflight.stashes = stashes;
+  if (hasBlockingStashInventory(config, stashes)) {
     preflight.candidateScanStatus = "skipped";
     preflight.candidateScanSkippedReason = "stash-blocker";
     return blocked("stash inventory is non-empty", { stashes }, preflight);

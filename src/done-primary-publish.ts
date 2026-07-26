@@ -3,6 +3,7 @@ import path from "node:path";
 import { createSafetyRef, fetchRemote, getCurrentBranch, getHeadCommit, getRefCommit, getRepoRoot, isAncestor, listStashes, runGit } from "./git.ts";
 import { finalPostflightCommitsFromCleanupSweep, runCleanupSweep } from "./done-cleanup-sweep.ts";
 import { runFinalCleanupPostflight } from "./final-postflight.ts";
+import { hasBlockingStashInventory } from "./stash-policy.ts";
 import type { GuardianConfig, MutableRecord } from "./types.ts";
 import type { DirtySnapshot } from "./done-primary-snapshot.ts";
 import { dirtySnapshot } from "./done-primary-snapshot.ts";
@@ -65,7 +66,8 @@ export async function primaryPreflight(repoRoot: string, cwd: string, config: Gu
 
   const stashes = await listStashes(repoRoot);
   preflight.stashCount = stashes.length;
-  if (stashes.length > 0 && config.allowStashIfUnrelated !== true) return { ok: false, preflight, result: blocked("stash inventory is non-empty", { stashes }, preflight) };
+  preflight.stashes = stashes;
+  if (hasBlockingStashInventory(config, stashes)) return { ok: false, preflight, result: blocked("stash inventory is non-empty", { stashes }, preflight) };
 
   const snapshot = await dirtySnapshot(repoRoot, config);
   preflight.dirtyFiles = snapshot.paths;

@@ -1,4 +1,4 @@
-import { arrayValue, recordValue, textValue } from "./readable-output-values.ts";
+import { appendStashInventoryWarning, arrayValue, recordValue, textValue } from "./readable-output-values.ts";
 
 function statusPrefix(result: Record<string, unknown>): "[FAIL]" | "[WARN]" | "[GOOD]" {
   if (result.ok === false || result.status === "blocked") return "[FAIL]";
@@ -47,6 +47,12 @@ export function formatGuardianGoalOutput(rawResult: unknown): string {
     `[INFO] desired: ${formatGoalFlags(goal)}`,
     `[INFO] steps: ${steps.length} | blockers: ${blockers.length}`,
   ];
+  const doneStep = steps.map(recordValue).find((step) => step.tool === "guardian_done");
+  const doneResult = recordValue(doneStep?.result);
+  const donePreflight = recordValue(doneResult.preflight);
+  const doneCleanupPlan = recordValue(doneResult.cleanupPlan);
+  const doneCleanupPreflight = recordValue(doneCleanupPlan.preflight);
+  appendStashInventoryWarning(lines, donePreflight.stashCount ?? doneResult.stashCount ?? doneCleanupPreflight.stashCount);
   const reason = textValue(result.reason, "");
   if (result.ok === false && reason) lines.push(`[FAIL] ${reason}`);
   if (typeof result.nextAction === "string") lines.push(`[INFO] nextAction: ${result.nextAction}`);

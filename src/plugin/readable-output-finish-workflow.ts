@@ -1,4 +1,4 @@
-import { arrayValue, recordValue, shortCommit, textValue } from "./readable-output-values.ts";
+import { appendStashInventoryWarning, arrayValue, recordValue, shortCommit, textValue } from "./readable-output-values.ts";
 
 export function formatGuardianFinishWorkflowOutput(rawResult: unknown) {
   const result = recordValue(rawResult);
@@ -18,6 +18,7 @@ export function formatGuardianFinishWorkflowOutput(rawResult: unknown) {
     const scanReason = scanStatus === "skipped" ? textValue(preflight.candidateScanSkippedReason) : textValue(preflight.candidateScanFailedReason);
     lines.push(`[WARN] candidateScan: ${scanStatus} | reason: ${scanReason} | maxCandidates: ${Number(preflight.maxCandidateCount ?? 0)} | dirty: ${Number(preflight.dirtyFileCount ?? 0)} | stashes: ${Number(preflight.stashCount ?? 0)}`);
   }
+  appendStashInventoryWarning(lines, preflight.stashCount);
   const reason = textValue(result.reason, "");
   if (result.ok === false || reason) lines.push(`[FAIL] ${reason || "guardian_finish_workflow blocked"}`);
   if (typeof result.confirmToken === "string") lines.push(`[WARN] confirmToken: ${result.confirmToken}`);

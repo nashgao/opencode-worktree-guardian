@@ -4,6 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { DEFAULT_CONFIG } from "../src/config.ts";
 import { guardianDone } from "../src/done.ts";
+import { formatGuardianOutput } from "../src/plugin/readable-output.ts";
 import { guardianStart } from "../src/start.ts";
 import { isRecordLike } from "../src/types.ts";
 import { createRepoWithOrigin, git, installFakeGh } from "./helpers.ts";
@@ -79,6 +80,63 @@ test("guardian_done apply lands the session PR and removes its stale worktree an
   const worktrees = (await git(repo, ["worktree", "list", "--porcelain"])).stdout;
   assert.doesNotMatch(worktrees, new RegExp(escapeRegExp(worktree)));
   await assert.rejects(git(repo, ["rev-parse", "--verify", `refs/heads/${branch}`]));
+});
+
+test("guardian_done session apply retains advisory stash inventory", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const sessionId = "land-clean-stash-session";
+  const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId, taskName: "land clean stash", createWorktree: true, config: DEFAULT_CONFIG });
+  const session = requireRecord(started.session, "started.session");
+  const worktree = requireString(session.worktree_path, "started.session.worktree_path");
+  const branch = requireString(session.branch, "started.session.branch");
+  await fs.writeFile(path.join(worktree, "feature-stash.txt"), "feature\n");
+  await git(worktree, ["add", "feature-stash.txt"]);
+  await git(worktree, ["commit", "-m", "add stash advisory fixture"]);
+  await fs.writeFile(path.join(repo, "session-stashed.txt"), "stashed\n");
+  await git(repo, ["stash", "push", "-u", "-m", "session finish stash"]);
+  const head = (await git(worktree, ["rev-parse", "HEAD"])).stdout.trim();
+  await installFakeGh(t, { repo, branch, head });
+
+  const plan = await guardianDone({ repoRoot: repo, cwd: worktree, sessionId, mode: "plan", config: DEFAULT_CONFIG });
+  const result = await guardianDone({ repoRoot: repo, cwd: worktree, sessionId, mode: "apply", confirm: true, config: DEFAULT_CONFIG });
+
+  assert.equal(plan.ok, true);
+  assert.equal(plan.status, "planned");
+  assert.equal(plan.stashCount, 1);
+  assert.equal(result.ok, true);
+  assert.equal(result.status, "landed-and-cleaned");
+  assert.equal(result.lane, "session-finish");
+  assert.equal(result.stashCount, 1);
+  assert.equal(Array.isArray(result.stashes) ? result.stashes.length : 0, 1);
+  assert.match(formatGuardianOutput("guardian_done", result), /\[WARN\] repository stash inventory: 1/);
+});
+
+test("guardian_done strict stash policy blocks before session branch or base mutation", async (t) => {
+  const { repo } = await createRepoWithOrigin();
+  const sessionId = "land-clean-stash-strict-session";
+  const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId, taskName: "strict land clean stash", createWorktree: true, config: DEFAULT_CONFIG });
+  const session = requireRecord(started.session, "started.session");
+  const worktree = requireString(session.worktree_path, "started.session.worktree_path");
+  const branch = requireString(session.branch, "started.session.branch");
+  await fs.writeFile(path.join(worktree, "feature-stash-strict.txt"), "feature\n");
+  await git(worktree, ["add", "feature-stash-strict.txt"]);
+  await git(worktree, ["commit", "-m", "add strict stash fixture"]);
+  const head = (await git(worktree, ["rev-parse", "HEAD"])).stdout.trim();
+  await installFakeGh(t, { repo, branch, head });
+  await fs.writeFile(path.join(repo, "session-stashed-strict.txt"), "stashed\n");
+  await git(repo, ["stash", "push", "-u", "-m", "strict session finish stash"]);
+  const remoteMainBefore = (await git(repo, ["rev-parse", "origin/main"])).stdout.trim();
+  const config = { ...DEFAULT_CONFIG, requireEmptyStashInventory: true };
+
+  const result = await guardianDone({ repoRoot: repo, cwd: worktree, sessionId, mode: "apply", confirm: true, config });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, "blocked");
+  assert.match(String(result.reason), /stash inventory/);
+  assert.equal(result.stashCount, 1);
+  assert.equal(await remoteBranchExists(repo, branch), false);
+  assert.equal((await git(repo, ["rev-parse", "origin/main"])).stdout.trim(), remoteMainBefore);
 });
 
 test("guardian_done apply commits dirty session work before landing and cleanup", async (t) => {

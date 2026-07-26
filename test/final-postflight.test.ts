@@ -71,3 +71,31 @@ test("final postflight allows the resolved upstream remote branch by default", a
   assert.equal(result.ok, true, JSON.stringify(result));
   assert.equal(result.status, "passed");
 });
+
+test("final postflight reports stash inventory without blocking by default", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  await fs.writeFile(path.join(repo, "postflight-stashed.txt"), "stashed\n");
+  await git(repo, ["stash", "push", "-u", "-m", "postflight stash"]);
+
+  const result = await runFinalCleanupPostflight({ repoRoot: repo, config: DEFAULT_CONFIG });
+
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(result.status, "passed");
+  assert.equal(Array.isArray(result.stashes) ? result.stashes.length : 0, 1);
+  assert.equal((result.blockers as Array<{ kind: string }>).some((blocker) => blocker.kind === "stashes"), false);
+});
+
+test("final postflight blocks stash inventory under strict policy", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  await fs.writeFile(path.join(repo, "postflight-stashed-strict.txt"), "stashed\n");
+  await git(repo, ["stash", "push", "-u", "-m", "strict postflight stash"]);
+  const config = { ...DEFAULT_CONFIG, requireEmptyStashInventory: true };
+
+  const result = await runFinalCleanupPostflight({ repoRoot: repo, config });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, "blocked");
+  assert.equal((result.blockers as Array<{ kind: string }>).some((blocker) => blocker.kind === "stashes"), true);
+});
