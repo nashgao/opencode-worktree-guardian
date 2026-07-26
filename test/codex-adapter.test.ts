@@ -16,6 +16,16 @@ type CodexCliOptions = {
   readonly expectedExitCode?: number;
 };
 
+function preToolPayload(cwd: string, command: string) {
+  return {
+    hook_event_name: "PreToolUse",
+    session_id: "ses_codex_hook",
+    cwd,
+    tool_name: "Bash",
+    tool_input: { command },
+  };
+}
+
 async function pathExists(candidate: string): Promise<boolean> {
   return fs.access(candidate).then(() => true, () => false);
 }
@@ -50,19 +60,25 @@ async function runCodexCli(args: readonly string[], input = "", options: CodexCl
   };
 }
 
-test("Codex pre-tool hook blocks destructive shell commands", async () => {
-  const payload = {
-    hook_event_name: "PreToolUse",
-    session_id: "ses_codex_block",
-    turn_id: "turn_codex_block",
-    transcript_path: null,
-    cwd: projectRoot,
-    model: "test",
-    permission_mode: "default",
-    tool_name: "Bash",
-    tool_use_id: "tool_codex_block",
-    tool_input: { command: "git reset --hard" },
-  };
+test("Codex pre-tool hook audits destructive shell commands with missing or default config", async () => {
+  const repo = await createRepo();
+  const payload = preToolPayload(repo, "git reset --hard");
+
+  const missingConfig = await runCodexCli(["hook", "pre-tool-use"], `${JSON.stringify(payload)}\n`);
+  assert.equal(missingConfig.stdout, "");
+
+  await fs.mkdir(path.join(repo, ".opencode"), { recursive: true });
+  await fs.writeFile(path.join(repo, CONFIG_PATH), `${JSON.stringify(DEFAULT_CONFIG)}\n`);
+
+  const defaultConfig = await runCodexCli(["hook", "pre-tool-use"], `${JSON.stringify(payload)}\n`);
+  assert.equal(defaultConfig.stdout, "");
+});
+
+test("Codex pre-tool hook blocks classified shell commands in strict mode", async () => {
+  const repo = await createRepo();
+  await fs.mkdir(path.join(repo, ".opencode"), { recursive: true });
+  await fs.writeFile(path.join(repo, CONFIG_PATH), `${JSON.stringify({ commandInterceptionMode: "strict" })}\n`);
+  const payload = preToolPayload(repo, "git reset --hard");
 
   const { stdout } = await runCodexCli(["hook", "pre-tool-use"], `${JSON.stringify(payload)}\n`);
   const output = JSON.parse(stdout);
@@ -71,19 +87,22 @@ test("Codex pre-tool hook blocks destructive shell commands", async () => {
   assert.match(output.reason, /Worktree Guardian blocked command/);
 });
 
+test("Codex pre-tool hook fails closed for invalid configuration", async () => {
+  const repo = await createRepo();
+  await fs.mkdir(path.join(repo, ".opencode"), { recursive: true });
+  await fs.writeFile(path.join(repo, CONFIG_PATH), `${JSON.stringify({ commandInterceptionMode: "enforce" })}\n`);
+  const payload = preToolPayload(repo, "git reset --hard");
+
+  const { stdout, stderr } = await runCodexCli(["hook", "pre-tool-use"], `${JSON.stringify(payload)}\n`);
+  const output = JSON.parse(stdout);
+
+  assert.equal(output.decision, "block");
+  assert.match(output.reason, /Unsupported worktree guardian commandInterceptionMode: enforce/);
+  assert.equal(stderr, "");
+});
+
 test("Codex pre-tool hook ignores read-only shell commands", async () => {
-  const payload = {
-    hook_event_name: "PreToolUse",
-    session_id: "ses_codex_readonly",
-    turn_id: "turn_codex_readonly",
-    transcript_path: null,
-    cwd: projectRoot,
-    model: "test",
-    permission_mode: "default",
-    tool_name: "Bash",
-    tool_use_id: "tool_codex_readonly",
-    tool_input: { command: "git status --short" },
-  };
+  const payload = preToolPayload(projectRoot, "git status --short");
 
   const { stdout } = await runCodexCli(["hook", "pre-tool-use"], `${JSON.stringify(payload)}\n`);
 

@@ -105,15 +105,17 @@ test("config initialization writes defaults once", async () => {
   assert.equal(await fs.readFile(configPath, "utf8"), `${JSON.stringify(DEFAULT_CONFIG, null, 2)}\n`);
 });
 
-test("non-object config payload is ignored at the boundary", async () => {
-  const repo = await createTempDir();
-  await fs.mkdir(path.join(repo, ".opencode"));
-  await fs.writeFile(path.join(repo, ".opencode", "worktree-guardian.json"), JSON.stringify(["create-pr"]));
+test("non-object config payloads fail closed at the boundary", async () => {
+  for (const payload of [[], null, "create-pr", 1, true]) {
+    const repo = await createTempDir();
+    await fs.mkdir(path.join(repo, ".opencode"));
+    await fs.writeFile(path.join(repo, ".opencode", "worktree-guardian.json"), JSON.stringify(payload));
 
-  const { config, loaded } = await loadConfig(repo);
-
-  assert.equal(loaded, false);
-  assert.deepEqual(config, DEFAULT_CONFIG);
+    await assert.rejects(
+      () => loadConfig(repo),
+      (error: unknown) => isRecordLike(error) && error.configErrorKind === "invalid_config_root",
+    );
+  }
 });
 
 test("invalid finish modes fail closed", () => {

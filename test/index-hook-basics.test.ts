@@ -2,11 +2,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
-import { DEFAULT_CONFIG } from "../src/config.ts";
 import plugin from "../src/index.ts";
-import { getGuardianPaths, readState, recordSession } from "../src/state.ts";
-import type { GuardianSession } from "../src/types.ts";
-import { createRepoWithOrigin, git, seedSession } from "./helpers.ts";
+import { createRepoWithOrigin, git } from "./helpers.ts";
 
 type LooseRecord = Record<string, unknown>;
 
@@ -29,25 +26,9 @@ function createClient(records: Array<LooseRecord>) {
   };
 }
 
-async function writeGuardianConfig(repo: string, config: LooseRecord) {
+async function writeGuardianConfig(repo: string, config: unknown) {
   await fs.mkdir(path.join(repo, ".opencode"), { recursive: true });
   await fs.writeFile(path.join(repo, ".opencode", "worktree-guardian.json"), JSON.stringify(config));
-}
-
-function requireSession(session: GuardianSession | undefined): GuardianSession {
-  assert.ok(session);
-  return session;
-}
-
-function findSession(sessions: readonly GuardianSession[], sessionId: string): GuardianSession {
-  return requireSession(sessions.find((session) => session.session_id === sessionId));
-}
-
-async function enableLazyAutoStart(repo: string) {
-  await fs.mkdir(path.join(repo, ".opencode"), { recursive: true });
-  await fs.writeFile(path.join(repo, ".opencode", "worktree-guardian.json"), JSON.stringify({ autoStartMode: "lazy" }));
-  await git(repo, ["add", ".opencode/worktree-guardian.json"]);
-  await git(repo, ["commit", "-m", "enable lazy guardian auto start"]);
 }
 
 test("hooks log visibility data without mutating safe hook payloads", async () => {
@@ -112,12 +93,48 @@ test("hook logs redact likely secret values", async () => {
 
   await hooks["tool.execute.before"](
     { tool: "bash", sessionID: "ses_123", callID: "call_123" },
-    { args: { command: "curl -H \"authorization: Bearer secret-token\" https://example.test?api_key=abc" } },
+    {
+      args: {
+        command: "curl -H \"authorization: Basic audit-basic-secret\" -H \"authorization: Bearer audit-bearer-secret\" -H \"authorization: Custom audit-custom-secret\" https://example.test?api_key=abc",
+      },
+    },
   );
 
   const logged = JSON.stringify(records[0]);
-  assert.doesNotMatch(logged, /secret-token|api_key=abc/);
+  assert.doesNotMatch(logged, /audit-basic-secret|audit-bearer-secret|audit-custom-secret|api_key=abc/);
+  assert.doesNotMatch(logged, /Basic|Bearer|Custom/);
+  assert.match(logged, /Authorization: <redacted>/);
   assert.match(logged, /<redacted>/);
+});
+
+test("hook logs redact quoted JSON authorization values before truncating", async () => {
+  const records: Array<LooseRecord> = [];
+  const hooks = await plugin.server({
+    client: { app: { async log(event: { readonly body: LooseRecord }) { records.push(event.body); } } },
+    directory: "/repo",
+    worktree: "/repo/.worktrees/example",
+  });
+  const credentialPrefix = "long-credential-prefix";
+  const longJsonAuthorization = `${"x".repeat(120)} {"Authorization":"Basic ${credentialPrefix}${"x".repeat(80)}"}`;
+  const parameterizedAuthorization = "aUtHoRiZaTiOn \t : \tDigest opaque=parameter-secret, nonce=unchanged\r\nsafe=value";
+
+  await hooks["tool.execute.before"](
+    { tool: "bash", sessionID: "ses_123", callID: "call_json" },
+    { args: { command: "echo '{\"Authorization\":\"Basic json-secret\"}'" } },
+  );
+  await hooks["tool.execute.before"](
+    { tool: "bash", sessionID: "ses_123", callID: "call_truncated" },
+    { args: { command: longJsonAuthorization } },
+  );
+  await hooks["tool.execute.before"](
+    { tool: "bash", sessionID: "ses_123", callID: "call_parameters" },
+    { args: { command: parameterizedAuthorization } },
+  );
+
+  const logged = JSON.stringify(records);
+  assert.doesNotMatch(logged, /Basic|Digest|json-secret|long-credential-prefix|parameter-secret|nonce=unchanged/);
+  assert.match(logged, /Authorization: <redacted>/);
+  assert.match(logged, /safe=value/);
 });
 
 test("tool.execute.before audits destructive commands by default", async () => {
@@ -168,6 +185,36 @@ test("tool.execute.before fails closed when commandInterceptionMode is invalid",
   );
 });
 
+test("tool.execute.before fails closed when repo config is not an object", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  await writeGuardianConfig(repo, "audit");
+  const hooks = await plugin.server({ directory: repo, worktree: repo, client: createClient([]) });
+
+  await assert.rejects(
+    () => hooks["tool.execute.before"](
+      { tool: "bash", sessionID: "ses_invalid_config", callID: "call_invalid_config" },
+      { args: { command: "git worktree remove /tmp/example" } },
+    ),
+  );
+});
+
+test("tool.execute.before blocks fetch when HEAD maps to refs/stash in strict mode", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  await writeGuardianConfig(repo, { commandInterceptionMode: "strict" });
+  await git(repo, ["config", "remote.origin.fetch", "+HEAD:refs/stash"]);
+  const hooks = await plugin.server({ directory: repo, worktree: repo, client: createClient([]) });
+
+  await assert.rejects(
+    () => hooks["tool.execute.before"](
+      { tool: "bash", sessionID: "ses_stash_fetch", callID: "call_stash_fetch" },
+      { args: { command: "git fetch origin" } },
+    ),
+    /Worktree Guardian blocked command/,
+  );
+});
+
 test("tool.execute.before audits context-mode code payload worktree creation by default", async () => {
   const records: Array<LooseRecord> = [];
   const hooks = await plugin.server({ client: createClient(records), directory: "/repo", worktree: "/repo/.worktrees/example" });
@@ -185,7 +232,6 @@ test("tool.execute.before audits context-mode code payload worktree creation by 
   assert.equal(guard.blocked, true);
   assert.equal(logged.auditOnly, true);
 });
-
 
 test("tool.execute.before blocks manual protected-branch finish bypasses", async (t) => {
   const { base, repo } = await createRepoWithOrigin();

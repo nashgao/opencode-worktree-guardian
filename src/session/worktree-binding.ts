@@ -18,21 +18,15 @@ export async function collectKnownWorktreePaths(input: GuardianToolInput = {}): 
   const config = await configFromInput(input, repoRoot);
   const paths = new Set<string>();
   if (typeof input.currentWorktree === "string") paths.add(path.resolve(input.currentWorktree));
-  try {
-    const worktreeRoot = path.resolve(repoRoot, expandWorktreeRoot(config.worktreeRoot, repoRoot));
-    paths.add(worktreeRoot);
-  } catch {}
-  try {
-    for (const entry of await listWorktrees(repoRoot)) paths.add(path.resolve(entry.path));
-  } catch {}
-  try {
-    const guardianPaths = await getGuardianPaths(repoRoot);
-    const state = await readState(guardianPaths, { repoRoot, config });
-    const sessions = Object.values(state.sessions ?? {});
-    for (const session of sessions) {
-      if (isRecordLike(session) && typeof session.worktree_path === "string") paths.add(path.resolve(session.worktree_path));
-    }
-  } catch {}
+  const worktreeRoot = path.resolve(repoRoot, expandWorktreeRoot(config.worktreeRoot, repoRoot));
+  paths.add(worktreeRoot);
+  for (const entry of await listWorktrees(repoRoot)) paths.add(path.resolve(entry.path));
+  const guardianPaths = await getGuardianPaths(repoRoot);
+  const state = await readState(guardianPaths, { repoRoot, config });
+  const sessions = Object.values(state.sessions ?? {});
+  for (const session of sessions) {
+    if (isRecordLike(session) && typeof session.worktree_path === "string") paths.add(path.resolve(session.worktree_path));
+  }
   return [...paths];
 }
 

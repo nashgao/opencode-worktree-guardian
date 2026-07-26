@@ -1,18 +1,8 @@
-import fs from "node:fs";
 import path from "node:path";
 
 export function normalizeForCompare(value: string, cwd: string): string {
   const resolved = path.resolve(cwd, value);
   return path.normalize(resolved);
-}
-
-export function realpathForCompare(value: string, cwd: string): string {
-  const normalized = normalizeForCompare(value, cwd);
-  try {
-    return path.normalize(fs.realpathSync.native(normalized));
-  } catch {
-    return normalized;
-  }
 }
 
 export function isSameOrInside(candidate: string, knownPath: string): boolean {
@@ -21,7 +11,7 @@ export function isSameOrInside(candidate: string, knownPath: string): boolean {
 }
 
 export function pathSameOrInside(candidate: string, target: string, cwd: string): boolean {
-  return isSameOrInside(realpathForCompare(candidate, cwd), realpathForCompare(target, cwd));
+  return isSameOrInside(normalizeForCompare(candidate, cwd), normalizeForCompare(target, cwd));
 }
 
 export function matchesKnownWorktreePath(candidate: string, knownWorktreePaths: readonly string[], cwd: string): boolean {

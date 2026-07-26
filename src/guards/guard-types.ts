@@ -13,11 +13,15 @@ export type SegmentWithSeparator = {
 export type ShellPayload = {
   readonly payload: string;
   readonly assignments: readonly string[];
+  readonly envCwd: string | null;
+  readonly unsafeExecutableSearchPath: boolean;
 };
 
 export type CommandPrefix = {
   readonly stripped: CommandSegment;
   readonly assignments: readonly string[];
+  readonly envCwd: string | null;
+  readonly unsafeExecutableSearchPath: boolean;
 };
 
 export type GitInvocation = {
@@ -25,8 +29,15 @@ export type GitInvocation = {
   readonly rest: CommandSegment;
   readonly normalized: CommandSegment;
   readonly gitCwd: string | null;
+  readonly gitDir: string | null;
   readonly workTree: string | null;
   readonly configs: readonly string[];
+  readonly unsafeExecutableSearchPath: boolean;
+};
+
+export type GitRevisionIdentity = {
+  readonly source: string;
+  readonly oid: string;
 };
 
 export type GuardBlockDecision = GuardDecision & {

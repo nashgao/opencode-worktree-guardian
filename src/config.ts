@@ -13,7 +13,7 @@ export const FINISH_MODES = new Set(["preserve-only", "push-branch", "create-pr"
 export const AUTO_START_MODES = new Set(["eager", "lazy"]);
 export const COMMAND_INTERCEPTION_MODES = new Set(["audit", "strict"]);
 
-export type ConfigErrorKind = "unsupported_finish_mode" | "unsupported_auto_start_mode" | "unsupported_command_interception_mode";
+export type ConfigErrorKind = "invalid_config_root" | "unsupported_finish_mode" | "unsupported_auto_start_mode" | "unsupported_command_interception_mode";
 export type ConfigBoundaryError = Error & { readonly configErrorKind: ConfigErrorKind };
 
 function configError(kind: ConfigErrorKind, message: string): ConfigBoundaryError {
@@ -166,7 +166,10 @@ export async function loadConfig(repoRoot: string, options: LoadConfigOptions = 
   try {
     const raw = await fileSystem.readFile(configPath, "utf8");
     const value: unknown = JSON.parse(raw);
-    parsed = isRecordLike(value) ? value : {};
+    if (!isRecordLike(value)) {
+      throw configError("invalid_config_root", "Worktree Guardian config root must be an object");
+    }
+    parsed = value;
   } catch (error) {
     if (errorCode(error) !== "ENOENT") throw error;
   }
