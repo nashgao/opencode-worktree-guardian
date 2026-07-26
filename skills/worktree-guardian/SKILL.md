@@ -25,6 +25,7 @@ Canonical safety policy: [ADR 0001: Guardian Safety Policy](../../docs/adr/0001-
 - Use `guardian_finish` for explicit low-level gated completion.
 - Use `guardian_preserve` only to create a safety ref and mark a session terminal/preserved. Preserved worktrees are cleanup-eligible; do not treat preservation as a reason to keep disk state forever.
 - Use `guardian_recover` for safety refs, orphaned sessions, stash inventory, reflog, and recovery suggestions.
+- Treat repository stash inventory as advisory by default. Guardian reports it and never mutates it; only repo config `requireEmptyStashInventory: true` makes it a finish, goal, or cleanup blocker.
 - For mutating commands such as `git add` or `git commit`, rely on Guardian routing after the default auto-start hook or explicit `guardian_start` records a session worktree. Repo config `autoStart=false` disables automatic ownership; without recorded ownership, normal non-destructive commands run in the current worktree.
 - If Guardian state records the current session on the primary repo worktree or a protected branch, use `guardian_start` with `createWorktree: true` to repair the session into a proper Guardian worktree. Do not use raw `git switch`, raw branch creation, or protected-branch bypass commands to escape the poisoned binding.
 - If the plugin blocks a command, report the blocker, preserved path, branch, safety refs, and suggested guardian tool.
@@ -37,7 +38,7 @@ Canonical safety policy: [ADR 0001: Guardian Safety Policy](../../docs/adr/0001-
 - `autoFinish`: disabled unless repo config opts in
 - `autoCleanup`: disabled unless repo config opts in
 - `goal`: default desired repo state is commit dirty implementation work with an explicit commit message, land/push to base, clean Guardian worktrees/branches, and clean safe hygiene findings
-- stash mutation is never cleanup
+- stash inventory is advisory by default; stash mutation is never cleanup
 - workspace hygiene scan mode is report-only; cleanup requires `guardian_hygiene mode=plan`, exact-target review, explicit confirmation, and `mode=apply confirmDelete=true`
 - `guardian_delete_paths` is the exact intentional path deletion surface
 - `guardian_delete_worktree` is the only worktree deletion surface
@@ -52,7 +53,7 @@ Canonical safety policy: [ADR 0001: Guardian Safety Policy](../../docs/adr/0001-
 
 ## Delete posture
 
-- Never run raw `git worktree remove`, `git worktree prune`, `rm -rf`, or raw branch deletion. The hooks intentionally block those commands.
+- Never run raw `git worktree remove`, `git worktree prune`, `rm -rf`, or raw branch deletion. The hooks classify guarded forms: audit mode records and allows them, while strict mode blocks them.
 - Use `guardian_hygiene` for hygiene findings, `guardian_delete_paths` for exact file or directory deletion, and `guardian_delete_worktree` for Guardian worktree/branch cleanup.
 - `guardian_delete_worktree` requires plan/apply and explicit confirmation. Branch deletion is opt-in with `deleteBranch: true`; unmerged abandonment additionally requires `abandonUnmerged: true` in both plan and apply.
 - `guardian_status`, `guardian_recover`, and `guardian_hygiene` scan output are evidence-only. Their output can identify candidates, but it is not approval to delete.

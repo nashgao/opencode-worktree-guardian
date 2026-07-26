@@ -7,6 +7,8 @@ description: Use when the user asks Codex to run Guardian workflows such as guar
 
 Use the packaged Codex adapter CLI instead of raw destructive shell commands. In this source repository the adapter path is `codex/hooks/guardian-hook.ts`; after npm install it is `node_modules/opencode-worktree-guardian/codex/hooks/guardian-hook.ts`. Codex plugin hooks invoke the same adapter from `hooks/hooks.json`.
 
+Codex follows the same interception consequences as OpenCode. With the default `commandInterceptionMode: "audit"`, the pre-tool hook exits successfully with no blocking response. With `"strict"`, the same classifications block before mutation. Invalid interception configuration fails closed.
+
 Canonical safety policy: [ADR 0001: Guardian Safety Policy](../../../docs/adr/0001-guardian-safety-policy.md).
 Release checklist: [docs/release-checklist.md](../../../docs/release-checklist.md). Publishing policy: [docs/publishing.md](../../../docs/publishing.md).
 
@@ -26,6 +28,10 @@ Release checklist: [docs/release-checklist.md](../../../docs/release-checklist.m
 ## Rules
 
 For `guardian goal`, `guardian done`, `guardian_delete_paths`, `guardian_delete_worktree`, and `guardian_finish_workflow`, always run `mode=plan` first. For `guardian_hygiene`, start with the default scan, then use `mode=plan` only for approved cleanup findings. Apply only when the user requested the goal, completion, or cleanup workflow and only with the same options requested by the plan. Use `confirm=true` for goal, done, or finish-workflow apply, and `confirmDelete=true` for hygiene or exact path deletion apply. Never add `allowAdminBypass:true` unless the user explicitly approved it for that run. Do not ask the user to copy internal confirm tokens when using the Codex adapter CLI.
+
+Repository stash inventory is advisory by default and remains visible in Guardian plans; Guardian never mutates it. Only repo config `requireEmptyStashInventory: true` makes a non-empty inventory block goal, done, finish, or cleanup.
+
+The hook classifies runtime aliases and configured or alternate executable paths, shell and stdin transport, opaque or dynamic ref destinations, recovery-ref roots and descendants, stash mutation, and protected-branch bypasses. GNU `env -iS` wrappers are parsed; `env -P` is unsafe. Do not assume Guardian resolves arbitrary configured remote refmaps.
 
 Never replace Guardian workflows with raw `git reset --hard`, `git clean -fd`, `git worktree remove`, `git worktree prune`, `git branch -D`, `git stash drop`, `git stash clear`, or force-push commands.
 

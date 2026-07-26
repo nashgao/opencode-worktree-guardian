@@ -15,11 +15,13 @@ This document is the authority for block, allow, route, plan/apply, confirmation
 The public native tools are:
 
 - `guardian_start`
+- `guardian_init`
 - `guardian_status`
 - `guardian_project_status`
 - `guardian_recover`
 - `guardian_report_html`
 - `guardian_done`
+- `guardian_goal`
 - `guardian_finish`
 - `guardian_finish_workflow`
 - `guardian_preserve`
@@ -33,12 +35,14 @@ OpenCode slash commands and packaged `commands/*.md` wrappers are prompt surface
 
 The Codex adapter is also a first-class public surface. It must invoke the same Guardian tool policies through the adapter CLI and hooks, not through raw destructive Git or shell commands.
 
-## Command Interception Audit And Strict Blocks
+## OpenCode And Codex Command Interception
 
-Guardian classifies raw destructive shell and Git commands in `tool.execute.before`. `commandInterceptionMode` controls the consequence:
+OpenCode and Codex enforce the same interception contract. OpenCode classifies commands in `tool.execute.before`; Codex classifies them through `codex/hooks/guardian-hook.ts`. `commandInterceptionMode` controls the consequence in both hosts:
 
-- `audit` is the default. Guardian logs the classification with `auditOnly: true` and allows the command to proceed.
+- `audit` is the default. OpenCode logs the classification with `auditOnly: true`; the Codex pre-tool hook exits successfully with no blocking response. Both allow the command to proceed.
 - `strict` preserves fail-closed interception. Guardian throws before execution for the same command classes.
+
+Invalid interception configuration fails closed. Runtime aliases, configured executable paths, alternate executable paths, shell transport, standard-input payloads, and dynamically constructed command or ref destinations are classified before execution rather than treated as safe because their spelling differs from a direct command.
 
 Classified command classes include:
 
@@ -47,10 +51,14 @@ Classified command classes include:
 - raw `git worktree add` outside Guardian-owned roots,
 - raw branch deletion,
 - stash mutation,
+- recovery-ref mutation, including `refs/opencode-guardian` roots and descendants,
 - force push,
+- opaque, dynamic, or runtime transport destinations that may target protected or recovery refs,
 - destructive checkout, restore, or switch forms,
 - shell-wrapped variants and context-mode code payloads,
 - `rm -rf` against known Guardian worktrees.
+
+The parser recognizes GNU `env -iS` command wrappers. GNU `env -P` is unsafe and is classified rather than treated as an allowlisted wrapper. Guardian does not claim to resolve arbitrary configured remote refmaps.
 
 Agents must use Guardian-native tools for lifecycle and deletion work. A prompt, slash command, skill, or adapter invocation cannot override these blocks.
 
@@ -125,13 +133,13 @@ If no active session owns the current checked-out worktree, `guardian_finish` ma
 
 Use `guardian_finish_workflow` only after implementation is already committed, pushed, and merged to the configured base. Local base fast-forward is maintenance, not cleanup proof: if the local base worktree cannot be safely synced, apply must still run token-bound safe cleanup candidates and report the sync failure as a remaining blocker.
 
-Run `mode: "plan"` first. The workflow verifies the primary worktree is clean, stash policy is satisfied, the configured remote can be fetched, and redundant cleanup candidates are already merged to the freshly resolved `remote/baseBranch` commit. It discovers Guardian-root worktrees; local stale branches when `guardian_delete_worktree` can prove ownership from terminal Guardian state or matching safety refs; merged unchecked-out local branches under the configured cleanup prefix when ancestry to the resolved base is proven; and Guardian branch refs under `branchPrefix` on the resolved effective remote whose heads are ancestors of that base commit. The effective remote is the configured remote unless a trusted tracked upstream supplies the base ref. At most 25 cleanup candidates can be applied from one plan.
+Run `mode: "plan"` first. The workflow verifies the primary worktree is clean, inventories repository-wide stashes, fetches the configured remote, and proves redundant cleanup candidates are already merged to the freshly resolved `remote/baseBranch` commit. Stash inventory is advisory unless repo config explicitly sets `requireEmptyStashInventory: true`. It discovers Guardian-root worktrees; local stale branches when `guardian_delete_worktree` can prove ownership from terminal Guardian state or matching safety refs; merged unchecked-out local branches under the configured cleanup prefix when ancestry to the resolved base is proven; and Guardian branch refs under `branchPrefix` on the resolved effective remote whose heads are ancestors of that base commit. The effective remote is the configured remote unless a trusted tracked upstream supplies the base ref. At most 25 cleanup candidates can be applied from one plan.
 
-The candidate scan status is structured metadata. Invalid mode, base-unavailable, and stash-blocker preflights skip candidate discovery and must report skipped candidate scan status instead of completed zero-candidate evidence. A dirty primary worktree remains a blocker, but `mode: "plan"` may continue through read-only cleanup inventory discovery after base evidence exists and stash policy is satisfied; that blocked inventory can help the user see what will be eligible later, but it does not authorize dirty primary cleanup and must not include a `confirmToken`. Unexpected discovery failures report failed candidate scan status while preserving earlier preflight blockers.
+The candidate scan status is structured metadata. Invalid mode, base-unavailable, and strict stash-blocker preflights skip candidate discovery and must report skipped candidate scan status instead of completed zero-candidate evidence. Advisory stash inventory does not skip discovery. A dirty primary worktree remains a blocker, but `mode: "plan"` may continue through read-only cleanup inventory discovery after base evidence exists; that blocked inventory can help the user see what will be eligible later, but it does not authorize dirty primary cleanup and must not include a `confirmToken`. Unexpected discovery failures report failed candidate scan status while preserving earlier preflight blockers.
 
 Run `mode: "apply"` only with the returned token after explicit confirmation. The token binds the resolved base commit and cleanup targets. Apply re-plans Guardian-root worktree, stale local-branch, and merged local-branch targets and delegates their deletion to `guardian_delete_worktree`. Local branch refs are deleted only after Guardian creates a local safety ref and the ref still matches the token-bound expected head, so local base divergence cannot veto remote-base ancestry proof and advanced local refs still block. Remote branch refs are the only direct Git deletion lane: apply first creates a local Guardian safety ref for the discovered remote head, then deletes only the resolved effective remote ref with an expected-head lease, so an advanced remote ref blocks. It must not create commits, choose commit messages, merge protected branches, mutate stashes, force-delete local branches, delete unproven local stale branches, or run raw filesystem/Git cleanup. Candidate-level blockers do not suppress safe token-bound candidates; apply cleans safe candidates and returns `partial` with unresolved blockers still reported.
 
-Apply requires a fresh plan token. Skipped or incomplete candidate scans, dirty primary blockers, stash blockers, candidate-count bounds, and stale or missing tokens all block apply; none of those states permit cleanup from blocked inventory. Candidate-level blockers from a completed scan may coexist with a token only when safe cleanup candidates are present, and that token authorizes only those safe candidates.
+Apply requires a fresh plan token. Skipped or incomplete candidate scans, dirty primary blockers, strict stash blockers, candidate-count bounds, and stale or missing tokens all block apply; none of those states permit cleanup from blocked inventory. Candidate-level blockers from a completed scan may coexist with a token only when safe cleanup candidates are present, and that token authorizes only those safe candidates.
 
 ## `guardian_preserve` Policy
 
@@ -145,7 +153,7 @@ Use `guardian_unblock_finish` only when `guardian_finish` is blocked by narrow g
 
 Run `mode: "plan"` first. The supported action is `commit-review-artifacts`, which may commit only `.milestones/reviews/*impl-rating-YYYYMMDD.md` or `.milestones/reviews/*impl-rating-YYYYMMDD.txt` review artifacts. If Guardian state does not record the session, plan may resolve the current Guardian-root worktree or receive an explicit `branch` or `worktreePath` that resolves exactly one checked-out worktree under the configured Guardian worktree root.
 
-Run `mode: "apply"` only with the fresh token and the same resolved current worktree, explicit branch, or explicit worktree path when state is still missing. Apply creates a safety ref, stages only approved review artifacts, commits them, and updates Guardian state. It refuses mixed dirty/source paths, renames/copies, symlink artifacts, deletions, ignored files, stashes, and cleanup.
+Run `mode: "apply"` only with the fresh token and the same resolved current worktree, explicit branch, or explicit worktree path when state is still missing. Apply creates a safety ref, stages only approved review artifacts, commits them, and updates Guardian state. It refuses mixed dirty/source paths, renames/copies, symlink artifacts, deletions, ignored files, and cleanup. Stash inventory remains visible and advisory by default; `requireEmptyStashInventory: true` makes a non-empty inventory a blocker before safety-ref creation, staging, or commit.
 
 ## `guardian_delete_worktree` Worktree Deletion Policy
 
@@ -155,7 +163,7 @@ Run `mode: "plan"` first. It resolves exactly one target by `targetPath`, `sessi
 
 Apply recomputes the token from the normalized repo root, target kind, target path, worktree-listed state, branch or detached marker, HEAD, session identity/status, `deleteBranch`, `abandonUnmerged`, ancestry evidence, unmerged commits, and `allowIgnoredFiles`. Stale or missing tokens block.
 
-Apply refuses primary repo worktree deletion, current execution worktree deletion, dirty or untracked targets by default, protected-branch worktrees even when `deleteBranch` is false, detached HEADs, ignored files unless `allowIgnoredFiles: true` is present in both plan and apply, and repo stashes unless `allowStashIfUnrelated` is enabled. Passing the primary repo as `targetPath` remains blocked.
+Apply refuses primary repo worktree deletion, current execution worktree deletion, dirty or untracked targets by default, protected-branch worktrees even when `deleteBranch` is false, detached HEADs, and ignored files unless `allowIgnoredFiles: true` is present in both plan and apply. Repository stash inventory remains visible but advisory unless `requireEmptyStashInventory: true`, which requires an empty inventory during both plan and apply. The retired `allowStashIfUnrelated` key is ignored because Guardian does not infer stash ownership or path relationships. Passing the primary repo as `targetPath` remains blocked.
 
 The dirty-target exception is `guardian_delete_worktree` with `allowRedundantDirtyPaths: true` in both plan and apply. `guardian_done` may use that exception only for an active recorded session whose head is already reachable from the fetched base ref; non-redundant dirty content remains blocked and must be preserved explicitly. Guardian must fetch the configured remote, resolve `baseRef` and `baseRefOid`, and prove every dirty path already matches the fetched base tree before token generation. Eligible paths are limited to unstaged tracked modifications, unstaged tracked deletions, and untracked regular files. Staged changes, mixed statuses, renames, copies, conflicts, submodules, symlinks, directories, type changes, ignored files, unreadable paths, and non-redundant content block. Apply creates the normal `safetyRef`, creates a `dirtySnapshotRef`, cleans only proof-approved paths internally, rechecks the target status, then uses the same non-force worktree removal. `guardian_finish_workflow` and cleanup-candidate sweeps remain fail-closed for dirty cleanup candidates and do not auto-pass this option.
 
@@ -171,7 +179,7 @@ If a local Guardian branch remains after its worktree and active state are gone,
 
 Intentional unmerged local abandonment requires `deleteBranch: true` and `abandonUnmerged: true` in both plan and apply. Plan reports ancestry evidence, the base ref, and unmerged commits that remain recoverable from the safety ref.
 
-Apply creates the safety ref first, then removes the clean Guardian worktree and deletes the local branch, recording the session as `abandoned`. This lane does not relax primary/current worktree, dirty-target, protected-branch, checked-out orphan branch, stale-token, stash, ignored-file, or missing-safety-ref blockers.
+Apply creates the safety ref first, then removes the clean Guardian worktree and deletes the local branch, recording the session as `abandoned`. This lane does not relax primary/current worktree, dirty-target, protected-branch, checked-out orphan branch, stale-token, strict stash-inventory, ignored-file, or missing-safety-ref blockers.
 
 ## `guardian_delete_paths` Exact Path Deletion Policy
 
@@ -238,6 +246,8 @@ Safety refs are required before risky finish, preserve, deletion, orphan cleanup
 ## Codex Adapter Hook Policy
 
 The Codex adapter must route Guardian workflows through `codex/hooks/guardian-hook.ts` in this source repository, or through `node_modules/opencode-worktree-guardian/codex/hooks/guardian-hook.ts` after package install. Codex plugin hooks invoke the same adapter from `hooks/hooks.json`.
+
+Codex has the same audit-default and strict-mode consequences as OpenCode: in default audit mode, the pre-tool hook exits successfully with no blocking response; `commandInterceptionMode: "strict"` blocks the same guarded command classes before mutation. Invalid configuration fails closed. This includes runtime aliases and executable paths, alternate executable paths, shell and stdin transport, dynamic ref destinations, recovery-ref roots and descendants, stash mutation, and protected-branch bypass attempts.
 
 For `guardian done`, `guardian_hygiene`, `guardian_delete_paths`, and `guardian_finish_workflow`, Codex usage must run plan first and apply only after explicit user confirmation with the same options. The adapter may reuse matching cached internal plan tokens and must not ask users to copy internal confirm tokens.
 
