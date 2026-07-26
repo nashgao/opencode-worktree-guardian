@@ -1,0 +1,2 @@
+{"id":"int-32c5f6378506d85e94d83e95477e98cf","kind":"field_change","created_at":"2026-07-25T13:56:58.566769Z","actor":"Nash Gao","issue_id":"owg-3xc","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Implemented Wave 3 pure synchronous guard policies and verified focused/new and existing guard suites plus typecheck."}}
+{"id":"int-acf0877006ff4f01b283f272fd57c7c8","kind":"field_change","created_at":"2026-07-25T18:32:47.682072Z","actor":"Nash Gao","issue_id":"owg-3xc","extra":{"field":"status","new_value":"blocked","old_value":"in_progress"}}
