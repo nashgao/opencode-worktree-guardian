@@ -13,7 +13,7 @@ export const FINISH_MODES = new Set(["preserve-only", "push-branch", "create-pr"
 export const AUTO_START_MODES = new Set(["eager", "lazy"]);
 export const COMMAND_INTERCEPTION_MODES = new Set(["audit", "strict"]);
 
-export type ConfigErrorKind = "unsupported_finish_mode" | "unsupported_auto_start_mode" | "unsupported_command_interception_mode";
+export type ConfigErrorKind = "invalid_config_root" | "unsupported_finish_mode" | "unsupported_auto_start_mode" | "unsupported_command_interception_mode";
 export type ConfigBoundaryError = Error & { readonly configErrorKind: ConfigErrorKind };
 
 function configError(kind: ConfigErrorKind, message: string): ConfigBoundaryError {
@@ -98,7 +98,7 @@ function parseDefaultConfigTemplate(raw: string): GuardianConfig {
     autoFinish: booleanField(value, "autoFinish"),
     autoCleanup: booleanField(value, "autoCleanup"),
     safetyRefRetentionDays: numberField(value, "safetyRefRetentionDays"),
-    allowStashIfUnrelated: booleanField(value, "allowStashIfUnrelated"),
+    requireEmptyStashInventory: booleanField(value, "requireEmptyStashInventory"),
     allowBaseWorktreePreserveReset: booleanField(value, "allowBaseWorktreePreserveReset"),
     allowDirtyPaths: uniqueStrings(stringArrayField(value, "allowDirtyPaths")),
     goal: goalField(value, "goal"),
@@ -124,7 +124,9 @@ export function normalizeGoalConfig(input: unknown): GuardianGoalConfig {
 }
 
 export function normalizeConfig(input: RecordLike = {}): GuardianConfig {
-  const config = { ...DEFAULT_CONFIG, ...input };
+  const { allowStashIfUnrelated: retiredAllowStashIfUnrelated, ...supportedInput } = input;
+  void retiredAllowStashIfUnrelated;
+  const config = { ...DEFAULT_CONFIG, ...supportedInput };
   if (!isGuardianFinishMode(config.finishMode)) {
     throw configError("unsupported_finish_mode", `Unsupported worktree guardian finishMode: ${String(config.finishMode)}`);
   }
@@ -137,7 +139,7 @@ export function normalizeConfig(input: RecordLike = {}): GuardianConfig {
 
   const protectedBranches = uniqueStrings([
     ...DEFAULT_CONFIG.protectedBranches,
-    ...(Array.isArray(input.protectedBranches) ? input.protectedBranches : []),
+    ...(Array.isArray(supportedInput.protectedBranches) ? supportedInput.protectedBranches : []),
   ]);
 
   return {
@@ -147,13 +149,13 @@ export function normalizeConfig(input: RecordLike = {}): GuardianConfig {
     autoStartMode: config.autoStartMode,
     autoFinish: config.autoFinish === true,
     autoCleanup: config.autoCleanup === true,
-    allowStashIfUnrelated: config.allowStashIfUnrelated === true,
+    requireEmptyStashInventory: config.requireEmptyStashInventory === true,
     allowBaseWorktreePreserveReset: config.allowBaseWorktreePreserveReset === true,
-    allowDirtyPaths: uniqueStrings(Array.isArray(input.allowDirtyPaths) ? input.allowDirtyPaths : []),
-    goal: normalizeGoalConfig(input.goal),
+    allowDirtyPaths: uniqueStrings(Array.isArray(supportedInput.allowDirtyPaths) ? supportedInput.allowDirtyPaths : []),
+    goal: normalizeGoalConfig(supportedInput.goal),
     protectedPaths: normalizeProtectedPaths(Array.isArray(config.protectedPaths) ? config.protectedPaths : []),
     protectedBranches,
-    trustedUpstreamRemotes: uniqueStrings(Array.isArray(input.trustedUpstreamRemotes) ? input.trustedUpstreamRemotes : []),
+    trustedUpstreamRemotes: uniqueStrings(Array.isArray(supportedInput.trustedUpstreamRemotes) ? supportedInput.trustedUpstreamRemotes : []),
     lockTimeoutMs: typeof config.lockTimeoutMs === "number" && Number.isFinite(config.lockTimeoutMs) ? config.lockTimeoutMs : DEFAULT_CONFIG.lockTimeoutMs,
   };
 }
@@ -166,7 +168,10 @@ export async function loadConfig(repoRoot: string, options: LoadConfigOptions = 
   try {
     const raw = await fileSystem.readFile(configPath, "utf8");
     const value: unknown = JSON.parse(raw);
-    parsed = isRecordLike(value) ? value : {};
+    if (!isRecordLike(value)) {
+      throw configError("invalid_config_root", "Worktree Guardian config root must be an object");
+    }
+    parsed = value;
   } catch (error) {
     if (errorCode(error) !== "ENOENT") throw error;
   }

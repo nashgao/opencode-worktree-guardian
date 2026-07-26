@@ -3,79 +3,16 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { stdin as processStdin, stdout as processStdout } from "node:process";
 import { z } from "zod";
-import { loadConfig } from "../../src/config.ts";
-import { classifyGuardCommand } from "../../src/guards.ts";
-import { getCurrentBranch } from "../../src/git.ts";
 import { formatGuardianOutput, READABLE_GUARDIAN_TOOLS } from "../../src/plugin/readable-output.ts";
 import { getGuardianPaths } from "../../src/state.ts";
-import { collectKnownWorktreePaths, recordLastSafeState, runGuardianTool } from "../../src/tools.ts";
-import type { GuardOptions } from "../../src/types.ts";
+import { recordLastSafeState, runGuardianTool } from "../../src/tools.ts";
+import { commandFromToolInput, parseHookPayload, runPreToolUse } from "./command-interception.ts";
+import type { HookPayload } from "./command-interception.ts";
 
 const UnknownRecordSchema = z.record(z.string(), z.unknown());
-const HookPayloadSchema = z.object({ hook_event_name: z.string(), session_id: z.string(), cwd: z.string(), tool_name: z.string().optional(), tool_input: UnknownRecordSchema.optional() }).passthrough();
 const ToolArgsSchema = UnknownRecordSchema;
 const PlanCacheFileSchema = z.object({ version: z.literal(1), entries: z.record(z.string(), z.string()) });
 const HELP = "Usage:\n  guardian-hook hook pre-tool-use\n  guardian-hook hook post-tool-use\n  guardian-hook tool <guardian_tool_name> [json_args]\n";
-
-type HookPayload = Readonly<z.infer<typeof HookPayloadSchema>>;
-
-function stringField(record: Record<string, unknown>, key: string): string | undefined {
-  const value = record[key];
-  return typeof value === "string" ? value : undefined;
-}
-
-function parseHookPayload(raw: string): HookPayload | undefined {
-  if (raw.trim().length === 0) return undefined;
-  try {
-    const parsed = HookPayloadSchema.safeParse(JSON.parse(raw));
-    return parsed.success ? parsed.data : undefined;
-  } catch (error) {
-    if (error instanceof SyntaxError) return undefined;
-    throw error;
-  }
-}
-
-function commandFromToolInput(toolInput: Record<string, unknown> | undefined): string {
-  if (toolInput === undefined) return "";
-  return stringField(toolInput, "command") ?? stringField(toolInput, "cmd") ?? stringField(toolInput, "code") ?? "";
-}
-
-async function buildGuardOptions(cwd: string): Promise<GuardOptions> {
-  try {
-    const loaded = await loadConfig(cwd);
-    const knownWorktreePaths = await collectKnownWorktreePaths({
-      cwd,
-      repoRoot: cwd,
-      currentWorktree: cwd,
-    });
-    const currentBranch = await getCurrentBranch(cwd).catch((error: unknown) => {
-      if (error instanceof Error) return null;
-      throw error;
-    });
-    return {
-      cwd,
-      knownWorktreePaths,
-      protectedBranches: loaded.config.protectedBranches,
-      branchPrefix: loaded.config.branchPrefix,
-      currentBranch,
-    };
-  } catch (error) {
-    if (error instanceof Error) return { cwd };
-    throw error;
-  }
-}
-
-async function runPreToolUse(payload: HookPayload): Promise<string> {
-  if (payload.hook_event_name !== "PreToolUse") return "";
-  const command = commandFromToolInput(payload.tool_input);
-  if (command.trim().length === 0) return "";
-  const guard = classifyGuardCommand(command, await buildGuardOptions(payload.cwd));
-  if (!guard.blocked) return "";
-  return `${JSON.stringify({
-    decision: "block",
-    reason: `Worktree Guardian blocked command: ${guard.reason}. Use guardian_status or guardian_finish instead.`,
-  })}\n`;
-}
 
 async function runPostToolUse(payload: HookPayload): Promise<string> {
   if (payload.hook_event_name !== "PostToolUse") return "";

@@ -51,7 +51,8 @@ For manual QA, use a disposable Git repository only:
 3. Confirm the Guardian plugin loads and exposes `guardian_status`.
 4. Confirm `guardian_status` returns repository inventory.
 5. Confirm a safe Git write is routed into the Guardian-owned worktree when ownership exists.
-6. Confirm a raw destructive command such as `git reset --hard` is blocked before mutation.
+6. With the default audit configuration, confirm a raw destructive command such as `git reset --hard` emits `auditOnly: true` and is not blocked.
+7. Set `commandInterceptionMode` to `strict`, then repeat the command and confirm it is blocked before mutation.
 
 Do not validate manual OpenCode behavior against a live project repository.
 
@@ -70,7 +71,12 @@ Then inspect `npm pack --dry-run --json` output and confirm the packed package c
 - `codex/hooks/guardian-hook.ts`
 - `codex/skills/worktree-guardian/SKILL.md`
 
-For manual QA, invoke the adapter only in a disposable Git repository. Confirm `guardian_status` returns readable output and the pre-tool hook blocks a raw destructive command such as `git reset --hard`.
+For manual QA, invoke the adapter only in a disposable Git repository:
+
+1. Confirm `guardian_status` returns readable output.
+2. With the default audit configuration, run a raw destructive command such as `git reset --hard`; confirm the pre-tool hook exits successfully with no blocking response.
+3. Set `commandInterceptionMode` to `strict`, repeat the command, and confirm the pre-tool hook blocks it before mutation.
+4. Confirm invalid interception configuration fails closed.
 
 ## Final Gate
 

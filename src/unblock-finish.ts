@@ -2,7 +2,8 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { loadConfig, normalizeConfig } from "./config.ts";
-import { createSafetyRef, getCurrentBranch, getHeadCommit, getRepoRoot, runGit } from "./git.ts";
+import { createSafetyRef, getCurrentBranch, getHeadCommit, getRepoRoot, listStashes, runGit } from "./git.ts";
+import { hasBlockingStashInventory } from "./stash-policy.ts";
 import { getGuardianPaths, readState, recordSession } from "./state.ts";
 import type { GuardianSession, MutableRecord } from "./types.ts";
 import { isRecordLike } from "./types.ts";
@@ -136,6 +137,7 @@ async function preflightFor(input: LooseRecord) {
   const cwd = typeof input.cwd === "string" ? input.cwd : typeof input.repoRoot === "string" ? input.repoRoot : process.cwd();
   const repoRoot = typeof input.repoRoot === "string" ? input.repoRoot : await getRepoRoot(cwd);
   const { config } = isRecordLike(input.config) ? { config: normalizeConfig(input.config) } : await loadConfig(repoRoot);
+  const stashes = await listStashes(repoRoot);
   let sessionId = typeof input.sessionId === "string" ? input.sessionId : null;
   const preflight: LooseRecord = {
     repoRoot: path.resolve(repoRoot),
@@ -151,6 +153,8 @@ async function preflightFor(input: LooseRecord) {
     reviewArtifactPaths: [],
     otherDirtyPaths: [],
     blockers: [],
+    stashCount: stashes.length,
+    stashes,
   };
   const state = isUnblockStateInput(input.state) ? input.state : await readState(await getGuardianPaths(repoRoot), { repoRoot, config });
   const session = sessionId ? state.sessions?.[sessionId] ?? null : null;
@@ -197,6 +201,8 @@ export async function guardianUnblockFinish(input: LooseRecord = {}): Promise<Gu
   if (mode !== "plan" && mode !== "apply") return blocked("mode must be plan or apply", { mode }, preflight);
   if (action !== "commit-review-artifacts") return blocked("unsupported unblock action", { action }, preflight);
   if (reason) return blocked(reason, {}, preflight);
+  const stashes = Array.isArray(preflight.stashes) ? preflight.stashes : [];
+  if (hasBlockingStashInventory(config, stashes)) return blocked("stash inventory is non-empty", { stashCount: stashes.length, stashes }, preflight);
   if (entries.length === 0) return blocked("worktree is already clean", {}, preflight);
   if (reviewEntries.length === 0) return blocked("no committable review artifacts found", {}, preflight);
   if (otherEntries.length > 0) return blocked("dirty files include non-review artifacts", { otherDirtyPaths: otherEntries.map((entry: StatusEntry) => entry.path) }, preflight);

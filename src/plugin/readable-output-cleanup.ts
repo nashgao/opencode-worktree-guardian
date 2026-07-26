@@ -1,4 +1,4 @@
-import { arrayValue, recordValue, shortCommit, textValue } from "./readable-output-values.ts";
+import { appendStashInventoryWarning, arrayValue, recordValue, shortCommit, textValue } from "./readable-output-values.ts";
 
 function reviewableTextValue(value: unknown, fallback = "-") {
   return textValue(value, fallback)
@@ -92,6 +92,7 @@ export function formatGuardianDeleteOutput(rawResult: unknown) {
     `[INFO] targetPath: ${textValue(preflight.targetPath ?? result.targetPath)}`,
     `[INFO] branch: ${textValue(preflight.branch ?? result.branch)} | head: ${shortCommit(preflight.head ?? result.head)}`,
   ];
+  appendStashInventoryWarning(lines, preflight.stashCount);
   if (preflight.allowRedundantDirtyPaths === true || Number(preflight.redundantDirtyFileCount ?? 0) > 0) {
     lines.push(`[INFO] allowRedundantDirtyPaths: ${String(preflight.allowRedundantDirtyPaths === true)} | baseRef: ${textValue(preflight.baseRef)} | baseRefOid: ${shortCommit(preflight.baseRefOid)}`);
     lines.push(`[INFO] redundantDirtyFileCount: ${Number(preflight.redundantDirtyFileCount ?? 0)} | dirtySnapshotRef: ${textValue(preflight.dirtySnapshotRef ?? result.dirtySnapshotRef)}`);
@@ -158,6 +159,7 @@ export function formatGuardianUnblockFinishOutput(rawResult: unknown) {
     `[INFO] action: ${textValue(result.action ?? preflight.action)} | sessionId: ${textValue(preflight.sessionId)} | branch: ${textValue(preflight.branch)}`,
     `[INFO] worktreePath: ${textValue(preflight.worktreePath)}`,
   ];
+  appendStashInventoryWarning(lines, preflight.stashCount);
   const reviewArtifactPaths = arrayValue(preflight.reviewArtifactPaths);
   if (reviewArtifactPaths.length > 0) {
     lines.push(`[INFO] review artifacts: ${reviewArtifactPaths.length}`);

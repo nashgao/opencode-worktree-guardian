@@ -7,4 +7,6 @@ Use the `guardian_goal` native tool for the configured repo goal workflow. Run `
 
 `guardian_goal` reads `.opencode/worktree-guardian.json` `goal` settings. The default goal commits dirty implementation work when a `commitMessage` is explicit, lands/pushes it to the configured base through `guardian_done`, cleans Guardian-owned stale worktrees/branches through existing Guardian gates, and applies safe known-cleanable hygiene cleanup before done so generated cache residue is not committed.
 
+Repository stash inventory is advisory by default and remains visible in the goal's `guardian_done` step; Guardian never mutates it. Only repo config `requireEmptyStashInventory: true` promotes a non-empty inventory to a goal blocker.
+
 Never force-push, mutate stashes, run raw cleanup, run raw branch deletion, remove worktrees directly, or bypass Guardian preflights. Use lower-level Guardian tools only when the user explicitly asks for a narrower workflow.

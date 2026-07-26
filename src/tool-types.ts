@@ -36,6 +36,26 @@ export type SessionWorktreeResult = {
   readonly [key: string]: unknown;
 };
 
+export type GuardContextInspection =
+  | { readonly state: "not-requested" }
+  | {
+    readonly state: "available";
+    readonly aliases: readonly string[];
+    readonly transportConfigs: readonly string[];
+    readonly currentHead: string | null;
+  }
+  | {
+    readonly state: "failed";
+    readonly stage: "git-target" | "git-config" | "state" | "worktree" | "path-facts";
+    readonly reason: string;
+  };
+
+export type GuardPathFacts = {
+  readonly canonicalRepoRoots: readonly string[];
+  readonly canonicalKnownWorktreePaths: readonly string[];
+  readonly canonicalTargets: Readonly<Record<string, string>>;
+};
+
 export type GuardOptions = {
   readonly cwd?: string;
   readonly knownWorktreePaths?: readonly string[];
@@ -45,6 +65,8 @@ export type GuardOptions = {
   readonly protectedBranchWorktreePaths?: readonly string[];
   readonly currentBranch?: string | null;
   readonly inheritedEnvAssignments?: readonly string[];
+  readonly inspection?: GuardContextInspection;
+  readonly pathFacts?: GuardPathFacts;
   readonly [key: string]: unknown;
 };
 

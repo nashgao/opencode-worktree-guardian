@@ -10,7 +10,7 @@
   "autoFinish": false,
   "autoCleanup": false,
   "safetyRefRetentionDays": 30,
-  "allowStashIfUnrelated": false,
+  "requireEmptyStashInventory": false,
   "allowBaseWorktreePreserveReset": false,
   "allowDirtyPaths": [],
   "goal": {

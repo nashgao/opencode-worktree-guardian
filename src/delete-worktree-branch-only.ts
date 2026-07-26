@@ -4,6 +4,7 @@ import { recordSession } from "./state.ts";
 import { blocked, createConfirmToken, errorMessage, withDeleteReport } from "./delete-worktree-report.ts";
 import { recordAncestryPreflight } from "./delete-worktree-preflight.ts";
 import type { GuardianSession, WorktreeEntry } from "./types.ts";
+import { hasBlockingStashInventory } from "./stash-policy.ts";
 
 type BranchOnlyTargetKind = "orphan-branch" | "stale-branch" | "merged-branch";
 
@@ -46,7 +47,8 @@ export async function preflightBranchOnlyDeletion(
   preflight.head = head;
   const stashes = await listStashes(repoRoot);
   preflight.stashCount = stashes.length;
-  if (stashes.length > 0 && config.allowStashIfUnrelated !== true) return blocked("stash inventory is non-empty", { stashes }, preflight);
+  preflight.stashes = stashes;
+  if (hasBlockingStashInventory(config, stashes)) return blocked("stash inventory is non-empty", { stashes }, preflight);
   const baseRef = ancestryBaseRef(input, config, session);
   const proven = await recordAncestryPreflight(repoRoot, head, baseRef, preflight);
   if (!proven && abandonUnmerged && preflight.unmergedCommitError) return blocked("unmerged commits could not be listed", { branch, head, baseRef, error: preflight.unmergedCommitError }, preflight);

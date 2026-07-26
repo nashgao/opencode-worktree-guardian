@@ -2,7 +2,26 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import test from "node:test";
 import plugin from "../src/index.ts";
+import { formatGuardianOutput } from "../src/plugin/readable-output.ts";
 import { createToolContext, metadataArray, metadataRecord, metadataRecords, runTool } from "./plugin-contract-helpers.ts";
+
+test("guardian_unblock_finish applied output warns about advisory stash inventory", () => {
+  const output = formatGuardianOutput("guardian_unblock_finish", {
+    ok: true,
+    status: "applied",
+    action: "commit-review-artifacts",
+    commit: "abcdef1234567890",
+    preflight: {
+      sessionId: "ses_unblock",
+      branch: "guardian/unblock",
+      worktreePath: "/repo/.worktrees/unblock",
+      stashCount: 1,
+      stashes: [{ name: "stash@{0}" }],
+    },
+  });
+
+  assert.match(output, /\[WARN\] repository stash inventory: 1/);
+});
 
 test("guardian_finish_workflow tool execute returns readable plan output with raw metadata", async () => {
   const { createRepoWithOrigin, git } = await import("./helpers.ts");
@@ -43,9 +62,12 @@ test("guardian_finish_workflow tool execute returns readable plan output with ra
 });
 
 test("guardian_finish_workflow tool execute reports completed empty candidate scan", async () => {
-  const { createRepoWithOrigin } = await import("./helpers.ts");
+  const { createRepoWithOrigin, git } = await import("./helpers.ts");
+  const path = await import("node:path");
   const { base, repo } = await createRepoWithOrigin();
   test.after(() => fs.rm(base, { recursive: true, force: true }));
+  await fs.writeFile(path.join(repo, "contract-stashed.txt"), "stashed\n");
+  await git(repo, ["stash", "push", "-u", "-m", "contract workflow stash"]);
   const hooks = await plugin.server({ directory: repo, worktree: repo });
   const { context } = createToolContext();
   context.directory = repo;
@@ -58,8 +80,10 @@ test("guardian_finish_workflow tool execute reports completed empty candidate sc
   const preflight = metadataRecord(result.metadata, "preflight");
   assert.equal(preflight.candidateScanStatus, "completed");
   assert.equal(preflight.candidateCount, 0);
+  assert.equal(preflight.stashCount, 1);
   assert.match(result.output, /candidateScan: completed/);
   assert.match(result.output, /candidates: 0/);
+  assert.match(result.output, /\[WARN\] repository stash inventory: 1/);
 });
 
 test("guardian_finish_workflow tool execute dirty primary candidate scan reports planned partial inventory", async () => {

@@ -128,6 +128,7 @@ test("guardian_done readable done-all output includes cleanup plan details", () 
     cleanupPlan: {
       ok: true,
       status: "planned-partial",
+      preflight: { stashCount: 1 },
       candidates: [{ kind: "worktree", targetKind: "worktree", branch: "guardian/session-ses-old", targetPath: "/repo/.worktrees/repo/old", head: "abcdef1234567890" }],
       blockers: [{ kind: "worktree", branch: "guardian/session-ses-blocked", targetPath: "/repo/.worktrees/repo/blocked", head: "fedcba0987654321", reason: "worktree branch is not proven reachable from base ref" }],
     },
@@ -139,6 +140,21 @@ test("guardian_done readable done-all output includes cleanup plan details", () 
   assert.match(output, /branch=guardian\/session-ses-old/);
   assert.match(output, /cleanup blockers:/);
   assert.match(output, /branch=guardian\/session-ses-blocked/);
+  assert.match(output, /\[WARN\] repository stash inventory: 1/);
+});
+
+test("guardian_done readable output warns about advisory stash inventory", () => {
+  const output = formatGuardianOutput("guardian_done", {
+    ok: true,
+    status: "planned",
+    lane: "primary-main-publish",
+    preflight: { currentBranch: "main", baseBranch: "main" },
+    stashCount: 1,
+    dirtySnapshot: { paths: ["src/example.ts"] },
+  });
+
+  assert.match(output, /\[WARN\] repository stash inventory: 1/);
+  assert.match(output, /Guardian will not mutate stashes/);
 });
 
 test("guardian_done readable output shows selected target and dirty target choices", () => {

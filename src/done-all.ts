@@ -9,7 +9,6 @@ import { activeFeatureSessions, type FeatureSession } from "./done-feature-sessi
 import { syncLocalBase } from "./done-main-sync.ts";
 import { runFinalCleanupPostflight } from "./final-postflight.ts";
 import { isRecordLike } from "./types.ts";
-import type { GuardianConfig } from "./types.ts";
 
 // Bounds one batch finish so a runaway state file cannot fan out into an unbounded sequence
 // of pushes, PR merges, and worktree deletions. Mirrors MAX_WORKFLOW_CLEANUP_CANDIDATES.
@@ -203,6 +202,8 @@ export async function guardianDoneAll(input: Record<string, unknown> = {}): Prom
     remaining: finalRemaining,
     mainSync,
     finalPostflight,
+    stashCount: finalPostflight.stashCount ?? cleanupPreflight.stashCount ?? 0,
+    stashes: finalPostflight.stashes ?? cleanupPreflight.stashes ?? [],
     cleanupSweep: combinedCleanupSweep,
     ...(finalRemaining.length > 0 ? { remainingHint: "safe work was applied; remaining entries need explicit cleanup or individual guardian_done handling before the repo is done" } : {}),
   };

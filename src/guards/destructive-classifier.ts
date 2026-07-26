@@ -1,10 +1,13 @@
 import type { GuardOptions } from "../types.ts";
-import { STASH_READ_ONLY } from "./allowlists.ts";
+import { hasDynamicShellArgument, isReadOnlyStashInvocation } from "./allowlists.ts";
 import type { CommandSegment, GuardBlockDecision } from "./guard-types.ts";
-import { isForcePushToken, parseGitInvocation, pushRefspecs } from "./git-invocation.ts";
-import { block, stringArrayOption, stringOption } from "./options.ts";
-import { isSameOrInside, matchesKnownWorktreePath, normalizeForCompare } from "./path-policy.ts";
+import { checkoutRestoresPaths, isRecursiveForce, restoreIsDestructive, targetsKnownWorktreePath, targetsRepoManagedPath, rmTargets } from "./destructive-inputs.ts";
+import { effectiveGitPolicyReason } from "./effective-git-policy.ts";
+import { hasAliasCapableEnvironmentAssignments, hasAliasCapableRuntimeConfig, isForcePushToken, parseGitInvocation, pushRefspecs } from "./git-invocation.ts";
+import { block, stringArrayOption } from "./options.ts";
+import { matchesKnownWorktreePath } from "./path-policy.ts";
 import { protectedBranchBypass } from "./protected-branch-policy.ts";
+import { hasUpdateRefStdin, isBranchRefDeleteTarget, isRecoveryRefTarget, reflogHasDynamicMutationTarget, reflogMutatesRecoveryRef, symbolicRefMutationTarget, updateRefDeleteTarget, updateRefTarget } from "./recovery-ref-policy.ts";
 import { shellPayload, stripCommandWrappers } from "./shell-prefix.ts";
 
 function hasForceCleanFlag(tokens: CommandSegment): boolean {
@@ -13,36 +16,6 @@ function hasForceCleanFlag(tokens: CommandSegment): boolean {
 
 function hasDryRunFlag(tokens: CommandSegment): boolean {
   return tokens.some((token) => token === "--dry-run" || token === "-n" || /^-[a-zA-Z]*n[a-zA-Z]*$/.test(token));
-}
-
-function isCheckoutPathRestore(rest: CommandSegment): boolean {
-  return rest.includes("--") && rest.indexOf("--") < rest.length - 1;
-}
-
-function isRestoreDestructive(rest: CommandSegment): boolean {
-  if (rest.includes("--staged") && !rest.includes("--worktree") && rest.every((token) => token === "--staged" || token.startsWith("-"))) {
-    return false;
-  }
-  return rest.includes("--worktree") || rest.some((token) => !token.startsWith("-"));
-}
-
-function isRecursiveForce(tokens: CommandSegment): boolean {
-  const flags = tokens.filter((token) => token.startsWith("-"));
-  return flags.some((flag) => flag.includes("r") || flag.includes("R")) && flags.some((flag) => flag.includes("f") || flag.includes("F"));
-}
-
-function targetsRepoManagedPath(targets: readonly string[], options: GuardOptions): boolean {
-  const cwd = options.cwd ?? process.cwd();
-  const explicitProtectedRoots = [stringOption(options, "repoRoot"), stringOption(options, "worktree")]
-    .filter((root): root is string => Boolean(root))
-    .map((root) => normalizeForCompare(root, cwd));
-  const protectedRoots = explicitProtectedRoots.length > 0 ? explicitProtectedRoots : [normalizeForCompare(cwd, cwd)];
-
-  return targets.some((target) => {
-    if (!target || target.startsWith("-")) return false;
-    const resolvedTarget = normalizeForCompare(target, cwd);
-    return protectedRoots.some((root) => isSameOrInside(resolvedTarget, root));
-  });
 }
 
 function findWorktreeAddPath(rest: CommandSegment): string | null {
@@ -72,36 +45,41 @@ function hasBranchDeleteFlag(tokens: CommandSegment): boolean {
   });
 }
 
-function updateRefDeleteTarget(tokens: CommandSegment): string | null {
-  for (let index = 0; index < tokens.length; index += 1) {
-    const token = tokens[index] ?? "";
-    if (token === "-d" || token === "--delete") {
-      for (let targetIndex = index + 1; targetIndex < tokens.length; targetIndex += 1) {
-        const candidate = tokens[targetIndex] ?? "";
-        if (candidate === "--") return tokens[targetIndex + 1] ?? null;
-        if (!candidate.startsWith("-")) return candidate;
-      }
-      return null;
-    }
-    if (token.startsWith("--delete=")) return token.slice("--delete=".length);
-  }
-  return null;
+function configMutatesAliasCapability(tokens: CommandSegment): boolean {
+  const readOnly = ["get", "get-all", "get-regexp", "list"].includes(tokens[0] ?? "")
+    || tokens.some((token) => ["--get", "--get-all", "--get-regexp", "--list"].includes(token));
+  if (readOnly) return false;
+  const aliasCapable = tokens.some((token) => {
+    const key = token.toLowerCase();
+    return key === "alias" || key.startsWith("alias.") || key === "include" || key === "include.path" || key.startsWith("includeif.");
+  });
+  return aliasCapable || hasDynamicShellArgument(tokens);
 }
 
-function hasUpdateRefStdin(tokens: CommandSegment): boolean {
-  return tokens.includes("--stdin");
-}
-
-function isBranchRefDeleteTarget(target: string | null): boolean {
-  return target === "HEAD" || target === "@" || Boolean(target?.startsWith("refs/heads/"));
+function configMutatesTransportCapability(tokens: CommandSegment): boolean {
+  const readOnly = ["get", "get-all", "get-regexp", "list"].includes(tokens[0] ?? "")
+    || tokens.some((token) => ["--get", "--get-all", "--get-regexp", "--list"].includes(token));
+  if (readOnly) return false;
+  return tokens.some((token) => /^remote\..+\.(fetch|push|mirror)$/i.test(token));
 }
 
 function classifyGit(segment: CommandSegment, options: GuardOptions = {}): GuardBlockDecision | null {
   const parsed = parseGitInvocation(segment, options);
   if (!parsed?.subcommand) return null;
-  const { subcommand, rest, normalized, gitCwd, workTree, configs } = parsed;
+  const { subcommand, rest, normalized, gitCwd, workTree, configs, unsafeExecutableSearchPath } = parsed;
+  if (hasDynamicShellArgument([subcommand])) {
+    return block("dynamic git subcommand is blocked because it can bypass Guardian command classification", normalized);
+  }
+  if (unsafeExecutableSearchPath) {
+    return block("env alternate executable search path is blocked because it can replace git", normalized);
+  }
+  if (hasAliasCapableRuntimeConfig(configs)) {
+    return block("runtime git alias-capable config is blocked because it can bypass Guardian command classification", normalized);
+  }
   const bypass = protectedBranchBypass(normalized, subcommand, rest, options, gitCwd, workTree, configs);
   if (bypass) return bypass;
+  const effectivePolicy = effectiveGitPolicyReason(parsed, options);
+  if (effectivePolicy) return block(effectivePolicy, normalized);
   if (subcommand === "reset") {
     return block("raw git reset is blocked because it can discard or hide session work; use Guardian-native cleanup", normalized);
   }
@@ -111,6 +89,9 @@ function classifyGit(segment: CommandSegment, options: GuardOptions = {}): Guard
   if (subcommand === "branch" && hasBranchDeleteFlag(rest)) {
     return block("raw git branch deletion is blocked; use guardian_delete_worktree", normalized);
   }
+  if (subcommand === "config" && (configMutatesAliasCapability(rest) || configMutatesTransportCapability(rest))) {
+    return block("runtime git alias-capable config or remote transport config mutation is blocked because it can bypass Guardian command classification", normalized);
+  }
   if (subcommand === "update-ref") {
     if (hasUpdateRefStdin(rest)) {
       return block("raw git update-ref --stdin is blocked; use guardian_delete_worktree", normalized);
@@ -119,6 +100,26 @@ function classifyGit(segment: CommandSegment, options: GuardOptions = {}): Guard
     if (isBranchRefDeleteTarget(deleteTarget)) {
       return block("raw git branch ref deletion is blocked; use guardian_delete_worktree", normalized);
     }
+    const target = updateRefTarget(rest);
+    if (target && hasDynamicShellArgument([target])) {
+      return block("dynamic shell expansion in a recovery-ref-capable command is blocked", normalized);
+    }
+    if (isRecoveryRefTarget(target)) {
+      return block("raw stash or Guardian recovery ref mutation is blocked", normalized);
+    }
+  }
+  if (subcommand === "symbolic-ref") {
+    const target = symbolicRefMutationTarget(rest);
+    if (target && hasDynamicShellArgument([target])) {
+      return block("dynamic shell expansion in a recovery-ref-capable command is blocked", normalized);
+    }
+    if (isRecoveryRefTarget(target)) return block("raw stash or Guardian recovery ref mutation is blocked", normalized);
+  }
+  if (subcommand === "reflog" && reflogHasDynamicMutationTarget(rest)) {
+    return block("dynamic shell expansion in a recovery-ref-capable command is blocked", normalized);
+  }
+  if (subcommand === "reflog" && reflogMutatesRecoveryRef(rest)) {
+    return block("raw stash or Guardian recovery reflog mutation is blocked", normalized);
   }
   if (subcommand === "worktree" && ["remove", "prune"].includes(rest[0] ?? "")) {
     return block("raw git worktree removal/prune is blocked; use guardian_delete_worktree", normalized);
@@ -130,18 +131,17 @@ function classifyGit(segment: CommandSegment, options: GuardOptions = {}): Guard
       return block("raw git worktree add outside Guardian-owned roots is blocked; use guardian_start", normalized);
     }
   }
-  if (subcommand === "restore" && isRestoreDestructive(rest)) {
+  if (subcommand === "restore" && restoreIsDestructive(rest)) {
     return block("destructive git restore variants are blocked", normalized);
   }
-  if (subcommand === "checkout" && (rest.includes("-f") || rest.includes("--force") || isCheckoutPathRestore(rest))) {
+  if (subcommand === "checkout" && (rest.includes("-f") || rest.includes("--force") || checkoutRestoresPaths(rest))) {
     return block("destructive git checkout variants are blocked", normalized);
   }
   if (subcommand === "switch" && rest.some((token) => token === "-f" || token === "--force" || token === "--discard-changes")) {
     return block("destructive git switch variants are blocked", normalized);
   }
   if (subcommand === "stash") {
-    const action = rest.find((token) => !token.startsWith("-")) ?? "push";
-    if (!STASH_READ_ONLY.has(action)) {
+    if (!isReadOnlyStashInvocation(rest)) {
       return block("mutating git stash commands are blocked", normalized);
     }
   }
@@ -157,28 +157,35 @@ function classifyGit(segment: CommandSegment, options: GuardOptions = {}): Guard
 export function classifySegment(
   segment: CommandSegment,
   options: GuardOptions,
-  classifyNestedPayload: (payload: string, inheritedEnvAssignments: readonly string[]) => { readonly reason: string | null } | null,
+  classifyNestedPayload: (payload: string, inheritedEnvAssignments: readonly string[], envCwd: string | null) => { readonly reason: string | null } | null,
 ): GuardBlockDecision | null {
   const payload = shellPayload(segment);
   if (payload) {
+    if (payload.unsafeExecutableSearchPath) return block("env alternate executable search path is blocked because it can replace shell commands", segment);
     const inheritedEnvAssignments = [...(Array.isArray(options.inheritedEnvAssignments) ? options.inheritedEnvAssignments : []), ...payload.assignments];
-    const nested = classifyNestedPayload(payload.payload, inheritedEnvAssignments);
+    const nested = classifyNestedPayload(payload.payload, inheritedEnvAssignments, payload.envCwd);
     if (nested) return block(`shell -c payload is blocked: ${nested.reason}`, segment);
+  }
+  const stripped = stripCommandWrappers(segment);
+  if (stripped[0] === "export" && hasAliasCapableEnvironmentAssignments(stripped.slice(1))) {
+    return block("runtime git alias-capable config export is blocked because it can bypass Guardian command classification", stripped);
   }
   const gitResult = classifyGit(segment, options);
   if (gitResult) return gitResult;
-  const gitIndex = segment.findIndex((token) => token === "git");
+  const gitIndex = segment.findIndex((token) => /(?:^|[\\/])git(?:\.exe)?$/i.test(token));
   if (gitIndex > 0) {
     const nestedGitResult = classifyGit(segment.slice(gitIndex), options);
     if (nestedGitResult) return nestedGitResult;
   }
-  const stripped = stripCommandWrappers(segment);
   if (stripped[0] === "opencode-worktree-workflow" && stripped[1] === "wt-clean" && stripped[2] === "apply") {
     return block("opencode-worktree-workflow wt-clean apply is blocked", stripped);
   }
   if (stripped[0] === "rm" && isRecursiveForce(stripped.slice(1))) {
-    const targets = stripped.slice(1).filter((token) => !token.startsWith("-"));
-    if (targets.some((target) => matchesKnownWorktreePath(target, options.knownWorktreePaths ?? [], options.cwd ?? process.cwd()))) {
+    const targets = rmTargets(stripped.slice(1));
+    if (hasDynamicShellArgument(targets)) {
+      return block("dynamic shell deletion targets are blocked", stripped);
+    }
+    if (targetsKnownWorktreePath(targets, options)) {
       return block("rm -rf of a known worktree path is blocked", stripped);
     }
     if (targetsRepoManagedPath(targets, options)) {

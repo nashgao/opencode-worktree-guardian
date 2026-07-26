@@ -1,10 +1,12 @@
 import { guardianDeleteWorktree } from "./delete-worktree.ts";
+import { commitDirtySessionWork } from "./done-land-clean-commit.ts";
 import { cleanupLandedSession, postFinishMaintenance, withMaintenanceOutcome } from "./done-land-clean-maintenance.ts";
 import { planDoneHygienePreflight } from "./done-hygiene-preflight.ts";
-import { createSafetyRef, fetchRemote, getCurrentBranch, getDirtyFiles, getHeadCommit, isAncestor, pushBranch, runGit } from "./git.ts";
+import { fetchRemote, getCurrentBranch, getDirtyFiles, getHeadCommit, isAncestor, listStashes, pushBranch } from "./git.ts";
+import type { GitStashEntry } from "./git.ts";
 import { getOrCreatePullRequest, mergePullRequest } from "./done-github-pr.ts";
+import { hasBlockingStashInventory } from "./stash-policy.ts";
 import type { GuardianConfig, GuardianSession } from "./types.ts";
-import { errorMessage } from "./types.ts";
 
 type LandCleanContext = {
   readonly input: Record<string, unknown>;
@@ -30,9 +32,13 @@ type LandCleanPreflight =
       readonly worktreePath: string;
       readonly head: string;
       readonly dirtyFiles: readonly string[];
+      readonly stashCount: number;
+      readonly stashes: readonly GitStashEntry[];
       readonly remote: string;
       readonly baseBranch: string;
     };
+
+type SuccessfulLandCleanPreflight = Extract<LandCleanPreflight, { readonly ok: true }>;
 
 function blocked(reason: string, extra: Record<string, unknown> = {}): BlockedResult {
   return { ok: false, status: "blocked", reason, ...extra };
@@ -46,7 +52,11 @@ function commitMessage(input: Record<string, unknown>): string {
   return typeof input.commitMessage === "string" ? input.commitMessage.trim() : "";
 }
 
-async function planAlreadyLandedRedundantDirtyCleanup(context: LandCleanContext, preflight: Extract<LandCleanPreflight, { readonly ok: true }>, baseRef: string): Promise<Record<string, unknown>> {
+function stashInventory(preflight: SuccessfulLandCleanPreflight): Pick<SuccessfulLandCleanPreflight, "stashCount" | "stashes"> {
+  return { stashCount: preflight.stashCount, stashes: preflight.stashes };
+}
+
+async function planAlreadyLandedRedundantDirtyCleanup(context: LandCleanContext, preflight: SuccessfulLandCleanPreflight, baseRef: string): Promise<Record<string, unknown>> {
   const cleanup = await guardianDeleteWorktree({
     repoRoot: context.repoRoot,
     cwd: context.repoRoot,
@@ -63,6 +73,7 @@ async function planAlreadyLandedRedundantDirtyCleanup(context: LandCleanContext,
       branch: preflight.branch,
       worktreePath: preflight.worktreePath,
       dirtyFiles: preflight.dirtyFiles,
+      ...stashInventory(preflight),
       baseRef,
       cleanup,
     });
@@ -77,18 +88,19 @@ async function planAlreadyLandedRedundantDirtyCleanup(context: LandCleanContext,
   };
 }
 
-async function applyAlreadyLandedRedundantDirtyCleanup(context: LandCleanContext, preflight: Extract<LandCleanPreflight, { readonly ok: true }>, baseRef: string): Promise<Record<string, unknown>> {
+async function applyAlreadyLandedRedundantDirtyCleanup(context: LandCleanContext, preflight: SuccessfulLandCleanPreflight, baseRef: string): Promise<Record<string, unknown>> {
   if (context.input.confirm !== true) {
     return blocked("guardian_done apply requires confirm=true before cleaning the already-landed dirty session", {
       action: "already-landed-clean",
       branch: preflight.branch,
       worktreePath: preflight.worktreePath,
       dirtyFiles: preflight.dirtyFiles,
+      ...stashInventory(preflight),
       baseRef,
     });
   }
   const cleanup = await cleanupLandedSession(context, "session commit is already reachable from the remote base branch", { allowRedundantDirtyPaths: true, ancestryBaseRef: baseRef });
-  if (cleanup.ok !== true) return cleanup;
+  if (cleanup.ok !== true) return { ...cleanup, ...stashInventory(preflight) };
   const maintenance = await postFinishMaintenance(context, [{ commit: preflight.head, source: preflight.branch, reason: "landed session commit must be present on final base" }]);
   return withMaintenanceOutcome({
     ok: true,
@@ -97,6 +109,8 @@ async function applyAlreadyLandedRedundantDirtyCleanup(context: LandCleanContext
     branch: preflight.branch,
     head: preflight.head,
     dirtyFiles: preflight.dirtyFiles,
+    stashCount: preflight.stashCount,
+    stashes: preflight.stashes,
     baseRef,
     cleanup,
     worktreeRemoved: cleanup.worktreeRemoved === true,
@@ -110,36 +124,26 @@ async function landCleanPreflight(context: LandCleanContext): Promise<LandCleanP
   const worktreePath = typeof context.session.worktree_path === "string" ? context.session.worktree_path : context.cwd;
   const head = await getHeadCommit(context.cwd);
   const dirtyFiles = await getDirtyFiles(context.cwd);
+  const stashes = await listStashes(context.repoRoot);
   return {
     ok: true,
     branch,
     worktreePath,
     head,
     dirtyFiles,
+    stashCount: stashes.length,
+    stashes,
     remote: context.config.remote,
     baseBranch: context.config.baseBranch,
   };
 }
 
-async function commitDirtySessionWork(context: LandCleanContext, preflight: Extract<LandCleanPreflight, { readonly ok: true }>, message: string): Promise<{ readonly ok: true; readonly head: string; readonly safetyRef: string } | { readonly ok: false; readonly result: Record<string, unknown> }> {
-  const safetyRef = await createSafetyRef(context.repoRoot, {
-    sessionId: context.sessionId,
-    branch: preflight.branch,
-    commit: preflight.head,
-    timestamp: context.input.timestamp,
-  });
-  try {
-    await runGit(context.cwd, ["add", "--all", "--", ...preflight.dirtyFiles]);
-    await runGit(context.cwd, ["commit", "-m", message]);
-  } catch (error) {
-    return { ok: false, result: blocked("commit failed", { branch: preflight.branch, dirtyFiles: preflight.dirtyFiles, safetyRef, error: errorMessage(error) }) };
-  }
-  return { ok: true, head: await getHeadCommit(context.cwd), safetyRef };
-}
-
 export async function guardianDoneLandClean(context: LandCleanContext): Promise<Record<string, unknown>> {
   const preflight = await landCleanPreflight(context);
   if (preflight.ok !== true) return preflight;
+  if (hasBlockingStashInventory(context.config, preflight.stashes)) {
+    return blocked("stash inventory is non-empty", { stashCount: preflight.stashCount, stashes: preflight.stashes });
+  }
   const allowAdminBypass = context.input.allowAdminBypass === true;
   const message = commitMessage(context.input);
   if (preflight.dirtyFiles.length > 0 && !message) {
@@ -156,6 +160,7 @@ export async function guardianDoneLandClean(context: LandCleanContext): Promise<
         branch: preflight.branch,
         worktreePath: preflight.worktreePath,
         head: preflight.head,
+        ...stashInventory(preflight),
         baseRef,
       };
     }
@@ -163,6 +168,7 @@ export async function guardianDoneLandClean(context: LandCleanContext): Promise<
       branch: preflight.branch,
       worktreePath: preflight.worktreePath,
       dirtyFiles: preflight.dirtyFiles,
+      ...stashInventory(preflight),
     });
   }
   if (context.input.mode !== "apply") {
@@ -181,6 +187,7 @@ export async function guardianDoneLandClean(context: LandCleanContext): Promise<
       action: "land-and-clean",
       branch: preflight.branch,
       worktreePath: preflight.worktreePath,
+      ...stashInventory(preflight),
     });
   }
 
@@ -188,7 +195,7 @@ export async function guardianDoneLandClean(context: LandCleanContext): Promise<
   let commitSafetyRef: string | null = null;
   if (preflight.dirtyFiles.length > 0) {
     const committed = await commitDirtySessionWork(context, preflight, message);
-    if (!committed.ok) return committed.result;
+    if (!committed.ok) return { ...committed.result, ...stashInventory(preflight) };
     head = committed.head;
     commitSafetyRef = committed.safetyRef;
   }
@@ -196,7 +203,7 @@ export async function guardianDoneLandClean(context: LandCleanContext): Promise<
   const baseRef = `${preflight.remote}/${preflight.baseBranch}`;
   if (await isAncestor(context.repoRoot, head, baseRef)) {
     const cleanup = await cleanupLandedSession(context, "session commit is already reachable from the remote base branch");
-    if (cleanup.ok !== true) return cleanup;
+    if (cleanup.ok !== true) return { ...cleanup, ...stashInventory(preflight) };
     const maintenance = await postFinishMaintenance(context, [{ commit: head, source: preflight.branch, reason: "landed session commit must be present on final base" }]);
     return withMaintenanceOutcome({
       ok: true,
@@ -204,6 +211,8 @@ export async function guardianDoneLandClean(context: LandCleanContext): Promise<
       action: "already-landed-clean",
       branch: preflight.branch,
       head,
+      stashCount: preflight.stashCount,
+      stashes: preflight.stashes,
       ...(commitSafetyRef ? { commit: head, commitMessage: message, commitSafetyRef, dirtyFiles: preflight.dirtyFiles } : {}),
       baseRef,
       cleanup,
@@ -213,19 +222,19 @@ export async function guardianDoneLandClean(context: LandCleanContext): Promise<
   }
   await pushBranch(context.repoRoot, preflight.remote, preflight.branch);
   const prResult = await getOrCreatePullRequest(context.repoRoot, preflight.branch, preflight.baseBranch, context.sessionId);
-  if (!prResult.ok) return prResult.result;
+  if (!prResult.ok) return { ...prResult.result, ...stashInventory(preflight) };
   if (prResult.pr.headRefOid && prResult.pr.headRefOid !== head) {
-    return blocked("open PR head does not match the session commit", { pr: prResult.pr, branch: preflight.branch, head });
+    return blocked("open PR head does not match the session commit", { pr: prResult.pr, branch: preflight.branch, head, ...stashInventory(preflight) });
   }
   const mergeResult = await mergePullRequest(context.repoRoot, prResult.pr, head, allowAdminBypass);
-  if (!mergeResult.ok) return mergeResult.result;
+  if (!mergeResult.ok) return { ...mergeResult.result, ...stashInventory(preflight) };
 
   await fetchRemote(context.repoRoot, preflight.remote);
   if (!(await isAncestor(context.repoRoot, head, baseRef))) {
-    return blocked("PR merge completed but the session commit is not reachable from the remote base branch", { pr: prResult.pr, head, baseRef });
+    return blocked("PR merge completed but the session commit is not reachable from the remote base branch", { pr: prResult.pr, head, baseRef, ...stashInventory(preflight) });
   }
   const cleanup = await cleanupLandedSession(context, "PR landed");
-  if (cleanup.ok !== true) return { ...cleanup, pr: prResult.pr };
+  if (cleanup.ok !== true) return { ...cleanup, pr: prResult.pr, ...stashInventory(preflight) };
   const maintenance = await postFinishMaintenance(context, [{ commit: head, source: preflight.branch, reason: "landed session commit must be present on final base" }]);
   return withMaintenanceOutcome({
     ok: true,
@@ -233,6 +242,8 @@ export async function guardianDoneLandClean(context: LandCleanContext): Promise<
     action: "land-and-clean",
     branch: preflight.branch,
     head,
+    stashCount: preflight.stashCount,
+    stashes: preflight.stashes,
     ...(commitSafetyRef ? { commit: head, commitMessage: message, commitSafetyRef, dirtyFiles: preflight.dirtyFiles } : {}),
     baseRef,
     pr: prResult.pr,

@@ -8,6 +8,7 @@ import { blocked, createConfirmToken, errorMessage, withDeleteReport } from "./d
 import { collectIgnoredFileFingerprint, recordAncestryPreflight } from "./delete-worktree-preflight.ts";
 import { preflightBranchOnlyDeletion } from "./delete-worktree-branch-only.ts";
 import { findTarget } from "./delete-worktree-targets.ts";
+import { hasBlockingStashInventory } from "./stash-policy.ts";
 import type { GuardianSession, WorktreeEntry } from "./types.ts";
 
 function emptyDeletePreflight(repoRoot: string, mode: unknown, deleteRequestedBranch: boolean, abandonUnmerged: boolean, allowIgnoredFiles: boolean, allowRedundantDirtyPaths: boolean): Record<string, unknown> {
@@ -108,7 +109,8 @@ async function preflightWorktreeDeletion(input: Record<string, unknown>, config:
   if (ignoredFiles.length > 0 && !allowIgnoredFiles) return blocked("worktree has ignored files", { ignoredFiles, targetPath: entry.path }, preflight);
   const stashes = await listStashes(repoRoot);
   preflight.stashCount = stashes.length;
-  if (stashes.length > 0 && config.allowStashIfUnrelated !== true) return blocked("stash inventory is non-empty", { stashes }, preflight);
+  preflight.stashes = stashes;
+  if (hasBlockingStashInventory(config, stashes)) return blocked("stash inventory is non-empty", { stashes }, preflight);
   const head = entry.head ?? await getHeadCommit(entry.path);
   preflight.head = head;
   const baseRef = ancestryBaseRef(input, config, session);

@@ -19,3 +19,10 @@ export function describeEntry(entry: unknown) {
   const item = recordValue(entry);
   return textValue(item.session_id ?? item.sessionId ?? item.branch ?? item.path ?? item.worktree_path ?? item.name ?? item.ref ?? item.command ?? entry, JSON.stringify(entry));
 }
+
+export function appendStashInventoryWarning(lines: string[], value: unknown): void {
+  const stashCount = typeof value === "number" ? value : 0;
+  if (stashCount <= 0) return;
+  lines.push(`[WARN] repository stash inventory: ${stashCount}; Guardian will not mutate stashes`);
+  lines.push("[INFO] inspect with: git stash list");
+}

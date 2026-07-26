@@ -4,6 +4,7 @@ import { isRecordLike } from "../types.ts";
 const SERVICE = "worktree-guardian";
 const MAX_STRING_LENGTH = 160;
 const SECRET_KEY_PATTERN = /(token|secret|password|passwd|authorization|cookie|api[-_]?key|credential)/i;
+const AUTHORIZATION_VALUE_PATTERN = /(?:["']authorization["']\s*:\s*(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|(["'])authorization\s*:\s*(?:\\.|(?!\1)[\s\S])*\1|\bauthorization\s*:\s*[^\r\n"']+(?=\r?\n)|\bauthorization\s*:\s*[^\s"']+(?:\s+[^\s"']+)?)/gi;
 
 function truncate(value: string) {
   if (typeof value !== "string") return value;
@@ -12,9 +13,11 @@ function truncate(value: string) {
 }
 
 function redactString(value: string) {
-  return truncate(value)
-    .replace(/(authorization:\s*)(bearer\s+)?\S+/gi, "$1$2<redacted>")
-    .replace(/(token|secret|password|passwd|api[-_]?key|cookie|credential)=([^\s&]+)/gi, "$1=<redacted>");
+  return truncate(
+    value
+      .replace(AUTHORIZATION_VALUE_PATTERN, "Authorization: <redacted>")
+      .replace(/(token|secret|password|passwd|api[-_]?key|cookie|credential)=([^\s&]+)/gi, "$1=<redacted>"),
+  );
 }
 
 function summarize(value: unknown, key = ""): unknown {

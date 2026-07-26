@@ -6,7 +6,7 @@ import { DEFAULT_CONFIG } from "../src/config.ts";
 import plugin from "../src/index.ts";
 import { getGuardianPaths, readState, recordSession } from "../src/state.ts";
 import type { GuardianSession } from "../src/types.ts";
-import { createRepoWithOrigin, git, seedSession } from "./helpers.ts";
+import { createRepoWithOrigin, git } from "./helpers.ts";
 
 type LooseRecord = Record<string, unknown>;
 
@@ -32,10 +32,6 @@ function createClient(records: Array<LooseRecord>) {
 function requireSession(session: GuardianSession | undefined): GuardianSession {
   assert.ok(session);
   return session;
-}
-
-function findSession(sessions: readonly GuardianSession[], sessionId: string): GuardianSession {
-  return requireSession(sessions.find((session) => session.session_id === sessionId));
 }
 
 async function enableLazyAutoStart(repo: string) {
@@ -133,7 +129,7 @@ test("lazy auto-start creates ownership before direct file mutation routing", as
   await enableLazyAutoStart(repo);
   const sessionID = "ses_lazy_direct_file";
   const hooks = await plugin.server({ directory: repo, worktree: repo, client: createClient([]) });
-  const output = { args: { filePath: path.join(repo, "src", "feature.ts"), content: "export {};\n" } };
+  const output = { args: { filePath: "src/feature.ts", content: "export {};\n" } };
 
   await hooks["tool.execute.before"]({ tool: "write", sessionID, callID: "call_lazy_direct_file" }, output);
 

@@ -1,4 +1,4 @@
-import { arrayValue, recordValue, shortCommit, textValue } from "./readable-output-values.ts";
+import { appendStashInventoryWarning, arrayValue, recordValue, shortCommit, textValue } from "./readable-output-values.ts";
 import { appendDoneHygieneGuidance } from "./readable-output-hygiene.ts";
 
 function statusPrefix(result: Record<string, unknown>): "[FAIL]" | "[WARN]" | "[GOOD]" {
@@ -64,12 +64,14 @@ function formatGuardianDoneAllOutput(result: Record<string, unknown>) {
   const remaining = arrayValue(result.remaining);
   const results = arrayValue(result.results);
   const cleanupPlan = recordValue(result.cleanupPlan);
+  const cleanupPreflight = recordValue(cleanupPlan.preflight);
   const cleanupCandidates = arrayValue(cleanupPlan.candidates);
   const cleanupBlockers = arrayValue(cleanupPlan.blockers);
   const lines = [
     `${statusPrefix(result)} guardian_done ${textValue(result.status)}`,
     `[INFO] lane: done-all | summary: ${formatDoneAllSummary(summary)}`,
   ];
+  appendStashInventoryWarning(lines, result.stashCount ?? cleanupPreflight.stashCount);
   const reason = textValue(result.reason, "");
   if (result.ok === false) lines.push(`[FAIL] ${reason || "guardian_done blocked"}`);
   else if (reason) lines.push(`[INFO] ${reason}`);
@@ -158,13 +160,15 @@ export function formatGuardianDoneOutput(rawResult: unknown) {
   const dirtySnapshot = recordValue(result.dirtySnapshot);
   const selectedTarget = recordValue(result.selectedTarget);
   const dirtyPaths = arrayValue(dirtySnapshot.paths ?? preflight.dirtyFiles ?? result.dirtyFiles);
+  const stashCount = preflight.stashCount ?? result.stashCount;
   const branch = preflight.currentBranch ?? result.branch;
   const baseBranch = preflight.baseBranch ?? result.baseBranch;
   const lines = [
     `${statusPrefix(result)} guardian_done ${textValue(result.status)}`,
     `[INFO] lane: ${textValue(result.lane)} | branch: ${textValue(branch)} | baseBranch: ${textValue(baseBranch)}`,
-    `[INFO] dirty: ${dirtyPaths.length} | stashes: ${Number(preflight.stashCount ?? 0)} | safetyRef: ${textValue(result.safetyRef)}`,
+    `[INFO] dirty: ${dirtyPaths.length} | stashes: ${Number(stashCount ?? 0)} | safetyRef: ${textValue(result.safetyRef)}`,
   ];
+  appendStashInventoryWarning(lines, stashCount);
   const reason = textValue(result.reason, "");
   if (result.ok === false || reason) lines.push(`[FAIL] ${reason || "guardian_done blocked"}`);
   if (typeof result.nextAction === "string") lines.push(`[INFO] nextAction: ${result.nextAction}`);

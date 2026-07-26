@@ -25,8 +25,8 @@ function isPathInside(parent: string, candidate: string) {
   return relative === "" || Boolean(relative) && !relative.startsWith("..") && !path.isAbsolute(relative);
 }
 
-function directFileMutationTargetsRepo(input: GuardCommandPayload, output: GuardCommandPayload, repoRoot: string | undefined) {
-  const pathArg = directFileMutationPathArg(input, output);
+function directFileMutationTargetsRepo(input: GuardCommandPayload, output: GuardCommandPayload, repoRoot: string | undefined, executionCwd: string) {
+  const pathArg = directFileMutationPathArg(input, output, executionCwd);
   return Boolean(pathArg && repoRoot && isPathInside(repoRoot, pathArg.value));
 }
 
@@ -57,7 +57,7 @@ export async function tryLazyStart(request: LazyStartRequest) {
     && Boolean(request.context.directory)
     && request.sessionWorktree?.terminal !== true
     && typeof request.sessionWorktree?.expectedWorktree !== "string"
-    && (directFileMutationTargetsRepo(request.input, request.output, request.context.directory) || Boolean(typeof request.command === "string" && request.command.length > 0 && !request.readOnly.allowed));
+    && (directFileMutationTargetsRepo(request.input, request.output, request.context.directory, request.executionCwd) || Boolean(typeof request.command === "string" && request.command.length > 0 && !request.readOnly.allowed));
   if (!shouldStart || !sessionId || !request.context.directory) return null;
 
   const result = await guardianStart({

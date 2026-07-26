@@ -118,6 +118,25 @@ test("hook audits rm -rf blocking to the known repo root by default", async (t) 
   assert.equal(auditedBlocks.length, 2);
 });
 
+test("hook retains non-Git destructive findings in mixed compound commands", async () => {
+  const { repo } = await createRepoWithOrigin();
+  const records: Array<LooseRecord> = [];
+  const command = "git status; rm -rf src";
+  const auditHooks = await plugin.server({ directory: repo, worktree: repo, client: createClient(records) });
+
+  await assert.doesNotReject(
+    () => auditHooks["tool.execute.before"]({ tool: "bash", callID: "call_compound_audit" }, { args: { command, cwd: repo } }),
+  );
+  assert.ok(records.find((record) => record.auditOnly === true && isLooseRecord(record.guard) && record.guard.blocked === true));
+
+  await writeGuardianConfig(repo, { commandInterceptionMode: "strict" });
+  const strictHooks = await plugin.server({ directory: repo, worktree: repo });
+  await assert.rejects(
+    () => strictHooks["tool.execute.before"]({ tool: "bash", callID: "call_compound_strict" }, { args: { command, cwd: repo } }),
+    /Worktree Guardian blocked command/,
+  );
+});
+
 test("hook scopes rm -rf blocking to the known repo root", async (t) => {
   const { repo } = await createRepoWithOrigin();
   await writeGuardianConfig(repo, { commandInterceptionMode: "strict" });

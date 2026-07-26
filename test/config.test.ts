@@ -16,7 +16,8 @@ test("config defaults are delivery-first and cleanup-conservative", () => {
   assert.equal(config.autoStartMode, "eager");
   assert.equal(config.autoFinish, false);
   assert.equal(config.autoCleanup, false);
-  assert.equal(config.allowStashIfUnrelated, false);
+  assert.equal(config.requireEmptyStashInventory, false);
+  assert.equal("allowStashIfUnrelated" in config, false);
   assert.deepEqual(config.allowDirtyPaths, []);
   assert.deepEqual(config.protectedPaths, TEMPLATE_PROTECTED_PATHS);
   assert.deepEqual(config.protectedBranches, DEFAULT_CONFIG.protectedBranches);
@@ -58,7 +59,8 @@ test("repo-local config replaces template protected paths", async () => {
   assert.equal(config.autoStartMode, "lazy");
   assert.equal(config.autoFinish, true);
   assert.equal(config.autoCleanup, false);
-  assert.equal(config.allowStashIfUnrelated, false);
+  assert.equal(config.requireEmptyStashInventory, false);
+  assert.equal("allowStashIfUnrelated" in config, false);
   assert.deepEqual(config.allowDirtyPaths, [".claude/logs/**", ".omx/**"]);
   assert.deepEqual(config.protectedPaths, [".agent-state", ".omo/cache"]);
   assert.deepEqual(config.protectedBranches, ["main", "master", "develop", "production", "release"]);
@@ -105,15 +107,17 @@ test("config initialization writes defaults once", async () => {
   assert.equal(await fs.readFile(configPath, "utf8"), `${JSON.stringify(DEFAULT_CONFIG, null, 2)}\n`);
 });
 
-test("non-object config payload is ignored at the boundary", async () => {
-  const repo = await createTempDir();
-  await fs.mkdir(path.join(repo, ".opencode"));
-  await fs.writeFile(path.join(repo, ".opencode", "worktree-guardian.json"), JSON.stringify(["create-pr"]));
+test("non-object config payloads fail closed at the boundary", async () => {
+  for (const payload of [[], null, "create-pr", 1, true]) {
+    const repo = await createTempDir();
+    await fs.mkdir(path.join(repo, ".opencode"));
+    await fs.writeFile(path.join(repo, ".opencode", "worktree-guardian.json"), JSON.stringify(payload));
 
-  const { config, loaded } = await loadConfig(repo);
-
-  assert.equal(loaded, false);
-  assert.deepEqual(config, DEFAULT_CONFIG);
+    await assert.rejects(
+      () => loadConfig(repo),
+      (error: unknown) => isRecordLike(error) && error.configErrorKind === "invalid_config_root",
+    );
+  }
 });
 
 test("invalid finish modes fail closed", () => {
@@ -122,4 +126,32 @@ test("invalid finish modes fail closed", () => {
 
 test("invalid auto-start modes fail closed", () => {
   assert.throws(() => normalizeConfig({ autoStartMode: "sometimes" }), /Unsupported/);
+});
+
+test("stash inventory strictness is explicit opt-in", () => {
+  const config = normalizeConfig({ requireEmptyStashInventory: true });
+
+  assert.equal(config.requireEmptyStashInventory, true);
+});
+
+test("retired stash relationship config does not preserve the legacy field", () => {
+  const legacyEnabled = normalizeConfig({ allowStashIfUnrelated: true });
+  const legacyDisabled = normalizeConfig({ allowStashIfUnrelated: false });
+
+  assert.equal(legacyEnabled.requireEmptyStashInventory, false);
+  assert.equal(legacyDisabled.requireEmptyStashInventory, false);
+  assert.equal("allowStashIfUnrelated" in legacyEnabled, false);
+  assert.equal("allowStashIfUnrelated" in legacyDisabled, false);
+});
+
+test("repo-local legacy stash config loads advisory policy without preserving the retired field", async () => {
+  const repo = await createTempDir();
+  await fs.mkdir(path.join(repo, ".opencode"));
+  await fs.writeFile(path.join(repo, ".opencode", "worktree-guardian.json"), JSON.stringify({ allowStashIfUnrelated: false }));
+
+  const { config, loaded } = await loadConfig(repo);
+
+  assert.equal(loaded, true);
+  assert.equal(config.requireEmptyStashInventory, false);
+  assert.equal("allowStashIfUnrelated" in config, false);
 });
