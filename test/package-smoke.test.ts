@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { expectedCodexAdapterFiles, expectedCodexSkillNames, expectedCommandAssets, expectedPackageExports, expectedPackageFiles, expectedSlashNames, expectedToolNames, legacyHygieneCommandNameParts, projectRoot, run, sortedPackPaths } from "./package-smoke-helpers.ts";
+import { createPackedConsumer, expectedCodexAdapterFiles, expectedCodexSkillNames, expectedCommandAssets, expectedPackageExports, expectedPackageFiles, expectedSlashNames, expectedToolNames, legacyHygieneCommandNameParts, projectRoot, run, sortedPackPaths } from "./package-smoke-helpers.ts";
 
 test("package smoke run helper times out hung commands", async () => {
   await assert.rejects(
@@ -23,6 +23,28 @@ test("package smoke run helper suppresses inherited coverage env", async () => {
   });
 
   assert.deepEqual(JSON.parse(result.stdout), { coverage: "", marker: "", compile: "" });
+});
+
+test("Given npm setup fails after a packed consumer temp base is created, when createPackedConsumer rejects, then it leaves no temp directory", async (t) => {
+  const tempRoot = os.tmpdir();
+  const prefix = "guardian-package-smoke-";
+  const before = new Set((await fs.readdir(tempRoot, { withFileTypes: true }))
+    .filter((entry) => entry.isDirectory() && entry.name.startsWith(prefix))
+    .map((entry) => entry.name));
+  const previousPath = process.env.PATH;
+  try {
+    process.env.PATH = "";
+    await assert.rejects(() => createPackedConsumer());
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+  }
+  const leaked = (await fs.readdir(tempRoot, { withFileTypes: true }))
+    .filter((entry) => entry.isDirectory() && entry.name.startsWith(prefix) && !before.has(entry.name))
+    .map((entry) => path.join(tempRoot, entry.name));
+  t.after(() => Promise.all(leaked.map((directory) => fs.rm(directory, { recursive: true, force: true }))));
+
+  assert.deepEqual(leaked, []);
 });
 
 test("safe node temp wrapper creates fresh coverage directories", async (t) => {
@@ -138,16 +160,9 @@ test("packed artifact installs in a clean consumer and exposes plugin contract",
   assert.equal(readme.includes('"plugin": ["opencode-worktree-guardian/server"]'), false);
   assert.equal(readme.includes('"plugin": ["opencode-worktree-guardian/tui"]'), false);
 
-  const base = await fs.mkdtemp(path.join(os.tmpdir(), "guardian-package-smoke-"));
-  t.after(() => fs.rm(base, { recursive: true, force: true }));
-  const packDir = path.join(base, "pack");
-  const consumer = path.join(base, "consumer");
-  const npmCache = path.join(base, "npm-cache");
-  await fs.mkdir(packDir, { recursive: true });
-  await fs.mkdir(consumer, { recursive: true });
-
-  const packed = await run("npm", ["pack", projectRoot, "--pack-destination", packDir, "--json", "--cache", npmCache], { cwd: base, coverage: "suppress" });
-  const [packInfo] = JSON.parse(packed.stdout);
+  const packedConsumer = await createPackedConsumer();
+  t.after(packedConsumer.cleanup);
+  const { base, consumer, packInfo } = packedConsumer;
   assert.equal(packInfo.name, "opencode-worktree-guardian");
   assert.equal(packInfo.version, "0.1.0");
   assert.deepEqual(sortedPackPaths(packInfo.files, "commands/"), [...expectedCommandAssets].sort((left, right) => left.localeCompare(right)));
@@ -174,19 +189,6 @@ test("packed artifact installs in a clean consumer and exposes plugin contract",
   assert.equal(packInfo.files.some((file: { path: string }) => file.path.startsWith("test/")), false);
   assert.equal(packInfo.files.some((file: { path: string }) => file.path.startsWith(".milestones/")), false);
   assert.equal(packInfo.files.some((file: { path: string }) => file.path === "IMPLEMENTATION_PLAN.md"), false);
-
-  await run("npm", ["init", "-y"], { cwd: consumer, coverage: "suppress" });
-  await run("npm", [
-    "install",
-    "--ignore-scripts",
-    "--no-audit",
-    "--no-fund",
-    "--package-lock=false",
-    "--cache",
-    npmCache,
-    path.join(packDir, packInfo.filename),
-    `tsx@${packageJson.dependencies.tsx}`,
-  ], { cwd: consumer, coverage: "suppress" });
 
   const smokeScript = `
     import plugin from "opencode-worktree-guardian";

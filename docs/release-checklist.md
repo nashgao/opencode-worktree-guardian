@@ -53,6 +53,7 @@ For manual QA, use a disposable Git repository only:
 5. Confirm a safe Git write is routed into the Guardian-owned worktree when ownership exists.
 6. With the default audit configuration, confirm a raw destructive command such as `git reset --hard` emits `auditOnly: true` and is not blocked.
 7. Set `commandInterceptionMode` to `strict`, then repeat the command and confirm it is blocked before mutation.
+8. Run `/guardian-hud`. Confirm it shows exactly one warning titled `Guardian HUD unavailable` with the message `The visual Guardian HUD is temporarily unavailable. Use /guardian-status instead.`, opens no dialog, and submits no prompt. Then run `/guardian-status` and confirm it still returns the normal repository inventory.
 
 Do not validate manual OpenCode behavior against a live project repository.
 
@@ -84,6 +85,7 @@ Publish only when:
 
 - all required commands pass,
 - OpenCode host smoke and manual host checks pass,
+- `/guardian-hud` shows its exact temporary warning once, opens no dialog, submits no prompt, and `/guardian-status` still returns repository inventory,
 - Codex adapter tests and manual adapter checks pass,
 - `npm pack --dry-run --json` contains exactly the intended public package surface,
 - `CHANGELOG.md` has been updated for the release without inventing unpublished history,

@@ -1,6 +1,3 @@
-import { openHud } from "./hud/Hud.tsx";
-import type { GuardianHudApi } from "./hud/Hud.tsx";
-
 type GuardianTuiCommand = {
   readonly namespace: string;
   readonly name: string;
@@ -11,7 +8,12 @@ type GuardianTuiCommand = {
   readonly run: () => void | Promise<void>;
 };
 
-export type GuardianTuiApi = GuardianHudApi & {
+export type GuardianTuiApi = {
+  readonly state: {
+    readonly path: {
+      readonly directory: string;
+    };
+  };
   readonly keymap: {
     readonly registerLayer: (input: { readonly commands: readonly GuardianTuiCommand[]; readonly bindings: readonly unknown[] }) => unknown;
   };
@@ -23,7 +25,7 @@ export type GuardianTuiApi = GuardianHudApi & {
       readonly promptAsync: (input: { readonly sessionID: string; readonly directory: string; readonly parts: readonly { readonly type: "text"; readonly text: string }[] }) => Promise<void>;
     };
   };
-  readonly ui: GuardianHudApi["ui"] & {
+  readonly ui: {
     readonly toast: (input: { readonly variant?: "info" | "success" | "warning" | "error"; readonly title?: string; readonly message: string }) => void;
   };
 };
@@ -162,10 +164,10 @@ export async function tui(api: GuardianTuiApi) {
         namespace: "palette",
         name: "guardian-hud",
         title: "Guardian: HUD",
-        desc: "Open the live Guardian worktree HUD",
+        desc: "Guardian HUD is temporarily unavailable. Use /guardian-status instead.",
         category: "Guardian",
         slashName: "guardian-hud",
-        run: () => openHud(api),
+        run: () => api.ui.toast({ variant: "warning", title: "Guardian HUD unavailable", message: "The visual Guardian HUD is temporarily unavailable. Use /guardian-status instead." }),
       },
     ],
     bindings: [],

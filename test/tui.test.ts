@@ -37,11 +37,22 @@ type RegisteredLayer = {
   bindings: readonly unknown[];
 };
 
+interface HostTuiApi {
+  readonly state: { readonly path: { readonly directory: string } };
+  readonly keymap: { readonly registerLayer: (input: RegisteredLayer) => unknown };
+  readonly route: { readonly current: { readonly name: string; readonly params?: Record<string, unknown> } };
+  readonly client: { readonly session: { readonly promptAsync: (input: unknown) => Promise<void> } };
+  readonly ui: { readonly toast: (input: unknown) => void; readonly dialog: { readonly setSize: (input: unknown) => void; readonly replace: (input: unknown) => void } };
+  readonly theme: { readonly current: { readonly text: string; readonly textMuted: string; readonly success: string; readonly warning: string; readonly error: string; readonly accent: string; readonly border: string } };
+}
+
 function createApi(routeName = "session") {
   const prompts: unknown[] = [];
   const toasts: unknown[] = [];
+  const dialogSetSizes: unknown[] = [];
+  const dialogReplacements: unknown[] = [];
   let layer: RegisteredLayer | undefined;
-  const api: GuardianTuiApi = {
+  const api: HostTuiApi = {
     keymap: {
       registerLayer(input: RegisteredLayer) {
         layer = input;
@@ -66,8 +77,12 @@ function createApi(routeName = "session") {
         toasts.push(input);
       },
       dialog: {
-        setSize() {},
-        replace() {},
+        setSize(input: unknown) {
+          dialogSetSizes.push(input);
+        },
+        replace(input: unknown) {
+          dialogReplacements.push(input);
+        },
       },
     },
     theme: {
@@ -82,13 +97,22 @@ function createApi(routeName = "session") {
       },
     },
   };
-  return { api, prompts, toasts, get layer() { return layer; } };
+  return { api, prompts, toasts, dialogSetSizes, dialogReplacements, get layer() { return layer; } };
 }
 
 test("tui plugin exports OpenCode TUI module shape", () => {
   assert.equal(id, "opencode-worktree-guardian");
   assert.equal(plugin.id, "opencode-worktree-guardian");
   assert.equal(plugin.tui, tui);
+});
+
+test("tui accepts an interface-typed host API with unused extensions", async () => {
+  const runtime = createApi();
+  const compatibleApi: GuardianTuiApi = runtime.api;
+
+  await tui(runtime.api);
+
+  assert.equal(compatibleApi.state.path.directory, "/repo");
 });
 
 test("tui plugin registers Guardian slash commands", async () => {
@@ -100,6 +124,24 @@ test("tui plugin registers Guardian slash commands", async () => {
   assert.deepEqual(runtime.layer?.commands.map((command) => command.name).sort(), expectedSlashNames);
   assert.equal(runtime.layer?.commands.every((command) => command.namespace === "palette"), true);
   assert.equal(runtime.layer?.commands.every((command) => command.category === "Guardian"), true);
+});
+
+test("Given a registered guardian-hud command, when invoked, then it warns without a prompt or dialog", async () => {
+  const runtime = createApi();
+  await tui(runtime.api);
+  const command = runtime.layer?.commands.find((candidate) => candidate.slashName === "guardian-hud");
+  assert.ok(command);
+
+  await command.run();
+
+  assert.deepEqual(runtime.toasts, [{
+    variant: "warning",
+    title: "Guardian HUD unavailable",
+    message: "The visual Guardian HUD is temporarily unavailable. Use /guardian-status instead.",
+  }]);
+  assert.equal(runtime.prompts.length, 0);
+  assert.equal(runtime.dialogSetSizes.length, 0);
+  assert.equal(runtime.dialogReplacements.length, 0);
 });
 
 test("tui slash command dispatches a Guardian prompt in the current session", async () => {
