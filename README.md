@@ -123,7 +123,9 @@ When the TUI plugin entrypoint is enabled, Guardian registers these slash comman
 - `/guardian-delete-worktree`
 - `/guardian-unblock-finish`
 
-Each command submits a prompt to the current session telling the agent to use the matching native Guardian tool. If no session is open, the command shows a warning instead of mutating anything.
+Each command except `/guardian-hud` submits a prompt to the current session telling the agent to use the matching native Guardian tool. If no session is open, those commands show a warning instead of mutating anything.
+
+`/guardian-hud` remains registered as a temporary command-compatible fallback. It shows one warning titled `Guardian HUD unavailable` with this message: `The visual Guardian HUD is temporarily unavailable. Use /guardian-status instead.` It opens no dialog and submits no prompt. Use `/guardian-status` for the normal Guardian status view.
 
 ## Packaged Markdown Commands
 
@@ -396,13 +398,13 @@ The test suite uses disposable repositories only. Do not run destructive-command
 
 ## Dependency Audit
 
-Last verified on 2026-06-12:
+Before publication, run the production dependency audit:
 
 ```text
 npm run audit:deps
-found 0 vulnerabilities
 ```
 
+The release is blocked unless this command exits successfully and reports zero vulnerabilities. This requirement does not assert the audit status of an unreleased candidate.
 
 ## Manual OpenCode Host Check
 
@@ -416,6 +418,7 @@ Suggested manual checklist:
 4. Confirm `guardian_status` is visible and returns repository inventory, including any owned worktree path.
 5. From the base repo, ask OpenCode to run an allowed write such as `git add`; confirm Guardian routes the tool execution to the owned worktree instead of mutating the base repo.
 6. Ask OpenCode to run a known destructive reset command; confirm Guardian logs it with `auditOnly: true` and does not block it. Repeat with `commandInterceptionMode: "strict"` in the disposable repo config to confirm Guardian blocks it before mutation.
+7. Run `/guardian-hud`. Confirm it shows exactly one warning titled `Guardian HUD unavailable` with the message `The visual Guardian HUD is temporarily unavailable. Use /guardian-status instead.`, opens no dialog, and submits no prompt. Then run `/guardian-status` and confirm it still returns the normal repository inventory.
 
 ## Manual Codex Adapter Check
 

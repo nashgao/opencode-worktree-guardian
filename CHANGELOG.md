@@ -11,6 +11,7 @@ All notable public-surface changes are tracked here.
 
 ### Changed
 
+- `/guardian-hud` remains registered as a temporary command-compatible fallback. It shows the warning `Guardian HUD unavailable` with `The visual Guardian HUD is temporarily unavailable. Use /guardian-status instead.`, opens no dialog, and submits no prompt. Use `/guardian-status` for the normal Guardian status view.
 - **Breaking:** Repository stash inventory is advisory by default instead of blocking every finish and cleanup operation. The misleading `allowStashIfUnrelated` key is retired and ignored; repositories that intentionally require an empty repository-wide stash inventory must set `requireEmptyStashInventory: true`. Guardian continues to inventory stashes and never mutates them. This public config/behavior change requires an explicit major-version decision before publication; this unreleased change does not update the package version.
 - Command interception now defaults to audit mode. Raw destructive command classifications, direct file routing failures, route errors, and session/worktree mismatches are logged with `auditOnly: true` and allowed to proceed by default; set `commandInterceptionMode: "strict"` in `.opencode/worktree-guardian.json` to retain the previous hard-blocking behavior.
 - Codex now matches OpenCode interception consequences: audit mode exits successfully with no blocking response, while strict mode blocks before mutation. Invalid interception configuration fails closed.
