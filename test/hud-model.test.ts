@@ -125,10 +125,11 @@ test("lists branches without worktrees with short commits", () => {
   assert.deepEqual(model.branchesWithoutWorktree, [{ name: "tooling/preserve", head: "0123456789ab" }]);
 });
 
-test("empty state yields a clean good verdict", () => {
+test("empty state yields a scoped good verdict without a repo-cleanliness claim", () => {
   const model = buildHudModel(baseInput(), FIXED);
   assert.equal(model.verdict.tone, "good");
-  assert.match(model.verdict.headline, /clean, no risks detected/);
+  assert.match(model.verdict.headline, /no Guardian risk signals/);
+  assert.doesNotMatch(model.verdict.headline, /clean, no risks detected/);
   assert.equal(model.verdict.nextAction, null);
 });
 

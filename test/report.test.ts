@@ -183,8 +183,9 @@ test("guardian report HTML renders escaped reviewable candidates separately from
   assert.match(html, /review\/&lt;img src&#61;x onerror&#61;alert\(1\)&gt;/);
   assert.match(html, /review &lt;script&gt;alert\(1\)&lt;\/script&gt; before deleting/);
   assert.match(html, /guardian_delete_paths mode&#61;plan paths&#61;\[&quot;review\/&lt;img src&#61;x onerror&#61;alert\(1\)&gt;&quot;\]/);
-  assert.match(html, /<span>Risks<\/span><strong>0<\/strong>/);
+  assert.match(html, /<span>Risks<\/span><strong>1<\/strong>/);
   assert.match(html, /<span>Hygiene Findings<\/span><strong>0<\/strong>/);
+  assert.match(html, /1 unreviewed workspace path outside Guardian cleanup rules/);
   assert.doesNotMatch(html, /<script/i);
   assert.doesNotMatch(html, /\son[a-z]+\s*=/i);
 });
