@@ -34,12 +34,14 @@ type HygieneSummary = Record<string, unknown> & {
   readonly reviewableCandidateCount: number;
   readonly reviewableShownCount: number;
   readonly reviewableOmittedCount: number;
+  readonly reviewableTotalFileCount: number;
   readonly reviewableTruncated: boolean;
 };
 
 type HygieneReviewableCandidate = {
   readonly path: string;
   readonly status: "ignored" | "untracked";
+  readonly fileCount: number;
   readonly reason: string;
   readonly source: string;
   readonly suggestedDeletePathCommand: string;

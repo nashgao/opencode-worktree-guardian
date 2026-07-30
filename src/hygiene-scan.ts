@@ -13,6 +13,7 @@ type ReviewableCandidateInput = { readonly path: string; readonly status: Hygien
 type ReviewableCandidate = {
   readonly path: string;
   readonly status: HygieneCandidateStatus;
+  readonly fileCount: number;
   readonly reason: "not matched by Guardian hygiene cleanup rules";
   readonly source: "git ls-files --others/--ignored";
   readonly suggestedDeletePathCommand: string;
@@ -127,14 +128,18 @@ function mergeReviewableStatus(current: HygieneCandidateStatus | undefined, next
 
 async function buildReviewableCandidates(repoRoot: string, candidates: readonly ReviewableCandidateInput[], blockedRoots: Set<string>, visibleLimit: number | null) {
   const collapsedByPath = new Map<string, HygieneCandidateStatus>();
+  const fileCountByPath = new Map<string, number>();
   for (const candidate of candidates) {
     const collapsedPath = await reviewablePath(repoRoot, candidate.path, blockedRoots);
     if (collapsedPath === null) continue;
     collapsedByPath.set(collapsedPath, mergeReviewableStatus(collapsedByPath.get(collapsedPath), candidate.status));
+    fileCountByPath.set(collapsedPath, (fileCountByPath.get(collapsedPath) ?? 0) + 1);
   }
   const collapsed = [...collapsedByPath.entries()]
-    .map(([candidatePath, status]) => ({ path: candidatePath, status }))
-    .sort((left, right) => left.path.localeCompare(right.path));
+    .map(([candidatePath, status]) => ({ path: candidatePath, status, fileCount: fileCountByPath.get(candidatePath) ?? 1 }))
+    // Order a truncated slice by consequence, not by name: localeCompare sorted dot-directories
+    // first, so the visible rows were reliably the smallest and the largest fell into the remainder.
+    .sort((left, right) => right.fileCount - left.fileCount || left.path.localeCompare(right.path));
   const visible = visibleLimit === null ? collapsed : collapsed.slice(0, visibleLimit);
   const reviewableCandidates: ReviewableCandidate[] = [];
   for (const candidate of visible) {
@@ -143,6 +148,7 @@ async function buildReviewableCandidates(repoRoot: string, candidates: readonly 
     reviewableCandidates.push({
       path: candidate.path,
       status: candidate.status,
+      fileCount: candidate.fileCount,
       reason: "not matched by Guardian hygiene cleanup rules",
       source: "git ls-files --others/--ignored",
       suggestedDeletePathCommand: `guardian_delete_paths mode=plan paths=${JSON.stringify([candidate.path])}${recursiveFlag}`,
@@ -150,7 +156,10 @@ async function buildReviewableCandidates(repoRoot: string, candidates: readonly 
   }
   const reviewableCandidateCount = collapsed.length;
   const reviewableShownCount = reviewableCandidates.length;
-  return { reviewableCandidates, reviewableCandidateCount, reviewableShownCount, reviewableOmittedCount: reviewableCandidateCount - reviewableShownCount, reviewableTruncated: reviewableCandidateCount > reviewableShownCount };
+  // Summed over every collapsed candidate, not the visible slice: a total cannot be truncated,
+  // so it stays correct no matter how few rows the display limit allows through.
+  const reviewableTotalFileCount = collapsed.reduce((total, candidate) => total + candidate.fileCount, 0);
+  return { reviewableCandidates, reviewableCandidateCount, reviewableShownCount, reviewableTotalFileCount, reviewableOmittedCount: reviewableCandidateCount - reviewableShownCount, reviewableTruncated: reviewableCandidateCount > reviewableShownCount };
 }
 
 async function findNestedGitRoot(repoRoot: string, candidatePath: string) {
@@ -250,7 +259,7 @@ export async function scanWorkspaceHygiene(input: Record<string, unknown> = {}) 
     const blockedReviewableRoots = new Set([...findings.map((finding) => String(finding.path)), ...exclusions.map((exclusion) => String(exclusion.path))]);
     const reviewableLimit = input.includeAllReviewableCandidates === true ? null : DEFAULT_REVIEWABLE_CANDIDATE_LIMIT;
     const reviewableSummary = await buildReviewableCandidates(repoRoot, reviewableCandidateInputs, blockedReviewableRoots, reviewableLimit);
-    const summary = { candidateCount: candidates.length, findingCount: findings.length, exclusionCount: exclusions.length, reviewableCandidateCount: reviewableSummary.reviewableCandidateCount, reviewableShownCount: reviewableSummary.reviewableShownCount, reviewableOmittedCount: reviewableSummary.reviewableOmittedCount, reviewableTruncated: reviewableSummary.reviewableTruncated, bySeverity: { warn: 0, fail: 0 } as Record<string, number>, byCategory: { "known-cleanable": 0, "nested-git": 0, suspicious: 0 } as Record<string, number> };
+    const summary = { candidateCount: candidates.length, findingCount: findings.length, exclusionCount: exclusions.length, reviewableCandidateCount: reviewableSummary.reviewableCandidateCount, reviewableShownCount: reviewableSummary.reviewableShownCount, reviewableOmittedCount: reviewableSummary.reviewableOmittedCount, reviewableTotalFileCount: reviewableSummary.reviewableTotalFileCount, reviewableTruncated: reviewableSummary.reviewableTruncated, bySeverity: { warn: 0, fail: 0 } as Record<string, number>, byCategory: { "known-cleanable": 0, "nested-git": 0, suspicious: 0 } as Record<string, number> };
     for (const finding of findings) {
       const severity = String(finding.severity);
       const category = String(finding.category);
@@ -261,6 +270,6 @@ export async function scanWorkspaceHygiene(input: Record<string, unknown> = {}) 
     return { ok: true, repoRoot, summary, findings, exclusions, reviewableCandidates: reviewableSummary.reviewableCandidates, scannedAt, suggestedCommands: ["guardian_hygiene", "guardian_status", "git status --short --ignored", ...nestedCommands] };
   } catch (error) {
     if (!(error instanceof Error)) throw error;
-    return { ok: false, status: "failed", reason: error.message, failureReason: error.message, summary: { scanFailed: true, candidateCount: 0, findingCount: 0, exclusionCount: 0, reviewableCandidateCount: 0, reviewableShownCount: 0, reviewableOmittedCount: 0, reviewableTruncated: false, bySeverity: { warn: 0, fail: 0 }, byCategory: { "known-cleanable": 0, "nested-git": 0, suspicious: 0 } }, findings: [], exclusions: [], reviewableCandidates: [], scannedAt, suggestedCommands: ["guardian_hygiene", "guardian_status"] };
+    return { ok: false, status: "failed", reason: error.message, failureReason: error.message, summary: { scanFailed: true, candidateCount: 0, findingCount: 0, exclusionCount: 0, reviewableCandidateCount: 0, reviewableShownCount: 0, reviewableOmittedCount: 0, reviewableTotalFileCount: 0, reviewableTruncated: false, bySeverity: { warn: 0, fail: 0 }, byCategory: { "known-cleanable": 0, "nested-git": 0, suspicious: 0 } }, findings: [], exclusions: [], reviewableCandidates: [], scannedAt, suggestedCommands: ["guardian_hygiene", "guardian_status"] };
   }
 }

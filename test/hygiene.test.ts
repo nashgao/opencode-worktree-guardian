@@ -189,21 +189,47 @@ test("hygiene scanner exposes reviewable scan inventory separately from cleanup 
         reviewableTruncated: true,
       },
       reviewableCandidates: [
-        { path: "aaa.txt", status: "untracked", reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["aaa.txt"]' },
-        { path: "bbb.txt", status: "untracked", reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["bbb.txt"]' },
-        { path: "ccc.txt", status: "untracked", reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["ccc.txt"]' },
-        { path: "ddd.txt", status: "untracked", reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["ddd.txt"]' },
-        { path: "eee.txt", status: "untracked", reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["eee.txt"]' },
-        { path: "fff.txt", status: "untracked", reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["fff.txt"]' },
-        { path: "ggg.txt", status: "untracked", reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["ggg.txt"]' },
-        { path: "hhh.txt", status: "untracked", reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["hhh.txt"]' },
-        { path: "iii.txt", status: "untracked", reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["iii.txt"]' },
-        { path: "jjj.txt", status: "untracked", reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["jjj.txt"]' },
-        { path: "logs", status: "ignored", reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["logs"] allowRecursive=true' },
-        { path: "plain.log", status: "ignored", reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["plain.log"]' },
+        { path: "aaa.txt", status: "untracked", fileCount: 1, reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["aaa.txt"]' },
+        { path: "bbb.txt", status: "untracked", fileCount: 1, reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["bbb.txt"]' },
+        { path: "ccc.txt", status: "untracked", fileCount: 1, reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["ccc.txt"]' },
+        { path: "ddd.txt", status: "untracked", fileCount: 1, reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["ddd.txt"]' },
+        { path: "eee.txt", status: "untracked", fileCount: 1, reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["eee.txt"]' },
+        { path: "fff.txt", status: "untracked", fileCount: 1, reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["fff.txt"]' },
+        { path: "ggg.txt", status: "untracked", fileCount: 1, reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["ggg.txt"]' },
+        { path: "hhh.txt", status: "untracked", fileCount: 1, reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["hhh.txt"]' },
+        { path: "iii.txt", status: "untracked", fileCount: 1, reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["iii.txt"]' },
+        { path: "jjj.txt", status: "untracked", fileCount: 1, reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["jjj.txt"]' },
+        { path: "logs", status: "ignored", fileCount: 1, reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["logs"] allowRecursive=true' },
+        { path: "plain.log", status: "ignored", fileCount: 1, reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["plain.log"]' },
       ],
     },
   );
+});
+
+test("reviewable truncation shows the largest candidates, not the alphabetically first", async () => {
+  const repo = await createRepo();
+  for (const name of ["aaa", "bbb", "ccc", "ddd", "eee", "fff", "ggg", "hhh", "iii", "jjj", "kkk", "lll"]) {
+    await writeArtifact(repo, `${name}.txt`);
+  }
+  for (const name of ["one", "two", "three", "four", "five"]) {
+    await writeArtifact(repo, `zzz-bulk/${name}.txt`);
+  }
+
+  const result = await scanWorkspaceHygiene({ repoRoot: repo, config: DEFAULT_CONFIG });
+  const candidates = recordField(result, "reviewableCandidates") as Array<Record<string, unknown>>;
+  const summary = result.summary as Record<string, unknown>;
+
+  assert.equal(summary.candidateCount, 17);
+  assert.equal(summary.reviewableCandidateCount, 13);
+  assert.equal(summary.reviewableShownCount, 12);
+  assert.equal(summary.reviewableOmittedCount, 1);
+  assert.equal(summary.reviewableTotalFileCount, 17);
+
+  // zzz-bulk sorts last by name and fell into the omitted remainder under the previous
+  // alphabetical slice; it must now lead the visible rows because it covers the most files.
+  assert.equal(candidates[0]?.path, "zzz-bulk");
+  assert.equal(candidates[0]?.fileCount, 5);
+  assert.ok(candidates.every((candidate) => candidate.path !== "lll.txt"));
 });
 
 test("hygiene scanner keeps reviewable delete suggestions narrow when siblings include hygiene findings", async () => {
@@ -216,7 +242,7 @@ test("hygiene scanner keeps reviewable delete suggestions narrow when siblings i
   assert.equal(result.ok, true);
   assert.deepEqual(findingPaths(result), ["foo/node-compile-cache"]);
   assert.deepEqual(recordField(result, "reviewableCandidates"), [
-    { path: "foo/ordinary.txt", status: "untracked", reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["foo/ordinary.txt"]' },
+    { path: "foo/ordinary.txt", status: "untracked", fileCount: 1, reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["foo/ordinary.txt"]' },
   ]);
 });
 
@@ -233,7 +259,7 @@ test("hygiene scanner keeps reviewable files exact under tracked source director
 
   assert.equal(result.ok, true);
   assert.deepEqual(recordField(result, "reviewableCandidates"), [
-    { path: "src/ordinary.txt", status: "ignored", reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["src/ordinary.txt"]' },
+    { path: "src/ordinary.txt", status: "ignored", fileCount: 1, reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["src/ordinary.txt"]' },
   ]);
 });
 
@@ -249,7 +275,7 @@ test("hygiene scanner keeps nested protected exclusions from suppressing reviewa
   const protectedExclusion = (result.exclusions as Array<Record<string, unknown>>).find((entry) => entry.path === "foo/node_modules");
   assert.equal(recordField(protectedExclusion ?? {}, "suggestedDeletePathCommand"), undefined);
   assert.deepEqual(recordField(result, "reviewableCandidates"), [
-    { path: "foo/ordinary.txt", status: "untracked", reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["foo/ordinary.txt"]' },
+    { path: "foo/ordinary.txt", status: "untracked", fileCount: 1, reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["foo/ordinary.txt"]' },
   ]);
 });
 

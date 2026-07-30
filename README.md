@@ -197,7 +197,7 @@ The canonical Guardian safety policy is [ADR 0001: Guardian Safety Policy](docs/
 Clean `guardian_status` keeps the readable summary short and the structured fields available in `metadata`:
 
 ```text
-[GOOD] guardian_status: 1 active session on guardian/example — clean, no risks detected.
+[GOOD] guardian_status: 1 active session on guardian/example — no Guardian risk signals (Guardian scope only; not a repo-cleanliness claim).
 [INFO] repoRoot: /repo
 [INFO] sessions: 1 | worktrees: 1 | orphaned: 0 | poisoned: 0 | dirty: 0 | stashes: 0 | safetyRefs: 0 | preservedRefs: 0 | recoveryCandidates: 0
 [INFO] active sessions: 1
@@ -290,18 +290,21 @@ Warning-heavy `guardian_recover` lists recovery facts without mutating state:
   - warn known-cleanable librarian-react: known librarian scratch artifact
   - fail nested-git test-hyperf-kafka: nested Git repository has uncommitted changes
   - warn suspicious research-dump: untracked path resembles a clone, research dump, or scratch workspace
-[WARN] reviewable candidates: 4
+[WARN] reviewable candidates: 4 | omitted: 2 | files covered: 6
+[WARN] the 2 rows below are the largest of 4 by file count; run guardian_hygiene includeAllReviewableCandidates=true to enumerate all 4
 [INFO] reviewable entries require exact-path guardian_delete_paths planning if cleanup is intended
-  - ignored logs: not matched by Guardian hygiene cleanup rules
+  - ignored logs (3 files): not matched by Guardian hygiene cleanup rules
     guardian_delete_paths mode=plan paths=["logs"] allowRecursive=true
-  - ignored plain.log: not matched by Guardian hygiene cleanup rules
+  - ignored plain.log (1 file): not matched by Guardian hygiene cleanup rules
     guardian_delete_paths mode=plan paths=["plain.log"]
 [INFO] suggested commands:
   - guardian_hygiene
   - guardian_status
 ```
 
-The structured scan result exposes the same split as `summary.candidateCount`, `summary.findingCount`, `summary.exclusionCount`, `summary.reviewableCandidateCount`, `summary.reviewableShownCount`, `summary.reviewableOmittedCount`, `summary.reviewableTruncated`, and `reviewableCandidates`. Reviewable entries are not cleanup findings, are not included in hygiene plan targets, and are not accepted by `guardian_hygiene` cleanup preflight. If a reviewable file should be deleted intentionally, plan exact-path deletion with `guardian_delete_paths mode=plan paths=["..."]`; for a reviewable directory, add `allowRecursive=true`.
+The structured scan result exposes the same split as `summary.candidateCount`, `summary.findingCount`, `summary.exclusionCount`, `summary.bySeverity`, `summary.byCategory`, `summary.reviewableCandidateCount`, `summary.reviewableShownCount`, `summary.reviewableOmittedCount`, `summary.reviewableTotalFileCount`, `summary.reviewableTruncated`, and `reviewableCandidates`. That is the complete set of `summary` keys; a failed scan adds `summary.scanFailed`.
+
+Reviewable candidates are ordered by descending `fileCount` — the number of scanned paths that collapsed into each entry — so a truncated view shows the largest entries rather than the alphabetically first. `summary.reviewableTotalFileCount` is summed over every candidate, not only the visible ones, so it stays accurate regardless of the display limit; pass `includeAllReviewableCandidates: true` to receive the untruncated list. Reviewable entries are not cleanup findings, are not included in hygiene plan targets, and are not accepted by `guardian_hygiene` cleanup preflight. If a reviewable file should be deleted intentionally, plan exact-path deletion with `guardian_delete_paths mode=plan paths=["..."]`; for a reviewable directory, add `allowRecursive=true`.
 
 `guardian_hygiene mode=plan|apply` uses a two-step confirmed cleanup flow for approved hygiene findings:
 

@@ -89,9 +89,14 @@ function collectSignals(status: LooseRecord): VerdictSignal[] {
   const orphaned = arrayValue(status.orphanedSessions).length;
   const poisoned = arrayValue(status.poisonedSessions).length;
   const externalFail = externalWorktreeFailCount(status);
-  const hygieneSummary = recordValue(recordValue(status.hygiene).summary);
+  const hygiene = recordValue(status.hygiene);
+  const hygieneSummary = recordValue(hygiene.summary);
   const hygieneFail = numberValue(recordValue(hygieneSummary.bySeverity).fail);
   const hygieneFindings = numberValue(hygieneSummary.findingCount);
+  // Excluded from findingCount by design; omitting it here rendered unreviewed paths as "clean".
+  const hygieneReviewable = numberValue(hygieneSummary.reviewableCandidateCount);
+  // A failed scan zeroes every hygiene count, so silence here must read as unknown, not clean.
+  const hygieneScanFailed = hygiene.ok === false || hygieneSummary.scanFailed === true;
 
   const dirty = arrayValue(status.dirtyFiles).length;
   const stashes = arrayValue(status.stashes).length;
@@ -105,6 +110,9 @@ function collectSignals(status: LooseRecord): VerdictSignal[] {
   }
   if (externalFail > 0) {
     signals.push({ tone: "bad", fragment: `${externalFail} worktree${plural(externalFail)} outside Guardian ownership`, nextAction: "guardian_status for paths, then guardian_delete_worktree if intended" });
+  }
+  if (hygieneScanFailed) {
+    signals.push({ tone: "warn", fragment: "workspace hygiene scan failed — cleanliness unknown", nextAction: "guardian_hygiene to re-run the scan" });
   }
   if (hygieneFail > 0) {
     const findingCount = hygieneFindings > 0 ? hygieneFindings : hygieneFail;
@@ -123,6 +131,9 @@ function collectSignals(status: LooseRecord): VerdictSignal[] {
   if (hygieneFail === 0 && hygieneFindings > 0) {
     signals.push({ tone: "warn", fragment: `${hygieneFindings} workspace hygiene finding${plural(hygieneFindings)}`, nextAction: "guardian_hygiene to review" });
   }
+  if (hygieneReviewable > 0) {
+    signals.push({ tone: "warn", fragment: `${hygieneReviewable} unreviewed workspace path${plural(hygieneReviewable)} outside Guardian cleanup rules`, nextAction: "guardian_hygiene includeAllReviewableCandidates=true to enumerate" });
+  }
 
   return signals;
 }
@@ -140,7 +151,7 @@ export function computeGuardianVerdict(rawStatus: unknown): GuardianVerdict {
   const failSignals = signals.filter((signal) => signal.tone === "bad");
   const dominant = failSignals[0] ?? signals[0];
   if (!dominant) {
-    return { tone: "good", headline: `${descriptor} — clean, no risks detected.`, nextAction: null };
+    return { tone: "good", headline: `${descriptor} — no Guardian risk signals (Guardian scope only; not a repo-cleanliness claim).`, nextAction: null };
   }
 
   const remaining = signals.length - 1;
