@@ -27,3 +27,5 @@ tsx-*/
 *.db
 .beads-credential-key
 .beads/proxieddb/
+opencode-worktree-guardian-node/
+owg-task-*/

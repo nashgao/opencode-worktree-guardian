@@ -3,7 +3,7 @@ import type { GuardianConfig, GuardianSession } from "./types.ts";
 import { splitPrimaryDirtyFiles } from "./finish-dirty-files.ts";
 import { blocked, errorMessage, withFinishReport } from "./finish-report.ts";
 import type { FinishPreflight, GuardianFinishResult, LooseRecord } from "./finish-report.ts";
-import { createSafetyRef, fetchRemote, getCurrentBranch, getDirtyFiles, getHeadCommit, getRepoRoot, isAncestor, listWorktrees, runGit, snapshotWorktreeDirtCommit, tryGit } from "./git.ts";
+import { createSafetyRef, deleteBranchAtHead, fetchRemote, getCurrentBranch, getDirtyFiles, getHeadCommit, getRepoRoot, isAncestor, listWorktrees, runGit, snapshotWorktreeDirtCommit, tryGit } from "./git.ts";
 import { recordSession } from "./state.ts";
 
 type FinishMergeToBaseContext = {
@@ -176,7 +176,24 @@ export async function finishMergeToBase({ input, repoRoot, config, session, sess
   }
 
   await runGit(repoRoot, ["worktree", "remove", currentWorktree]);
-  await runGit(repoRoot, ["branch", "-d", branch]);
+  try {
+    await deleteBranchAtHead(repoRoot, branch, commit);
+  } catch (error) {
+    if (!(error instanceof Error)) throw error;
+    const branchDeleteError = errorMessage(error);
+    await recordSession(repoRoot, config, {
+      ...session,
+      session_id: sessionId,
+      status: "finished",
+      head_commit: commit,
+      safety_refs: [...(session.safety_refs ?? []), safetyRef, ...baseWorktreeSafetyRefs],
+      deleted_worktree_path: currentWorktree,
+      deleted_branch: null,
+      branch_delete_failed: true,
+      branch_delete_error: branchDeleteError,
+    }, { event: { type: "guardian_finish_cleanup_partial", session_id: sessionId, ref: safetyRef } });
+    return withFinishReport({ ok: false, status: "partial", reason: "worktree deleted but branch deletion failed", mode, branch, commit, safetyRef, baseWorktreeSafetyRefs, cleaned: false, worktreeRemoved: true, branchDeleted: false, error: branchDeleteError }, preflight, { action: "worktree-deleted-branch-delete-failed", worktreeRemoved: true, branchDeleteError });
+  }
   await recordSession(repoRoot, config, {
     ...session,
     session_id: sessionId,

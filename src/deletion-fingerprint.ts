@@ -1,9 +1,19 @@
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { relativePath } from "./filesystem-boundaries.ts";
+import { isEnoent, relativePath } from "./filesystem-boundaries.ts";
 
 export type DeletionFingerprintEntry = Record<string, string | number>;
+
+type IgnoredFileFingerprintTestHook = {
+  readonly afterDirectoryRead: (absoluteDirectory: string) => void | Promise<void>;
+};
+
+let ignoredFileFingerprintTestHook: IgnoredFileFingerprintTestHook | undefined;
+
+export function setIgnoredFileFingerprintTestHookForTesting(hook: IgnoredFileFingerprintTestHook | undefined) {
+  ignoredFileFingerprintTestHook = hook;
+}
 
 async function collectFilesystemFingerprint(repoRoot: string, absolutePath: string) {
   const entries: DeletionFingerprintEntry[] = [];
@@ -52,7 +62,17 @@ export async function collectIgnoredFileFingerprint(worktreePath: string, ignore
     } catch {
       return;
     }
-    for (const child of children) await addEntry(`${normalized}${child}${(await fs.stat(path.join(absoluteDir, child))).isDirectory() ? "/" : ""}`);
+    await ignoredFileFingerprintTestHook?.afterDirectoryRead(absoluteDir);
+    for (const child of children) {
+      let childIsDirectory: boolean;
+      try {
+        childIsDirectory = (await fs.stat(path.join(absoluteDir, child))).isDirectory();
+      } catch (error) {
+        if (isEnoent(error)) continue;
+        throw error;
+      }
+      await addEntry(`${normalized}${child}${childIsDirectory ? "/" : ""}`);
+    }
   }
   for (const ignoredFile of ignoredFiles) await addEntry(ignoredFile);
   return [...entries].sort();
