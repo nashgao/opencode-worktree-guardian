@@ -7,7 +7,7 @@ const execFileAsync = promisify(execFile);
 const authoredRoots = ["src", "test", "scripts"];
 const forbiddenExtensions = new Set([".js", ".mjs", ".cjs"]);
 const allowedAuthoredJavaScript = new Set(["scripts/with-safe-node-temp.mjs"]);
-const commandTimeoutMs = 10 * 60 * 1000;
+const commandTimeoutMs = 900000;
 const commands: Array<[string, string[]]> = [
   ["npm", ["run", "verify"]],
   ["npm", ["run", "audit:deps"]],

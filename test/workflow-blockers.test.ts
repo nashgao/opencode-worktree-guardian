@@ -11,9 +11,22 @@ import {
   guardianFinishWorkflow,
   path,
   pathExists,
-  test,
-  workflowResult,
+  test, workflowResult,
 } from "./workflow-test-support.js";
+import { guardianDone } from "../src/done.ts";
+import { isRecordLike } from "../src/types.ts";
+import { installFakeGh } from "./delete-fixtures.ts";
+import { makeAlreadyLandedDirtySession, rescueMutationSurface } from "./helpers.ts";
+
+function requireRecord(value: unknown, name: string): Record<string, unknown> {
+  if (isRecordLike(value)) return value;
+  throw new TypeError(`${name} must be an object`);
+}
+
+function requireString(value: unknown, name: string): string {
+  if (typeof value === "string" && value.length > 0) return value;
+  throw new TypeError(`${name} must be a non-empty string`);
+}
 
 test("guardian_finish_workflow blocks stale workflow tokens after base ref advances", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
@@ -30,7 +43,7 @@ test("guardian_finish_workflow blocks stale workflow tokens after base ref advan
   await git(repo, ["commit", "-m", "advance base"]);
   await git(repo, ["push", "origin", "main"]);
 
-  const apply = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "apply", confirmToken: plan.confirmToken }));
+  const apply = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "apply", confirm: true, confirmToken: plan.confirmToken }));
 
   assert.equal(apply.ok, false);
   assert.equal(apply.status, "blocked");
@@ -64,7 +77,7 @@ test("guardian_finish_workflow cleans safe candidates while reporting dirty Guar
   assert.equal(plan.finalPostflight?.ok, false);
   assert.equal(plan.remaining.some((entry) => entry.kind === "final-postflight"), true);
 
-  const apply = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "apply", confirmToken: plan.confirmToken }));
+  const apply = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "apply", confirm: true, confirmToken: plan.confirmToken }));
   assert.equal(apply.ok, false);
   assert.equal(apply.status, "partial");
   assert.match(String(apply.reason), /safe cleanup completed/);
@@ -162,7 +175,7 @@ test("guardian_finish_workflow blocks mismatched confirm tokens", async (t) => {
   const worktreePath = path.join(repo, ".worktrees", path.basename(repo), "workflow-token-mismatch");
   await git(repo, ["worktree", "add", worktreePath, branch]);
 
-  const apply = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "apply", confirmToken: "not-the-token" }));
+  const apply = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "apply", confirm: true, confirmToken: "not-the-token" }));
 
   assert.equal(apply.ok, false);
   assert.equal(apply.status, "blocked");
@@ -222,7 +235,7 @@ test("guardian_finish_workflow blocks merged worktrees with ignored files unless
   assert.equal(plan.candidates.length, 1);
   assert.equal(plan.candidates[0].branch, branch);
 
-  const apply = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "apply", confirmToken: plan.confirmToken, allowIgnoredFiles: true }));
+  const apply = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "apply", confirm: true, confirmToken: plan.confirmToken, allowIgnoredFiles: true }));
 
   assert.equal(apply.ok, true);
   assert.equal(apply.status, "cleaned");
@@ -231,4 +244,53 @@ test("guardian_finish_workflow blocks merged worktrees with ignored files unless
   assert.equal(apply.results[0].branchDeleted, true);
   await assert.rejects(() => fs.access(worktreePath));
   await assert.rejects(() => git(repo, ["rev-parse", "--verify", branch]));
+});
+
+test("guardian_done stale no-message redundant-dirty token blocks before fetch without mutation", async (t) => {
+  // Given
+  const fixture = await makeAlreadyLandedDirtySession("ses_done_redundant_dirty_stale_local");
+  t.after(() => fs.rm(fixture.base, { recursive: true, force: true }));
+  const fakeGh = await installFakeGh(t, { repo: fixture.repo, branch: fixture.branch });
+  const request = { repoRoot: fixture.repo, cwd: fixture.worktree, sessionId: fixture.sessionId, timestamp: "20260731T100000", config: DEFAULT_CONFIG };
+  const plan = requireRecord(await guardianDone({ ...request, mode: "plan" }), "plan");
+  await fs.writeFile(path.join(fixture.worktree, fixture.featureFile), "local token drift\n", "utf8");
+  await fs.rm(path.join(fixture.repo, ".git", "FETCH_HEAD"), { force: true });
+  const before = await rescueMutationSurface(fixture.repo);
+
+  // When
+  const result = requireRecord(await guardianDone({ ...request, mode: "apply", confirm: true, confirmToken: requireString(plan.confirmToken, "plan.confirmToken") }), "result");
+
+  // Then
+  assert.equal(result.ok, false, JSON.stringify(result));
+  assert.equal(result.status, "blocked");
+  assert.match(requireString(result.reason, "result.reason"), /plan changed/);
+  assert.deepEqual(await rescueMutationSurface(fixture.repo), before);
+  assert.equal(await fs.access(fakeGh.logPath).then(() => true, () => false), false);
+  assert.equal(await fs.access(fixture.worktree).then(() => true, () => false), true);
+  await git(fixture.repo, ["rev-parse", "--verify", `refs/heads/${fixture.branch}`]);
+});
+
+test("guardian_done missing no-message redundant-dirty token blocks before fetch without mutation", async (t) => {
+  // Given
+  const fixture = await makeAlreadyLandedDirtySession("ses_done_redundant_dirty_missing_token");
+  t.after(() => fs.rm(fixture.base, { recursive: true, force: true }));
+  const fakeGh = await installFakeGh(t, { repo: fixture.repo, branch: fixture.branch });
+  const request = { repoRoot: fixture.repo, cwd: fixture.worktree, sessionId: fixture.sessionId, timestamp: "20260731T100050", config: DEFAULT_CONFIG };
+  const plan = requireRecord(await guardianDone({ ...request, mode: "plan" }), "plan");
+  assert.equal(plan.action, "already-landed-clean");
+  await fs.rm(path.join(fixture.repo, ".git", "FETCH_HEAD"), { force: true });
+  const before = await rescueMutationSurface(fixture.repo);
+
+  // When
+  const result = requireRecord(await guardianDone({ ...request, mode: "apply", confirm: true }), "result");
+
+  // Then
+  assert.equal(result.ok, false, JSON.stringify(result));
+  assert.equal(result.status, "blocked");
+  assert.match(requireString(result.reason, "result.reason"), /plan changed/);
+  assert.equal(result.tokenMatched, false);
+  assert.deepEqual(await rescueMutationSurface(fixture.repo), before);
+  assert.equal(await fs.access(fakeGh.logPath).then(() => true, () => false), false);
+  assert.equal(await fs.access(fixture.worktree).then(() => true, () => false), true);
+  await git(fixture.repo, ["rev-parse", "--verify", `refs/heads/${fixture.branch}`]);
 });

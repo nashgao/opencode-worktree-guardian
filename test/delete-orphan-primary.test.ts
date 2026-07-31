@@ -14,6 +14,7 @@ import {
   test,
   worktreePaths,
 } from "./delete-fixtures.js";
+import { createRef, createSafetyRef } from "../src/git.ts";
 
 test("abandonUnmerged=true abandons an unmerged Guardian orphan branch when the recorded worktree is absent", async () => {
   const { base, repo } = await createRepoWithOrigin();
@@ -233,4 +234,39 @@ test("deleteBranch=true plans stale branch cleanup from deleted sessionId", asyn
   assert.equal(session.deleted_worktree_path, absentWorktree);
   assert.equal(session.deleted_branch, branch);
   assert.equal(session.branch_only_delete, true);
+});
+
+test("branch-only deletion blocks a non-protected symbolic branch ref before planning", async () => {
+  const { base, repo } = await createRepoWithOrigin();
+  test.after(() => fs.rm(base, { recursive: true, force: true }));
+  const branch = "guardian/symbolic-delete-target";
+  const protectedBranch = "main";
+  await git(repo, ["branch", branch, protectedBranch]);
+  await git(repo, ["symbolic-ref", `refs/heads/${branch}`, `refs/heads/${protectedBranch}`]);
+
+  const result = await deleteWorktree({ repoRoot: repo, cwd: repo, mode: "plan", branch, deleteBranch: true, config: DEFAULT_CONFIG });
+
+  assert.equal(result.ok, false, JSON.stringify(result));
+  assert.equal(result.status, "blocked");
+  assert.match(String(result.reason), /symbolic branch ref/i);
+  assert.equal((await git(repo, ["symbolic-ref", "--no-recurse", `refs/heads/${branch}`])).stdout, `refs/heads/${protectedBranch}`);
+  assert.equal(await branchExists(repo, protectedBranch), true);
+});
+
+test("create-only ref writes reject symbolic targets without mutating their referent", async () => {
+  const { base, repo } = await createRepoWithOrigin();
+  test.after(() => fs.rm(base, { recursive: true, force: true }));
+  const protectedRef = "refs/heads/main";
+  const protectedHead = (await git(repo, ["rev-parse", protectedRef])).stdout;
+  const genericRef = "refs/opencode-guardian/create-ref-symref";
+  const safetyRef = "refs/opencode-guardian/create-safety-ref-symref";
+  await git(repo, ["symbolic-ref", genericRef, protectedRef]);
+  await git(repo, ["symbolic-ref", safetyRef, protectedRef]);
+
+  await assert.rejects(createRef(repo, genericRef, protectedHead));
+  await assert.rejects(createSafetyRef(repo, { ref: safetyRef, commit: protectedHead }));
+
+  assert.equal((await git(repo, ["symbolic-ref", "--no-recurse", genericRef])).stdout, protectedRef);
+  assert.equal((await git(repo, ["symbolic-ref", "--no-recurse", safetyRef])).stdout, protectedRef);
+  assert.equal((await git(repo, ["rev-parse", protectedRef])).stdout, protectedHead);
 });

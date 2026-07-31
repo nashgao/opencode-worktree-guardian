@@ -7,7 +7,8 @@ import { guardianDone } from "../src/done.ts";
 import { formatGuardianOutput } from "../src/plugin/readable-output.ts";
 import { guardianStart } from "../src/start.ts";
 import { isRecordLike } from "../src/types.ts";
-import { createRepoWithOrigin, git, installFakeGh } from "./helpers.ts";
+import { createRepoWithOrigin, git } from "./helpers.ts";
+import { installFakeGh } from "./delete-fixtures.ts";
 
 function requireRecord(value: unknown, name: string): Record<string, unknown> {
   if (isRecordLike(value)) return value;
@@ -49,15 +50,15 @@ test("guardian_done apply lands the session PR and removes its stale worktree an
   const head = (await git(worktree, ["rev-parse", "HEAD"])).stdout.trim();
   const fakeGh = await installFakeGh(t, { repo, branch, head });
 
-  const result = await guardianDone({
+  const request = {
     repoRoot: repo,
     cwd: worktree,
     sessionId,
-    mode: "apply",
-    confirm: true,
     timestamp: "2026-06-19T00:00:00.000Z",
     config: DEFAULT_CONFIG,
-  });
+  };
+  const plan = requireRecord(await guardianDone({ ...request, mode: "plan" }), "plan");
+  const result = await guardianDone({ ...request, mode: "apply", confirm: true, confirmToken: requireString(plan.confirmToken, "plan.confirmToken") });
 
   assert.equal(result.ok, true);
   assert.equal(result.status, "landed-and-cleaned");
@@ -99,7 +100,7 @@ test("guardian_done session apply retains advisory stash inventory", async (t) =
   await installFakeGh(t, { repo, branch, head });
 
   const plan = await guardianDone({ repoRoot: repo, cwd: worktree, sessionId, mode: "plan", config: DEFAULT_CONFIG });
-  const result = await guardianDone({ repoRoot: repo, cwd: worktree, sessionId, mode: "apply", confirm: true, config: DEFAULT_CONFIG });
+  const result = await guardianDone({ repoRoot: repo, cwd: worktree, sessionId, mode: "apply", confirm: true, confirmToken: requireString(plan.confirmToken, "plan.confirmToken"), config: DEFAULT_CONFIG });
 
   assert.equal(plan.ok, true);
   assert.equal(plan.status, "planned");
@@ -157,16 +158,16 @@ test("guardian_done apply commits dirty session work before landing and cleanup"
   await fs.writeFile(path.join(worktree, "dirty-session.txt"), "committed by guardian_done\n", "utf8");
   const fakeGh = await installFakeGh(t, { repo, branch, dynamicHead: true });
 
-  const result = await guardianDone({
+  const request = {
     repoRoot: repo,
     cwd: worktree,
     sessionId,
-    mode: "apply",
-    confirm: true,
     commitMessage,
     timestamp: "2026-06-19T00:00:00.000Z",
     config: DEFAULT_CONFIG,
-  });
+  };
+  const plan = requireRecord(await guardianDone({ ...request, mode: "plan" }), "plan");
+  const result = await guardianDone({ ...request, mode: "apply", confirm: true, confirmToken: requireString(plan.confirmToken, "plan.confirmToken") });
 
   assert.equal(result.ok, true);
   assert.equal(result.status, "landed-and-cleaned");
@@ -216,15 +217,15 @@ test("guardian_done active-session apply cleans unrelated safe cleanup candidate
   const head = (await git(worktree, ["rev-parse", "HEAD"])).stdout.trim();
   await installFakeGh(t, { repo, branch, head });
 
-  const result = await guardianDone({
+  const request = {
     repoRoot: repo,
     cwd: worktree,
     sessionId,
-    mode: "apply",
-    confirm: true,
     timestamp: "2026-06-19T00:00:00.000Z",
     config: DEFAULT_CONFIG,
-  });
+  };
+  const plan = requireRecord(await guardianDone({ ...request, mode: "plan" }), "plan");
+  const result = await guardianDone({ ...request, mode: "apply", confirm: true, confirmToken: requireString(plan.confirmToken, "plan.confirmToken") });
 
   assert.equal(result.ok, true, JSON.stringify(result));
   assert.equal(result.status, "landed-and-cleaned");
@@ -242,4 +243,37 @@ test("guardian_done active-session apply cleans unrelated safe cleanup candidate
   assert.equal(await remoteBranchExists(repo, branch), false);
   await assert.rejects(fs.access(staleWorktree));
   await assert.rejects(git(repo, ["rev-parse", "--verify", `refs/heads/${staleBranch}`]));
+});
+
+test("guardian_done preserves the session when a PR merge advances base beyond the approved head", async (t) => {
+  // Given
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const sessionId = "land-clean-unapproved-base-descendant";
+  const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId, taskName: "unapproved base descendant", createWorktree: true, config: DEFAULT_CONFIG });
+  const session = requireRecord(started.session, "started.session");
+  const worktree = requireString(session.worktree_path, "started.session.worktree_path");
+  const branch = requireString(session.branch, "started.session.branch");
+  await fs.writeFile(path.join(worktree, "feature.txt"), "feature\n", "utf8");
+  await git(worktree, ["add", "feature.txt"]);
+  await git(worktree, ["commit", "-m", "add approved feature"]);
+  const hooksPath = path.resolve(repo, (await git(repo, ["rev-parse", "--git-path", "hooks"])).stdout);
+  await fs.mkdir(hooksPath, { recursive: true });
+  const hookPath = path.join(hooksPath, "post-merge");
+  await fs.writeFile(hookPath, "#!/bin/sh\nset -eu\nprintf 'unapproved\\n' > unapproved.txt\ngit add -- unapproved.txt\ngit commit -m 'unapproved base advance' >/dev/null\n", "utf8");
+  await fs.chmod(hookPath, 0o755);
+  await installFakeGh(t, { repo, branch, dynamicHead: true });
+  const request = { repoRoot: repo, cwd: worktree, sessionId, config: DEFAULT_CONFIG };
+  const plan = requireRecord(await guardianDone({ ...request, mode: "plan" }), "plan");
+
+  // When
+  const result = await guardianDone({ ...request, mode: "apply", confirm: true, confirmToken: requireString(plan.confirmToken, "plan.confirmToken") });
+
+  // Then
+  assert.equal(result.ok, false, JSON.stringify(result));
+  assert.equal(result.status, "blocked");
+  assert.match(requireString(result.reason, "result.reason"), /approved topology/);
+  await git(repo, ["cat-file", "-e", "origin/main:unapproved.txt"]);
+  await fs.access(worktree);
+  await git(repo, ["rev-parse", "--verify", `refs/heads/${branch}`]);
 });

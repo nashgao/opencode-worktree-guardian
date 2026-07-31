@@ -9,7 +9,7 @@ import { isInside } from "./workflow-candidates.ts";
 // resets) when base is checked out nowhere, is dirty, or has diverged - no force, no merge commit.
 export async function syncLocalBase(repoRoot: string, config: Record<string, unknown>): Promise<Record<string, unknown>> {
   const base = await resolveBaseRef(repoRoot, config);
-  const { localBaseBranch, baseRef } = base;
+  const { localBaseBranch, baseRef, authorityRef } = base;
   try {
     await fetchRemote(repoRoot, base.remote);
   } catch (error) {
@@ -17,7 +17,7 @@ export async function syncLocalBase(repoRoot: string, config: Record<string, unk
   }
   let remoteOid: string;
   try {
-    remoteOid = await getRefCommit(repoRoot, baseRef);
+    remoteOid = await getRefCommit(repoRoot, authorityRef);
   } catch (error) {
     return { ok: false, baseBranch: localBaseBranch, baseRef, configuredBaseRef: base.configuredBaseRef, baseRefSource: base.source, reason: `could not resolve ${baseRef}`, error: error instanceof Error ? error.message : String(error) };
   }
@@ -28,11 +28,11 @@ export async function syncLocalBase(repoRoot: string, config: Record<string, unk
   const guardianRoot = path.resolve(repoRoot, expandWorktreeRoot(String(config.worktreeRoot), repoRoot));
   const dirty = (await getDirtyFiles(baseWorktree.path)).filter((file) => !isInside(path.resolve(baseWorktree.path, file.replace(/\/$/, "")), guardianRoot));
   if (dirty.length > 0) return { ok: false, baseBranch: localBaseBranch, baseRef, configuredBaseRef: base.configuredBaseRef, baseRefSource: base.source, reason: `${localBaseBranch} worktree has uncommitted changes; skipped local fast-forward`, dirtyFileCount: dirty.length, worktreePath: baseWorktree.path };
-  if (localOid && !(await isAncestor(repoRoot, localOid, baseRef))) {
+  if (localOid && !(await isAncestor(repoRoot, localOid, authorityRef))) {
     return { ok: false, baseBranch: localBaseBranch, baseRef, configuredBaseRef: base.configuredBaseRef, baseRefSource: base.source, reason: `local ${localBaseBranch} has diverged from ${baseRef}; skipped local fast-forward`, localHead: localOid, remoteHead: remoteOid, worktreePath: baseWorktree.path };
   }
   try {
-    await runGit(baseWorktree.path, ["merge", "--ff-only", baseRef]);
+    await runGit(baseWorktree.path, ["merge", "--ff-only", authorityRef]);
   } catch (error) {
     return { ok: false, baseBranch: localBaseBranch, baseRef, configuredBaseRef: base.configuredBaseRef, baseRefSource: base.source, reason: "git merge --ff-only failed", error: error instanceof Error ? error.message : String(error), worktreePath: baseWorktree.path };
   }

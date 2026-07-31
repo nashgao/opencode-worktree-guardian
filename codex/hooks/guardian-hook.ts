@@ -50,15 +50,16 @@ function planCacheKey(name: string, toolArgs: Record<string, unknown>): string {
     sessionId: typeof toolArgs["sessionId"] === "string" ? toolArgs["sessionId"] : "", repoRoot: typeof toolArgs["repoRoot"] === "string" ? toolArgs["repoRoot"] : "", cwd: typeof toolArgs["cwd"] === "string" ? toolArgs["cwd"] : "",
     commitMessage: typeof toolArgs["commitMessage"] === "string" ? toolArgs["commitMessage"] : "", finishMode: typeof toolArgs["finishMode"] === "string" ? toolArgs["finishMode"] : "", action: typeof toolArgs["action"] === "string" ? toolArgs["action"] : "",
     allowTracked: toolArgs["allowTracked"] === true, allowRecursive: toolArgs["allowRecursive"] === true, allowDirtyNestedGit: toolArgs["allowDirtyNestedGit"] === true,
-    primary: toolArgs["primary"] === true,
+    rescue: toolArgs["rescue"] === true, primary: toolArgs["primary"] === true,
     deleteBranch: toolArgs["deleteBranch"] === true, abandonUnmerged: toolArgs["abandonUnmerged"] === true, allowIgnoredFiles: toolArgs["allowIgnoredFiles"] === true,
+    allowAdminBypass: toolArgs["allowAdminBypass"] === true, timestamp: typeof toolArgs["timestamp"] === "string" ? toolArgs["timestamp"] : "",
   });
 }
 
 function shouldUseCachedPlanToken(name: string, toolArgs: Record<string, unknown>): boolean {
   if (toolArgs["mode"] !== "apply") return false;
   if (name === "guardian_delete_paths" || name === "guardian_hygiene") return toolArgs["confirmDelete"] === true;
-  return (name === "guardian_done" || name === "guardian_finish_workflow" || name === "guardian_goal") && (toolArgs["confirm"] === true || toolArgs["confirmDelete"] === true);
+  return (name === "guardian_done" || name === "guardian_finish_workflow" || name === "guardian_goal") && toolArgs["confirm"] === true;
 }
 
 function isPlaceholderConfirmToken(value: unknown): boolean {
@@ -99,7 +100,7 @@ function maybeInjectPlanConfirmToken(name: string, toolArgs: Record<string, unkn
 }
 
 function isCacheablePlanStatus(status: unknown): boolean {
-  return status === "planned" || status === "planned-partial";
+  return status === "planned" || status === "planned-partial" || status === "rescue-planned";
 }
 
 function rememberPlanConfirmToken(name: string, toolArgs: Record<string, unknown>, result: Record<string, unknown>, cache: Map<string, string>): boolean {

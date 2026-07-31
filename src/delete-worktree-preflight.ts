@@ -4,9 +4,9 @@ import { errorMessage } from "./delete-worktree-report.ts";
 
 export { collectIgnoredFileFingerprint };
 
-export async function recordAncestryPreflight(repoRoot: string, head: string, baseRef: string, preflight: Record<string, unknown>) {
-  preflight.ancestryRef = baseRef;
-  const proven = await isAncestor(repoRoot, head, baseRef);
+export async function recordAncestryPreflight(repoRoot: string, head: string, baseAuthorityRef: string, preflight: Record<string, unknown>) {
+  if (typeof preflight.ancestryRef !== "string") preflight.ancestryRef = baseAuthorityRef;
+  const proven = await isAncestor(repoRoot, head, baseAuthorityRef);
   preflight.ancestryProven = proven;
   if (proven) {
     preflight.unmergedCommits = [];
@@ -15,8 +15,9 @@ export async function recordAncestryPreflight(repoRoot: string, head: string, ba
   }
   let unmergedCommits: { commit: string; subject: string | undefined }[] = [];
   try {
-    unmergedCommits = await listUnmergedCommits(repoRoot, head, baseRef);
+    unmergedCommits = await listUnmergedCommits(repoRoot, head, baseAuthorityRef);
   } catch (error) {
+    if (!(error instanceof Error)) throw error;
     preflight.unmergedCommitError = errorMessage(error);
   }
   preflight.unmergedCommits = unmergedCommits;

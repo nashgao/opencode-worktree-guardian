@@ -15,6 +15,48 @@ import {
   test,
   worktreePaths,
 } from "./delete-fixtures.js";
+import { guardianHygiene, scanWorkspaceHygiene } from "../src/hygiene.ts";
+import { createRepo } from "./helpers.ts";
+
+function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null; }
+
+function pathsFromRecords(records: unknown) {
+  if (!Array.isArray(records)) {
+    throw new TypeError("expected records array");
+  }
+  return records.map((entry) => {
+    if (!isRecord(entry)) {
+      throw new TypeError("expected record entry");
+    }
+    return entry.path;
+  }).sort();
+}
+
+function hasFatalBlocker(records: unknown, predicate: (entry: Record<string, unknown>) => boolean) {
+  if (!Array.isArray(records)) {
+    throw new TypeError("expected blocker records array");
+  }
+  return records.some((entry) => {
+    if (!isRecord(entry)) {
+      throw new TypeError("expected blocker record entry");
+    }
+    return entry.fatal === true && predicate(entry);
+  });
+}
+
+async function pathExists(candidate: string) { return fs.access(candidate).then(() => true, () => false); }
+
+async function createDirtyNestedRepository(repo: string, relative: string) {
+  const nested = path.join(repo, relative);
+  await fs.mkdir(nested, { recursive: true });
+  await git(nested, ["init", "-b", "main"]);
+  await git(nested, ["config", "user.email", "guardian@example.test"]);
+  await git(nested, ["config", "user.name", "Guardian Test"]);
+  await fs.writeFile(path.join(nested, "README.md"), "nested\n");
+  await git(nested, ["add", "README.md"]);
+  await git(nested, ["commit", "-m", "nested initial"]);
+  await fs.writeFile(path.join(nested, "dirty.txt"), "dirty\n"); return nested;
+}
 
 test("abandonUnmerged=true is required for unmerged stale branch deletion", async () => {
   const { base, repo } = await createRepoWithOrigin();
@@ -179,6 +221,29 @@ test("apply blocks when ignored target files change after allowIgnoredFiles plan
   assertNoExpectedToken(result);
   assert.equal((await worktreePaths(repo)).includes(start.session.worktree_path), true);
   assert.equal(await branchExists(repo, "guardian/delete-ignored-token"), true);
+});
+
+test("hygiene cleanup blocks an allowed same-path finding when its dirty nested Git finding is denied", async () => {
+  const repo = await createRepo();
+  const parent = "guardian-same-path";
+  await fs.mkdir(path.join(repo, parent), { recursive: true });
+  await fs.writeFile(path.join(repo, parent, "marker.txt"), "artifact\n");
+  await createDirtyNestedRepository(repo, `${parent}/checkout`);
+
+  const scan = await scanWorkspaceHygiene({ repoRoot: repo, config: DEFAULT_CONFIG });
+  const categories = (scan.findings as Array<Record<string, unknown>>)
+    .filter((finding) => finding.path === parent)
+    .map((finding) => finding.category)
+    .sort();
+  const plan = await guardianHygiene({ repoRoot: repo, config: DEFAULT_CONFIG, mode: "plan", cleanupPaths: [parent], allowCategories: ["suspicious"] });
+
+  assert.deepEqual(categories, ["nested-git", "suspicious"]);
+  assert.equal(plan.ok, false);
+  assert.equal(plan.status, "blocked");
+  assert.equal(plan.confirmToken, undefined);
+  assert.deepEqual(pathsFromRecords(plan.targets), []);
+  assert.equal(hasFatalBlocker(plan.blockers, (blocker) => blocker.path === parent && blocker.category === "nested-git" && /not allowed/.test(String(blocker.reason))), true);
+  assert.equal(await pathExists(path.join(repo, parent)), true);
 });
 
 test("deleteBranch=true reports partial success when branch deletion fails after worktree removal", async () => {

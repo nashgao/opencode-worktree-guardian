@@ -54,6 +54,7 @@ export async function runFinalCleanupPostflight(input: Record<string, unknown> =
   const blockers: FinalPostflightBlocker[] = [];
   const resolved = await resolveBaseRef(repoRoot, config);
   const baseRef = resolved.baseRef;
+  const baseAuthorityRef = resolved.authorityRef;
   const baseBranch = resolved.localBaseBranch;
   const configuredBaseBranch = typeof input.baseBranch === "string" && input.baseBranch.length > 0
     ? input.baseBranch
@@ -65,7 +66,7 @@ export async function runFinalCleanupPostflight(input: Record<string, unknown> =
   const allowedWorktreeBranches = new Set([baseBranch, ...stringArray(input.allowedWorktreeBranches), ...stringArray(input.allowedLocalBranches)]);
 
   await fetchRemotePrune(repoRoot, resolved.remote);
-  const baseHead = await getRefCommit(repoRoot, baseRef);
+  const baseHead = await getRefCommit(repoRoot, baseAuthorityRef);
   const branches = await listBranches(repoRoot);
   const worktrees = await listWorktrees(repoRoot);
   const remoteBranches = await listRemoteBranches(repoRoot, resolved.remote);
@@ -95,7 +96,7 @@ export async function runFinalCleanupPostflight(input: Record<string, unknown> =
 
   const droppedCommits = [];
   for (const required of requiredCommits) {
-    const reachable = await isAncestor(repoRoot, required.commit, baseRef);
+    const reachable = await isAncestor(repoRoot, required.commit, baseAuthorityRef);
     if (reachable) continue;
     const refs = safetyRefs.filter((ref) => ref.commit === required.commit).map((ref) => ref.name);
     const dropped = { ...required, baseRef, safetyRefs: refs, safetyOnly: refs.length > 0 };

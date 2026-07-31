@@ -1,4 +1,5 @@
 import path from "node:path";
+import { samePathOnDisk } from "../done-shared.ts";
 import { getRepoRoot } from "../git.ts";
 import { isTerminalSession } from "../lifecycle.ts";
 import { checkpointSession, getGuardianPaths, readState } from "../state.ts";
@@ -30,7 +31,7 @@ export async function recordLastSafeState(input: GuardianToolInput = {}): Promis
   if (existing.status !== "active") return { ok: true, status: "skipped", reason: `session ${sessionId} is not active`, session: existing };
   const recordedWorktree = typeof existing.worktree_path === "string" ? existing.worktree_path : null;
   if (!recordedWorktree) return { ok: true, status: "skipped", reason: `session ${sessionId} has no recorded worktree`, session: existing };
-  if (path.resolve(recordedWorktree) === path.resolve(repoRoot)) {
+  if (await samePathOnDisk(recordedWorktree, repoRoot)) {
     return { ok: true, status: "skipped", reason: `session ${sessionId} is recorded on the primary repository worktree; rerun guardian_start with createWorktree=true`, session: existing };
   }
   const protectedBranches = Array.isArray(config.protectedBranches) ? config.protectedBranches : [];

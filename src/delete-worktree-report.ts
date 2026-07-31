@@ -74,6 +74,7 @@ export function createConfirmToken(preflight: Record<string, unknown>) {
     allowRedundantDirtyPaths: preflight.allowRedundantDirtyPaths === true,
     ignoredFiles: preflight.ignoredFiles ?? [],
     ignoredFileFingerprint: preflight.ignoredFileFingerprint ?? [],
+    safetyRef: preflight.safetyRef ?? null,
     baseRef: preflight.baseRef ?? null,
     baseRefOid: preflight.baseRefOid ?? null,
     redundantDirtyProofs: preflight.redundantDirtyProofs ?? [],

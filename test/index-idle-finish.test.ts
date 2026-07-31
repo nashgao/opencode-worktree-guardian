@@ -3,12 +3,38 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { DEFAULT_CONFIG } from "../src/config.ts";
+import { guardianDone } from "../src/done.ts";
 import plugin from "../src/index.ts";
-import { getGuardianPaths, readState, recordSession } from "../src/state.ts";
+import { guardianStatus } from "../src/recover.ts";
+import { guardianStart } from "../src/tools.ts";
 import type { GuardianSession } from "../src/types.ts";
 import { createRepoWithOrigin, git, seedSession } from "./helpers.ts";
 
 type LooseRecord = Record<string, unknown>;
+
+type DoneResult = LooseRecord & {
+  readonly lane?: string;
+  readonly mode?: string;
+  readonly nextAction?: string;
+  readonly preflight?: Record<string, unknown>;
+  readonly reason?: string;
+  readonly safetyRef?: string;
+  readonly status?: string;
+  readonly worktree?: string;
+};
+
+function asDone(result: LooseRecord): DoneResult {
+  return result as DoneResult;
+}
+
+async function pathExists(filePath: string) {
+  return fs.access(filePath).then(() => true, () => false);
+}
+
+async function guardianRefNames(repo: string) {
+  const { stdout } = await git(repo, ["for-each-ref", "--format=%(refname)", "refs/opencode-guardian"]);
+  return stdout.length === 0 ? [] : stdout.split("\n");
+}
 
 function isLooseRecord(value: unknown): value is LooseRecord {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -36,13 +62,6 @@ function requireSession(session: GuardianSession | undefined): GuardianSession {
 
 function findSession(sessions: readonly GuardianSession[], sessionId: string): GuardianSession {
   return requireSession(sessions.find((session) => session.session_id === sessionId));
-}
-
-async function enableLazyAutoStart(repo: string) {
-  await fs.mkdir(path.join(repo, ".opencode"), { recursive: true });
-  await fs.writeFile(path.join(repo, ".opencode", "worktree-guardian.json"), JSON.stringify({ autoStartMode: "lazy" }));
-  await git(repo, ["add", ".opencode/worktree-guardian.json"]);
-  await git(repo, ["commit", "-m", "enable lazy guardian auto start"]);
 }
 
 test("session idle auto-finish uses default create-pr mode when repo opts in", async () => {
@@ -178,4 +197,79 @@ test("session idle auto-finish uses the recorded worktree when host context is r
   assert.equal(session.status, "preserved");
   assert.equal(session.worktree_path, started.session.worktree_path);
   assert.equal(records.filter((record) => record.message === "event").length, 1);
+});
+
+test("guardian_done direct preserve-only plan is read-only", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_done_plan_preserve", taskName: "done plan preserve", createWorktree: true, config: DEFAULT_CONFIG });
+  const worktree = started.session.worktree_path;
+  await fs.writeFile(path.join(worktree, "plan-preserve.txt"), "plan preserve\n");
+  await git(worktree, ["add", "plan-preserve.txt"]);
+  await git(worktree, ["commit", "-m", "add plan preserve work"]);
+  assert.deepEqual(await guardianRefNames(repo), []);
+
+  const result = asDone(await guardianDone({ repoRoot: repo, cwd: worktree, sessionId: "ses_done_plan_preserve", mode: "plan", finishMode: "preserve-only", timestamp: "20260609T060606", config: DEFAULT_CONFIG }));
+
+  assert.equal(result.ok, true);
+  assert.equal(result.lane, "session-finish");
+  assert.equal(result.status, "planned");
+  assert.equal(result.mode, "preserve-only");
+  assert.equal(result.worktree, worktree);
+  assert.equal(result.safetyRef, undefined);
+  assert.match(String(result.nextAction), /guardian_done mode=apply confirm=true finishMode=preserve-only/);
+  const status = await guardianStatus({ repoRoot: repo, config: DEFAULT_CONFIG });
+  assert.equal(status.activeSessions.some((session: LooseRecord) => session.session_id === "ses_done_plan_preserve"), true);
+  assert.equal(status.terminalSessions.some((session: LooseRecord) => session.session_id === "ses_done_plan_preserve"), false);
+  assert.equal(status.safetyRefs.length, 0);
+  assert.deepEqual(await guardianRefNames(repo), []);
+  assert.equal(await pathExists(worktree), true);
+});
+
+test("guardian_done direct preserve-only apply preserves with one safety ref", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_done_apply_preserve", taskName: "done apply preserve", createWorktree: true, config: DEFAULT_CONFIG });
+  const worktree = started.session.worktree_path;
+  await fs.writeFile(path.join(worktree, "apply-preserve.txt"), "apply preserve\n");
+  await git(worktree, ["add", "apply-preserve.txt"]);
+  await git(worktree, ["commit", "-m", "add apply preserve work"]);
+  const plan = asDone(await guardianDone({ repoRoot: repo, cwd: worktree, sessionId: "ses_done_apply_preserve", mode: "plan", finishMode: "preserve-only", timestamp: "20260609T060909", config: DEFAULT_CONFIG }));
+  assert.equal(plan.status, "planned");
+  assert.deepEqual(await guardianRefNames(repo), []);
+
+  const apply = asDone(await guardianDone({ repoRoot: repo, cwd: worktree, sessionId: "ses_done_apply_preserve", mode: "apply", confirm: true, finishMode: "preserve-only", timestamp: "20260609T061010", config: DEFAULT_CONFIG }));
+
+  assert.equal(apply.ok, true);
+  assert.equal(apply.lane, "session-finish");
+  assert.equal(apply.status, "preserved");
+  assert.match(String(apply.safetyRef), /refs\/opencode-guardian\/ses_done_apply_preserve\/guardian\//);
+  const status = await guardianStatus({ repoRoot: repo, config: DEFAULT_CONFIG });
+  assert.equal(status.activeSessions.some((session: LooseRecord) => session.session_id === "ses_done_apply_preserve"), false);
+  assert.equal(status.terminalSessions.some((session: LooseRecord) => session.session_id === "ses_done_apply_preserve" && session.status === "preserved"), true);
+  assert.equal(status.safetyRefs.length, 1);
+  assert.deepEqual(await guardianRefNames(repo), [apply.safetyRef]);
+  const { stdout: resolvedRef } = await git(repo, ["rev-parse", "--verify", String(apply.safetyRef)]);
+  assert.equal(resolvedRef, apply.commit);
+  assert.equal(await pathExists(worktree), true);
+});
+
+test("guardian_done direct merge-to-base plan requires explicit merge approval before safety refs", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_done_merge_plan_approval", taskName: "done merge plan approval", createWorktree: true, config: DEFAULT_CONFIG });
+  const worktree = started.session.worktree_path;
+  await fs.writeFile(path.join(worktree, "merge-plan-approval.txt"), "merge plan approval\n");
+  await git(worktree, ["add", "merge-plan-approval.txt"]);
+  await git(worktree, ["commit", "-m", "add merge plan approval work"]);
+
+  const result = asDone(await guardianDone({ repoRoot: repo, cwd: worktree, sessionId: "ses_done_merge_plan_approval", mode: "plan", finishMode: "merge-to-base", timestamp: "20260609T061111", config: DEFAULT_CONFIG }));
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, "blocked");
+  assert.equal(result.lane, "session-finish");
+  assert.match(String(result.reason), /allowMergeToBase=true/);
+  assert.equal(result.safetyRef, undefined);
+  assert.equal(result.preflight?.safetyRef, null);
+  assert.deepEqual(await guardianRefNames(repo), []);
 });

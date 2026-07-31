@@ -1,5 +1,6 @@
 import path from "node:path";
 import { expandWorktreeRoot } from "../config.ts";
+import { samePathOnDisk } from "../done-shared.ts";
 import { getCurrentBranch, getRepoRoot, listWorktrees } from "../git.ts";
 import { isTerminalSession } from "../lifecycle.ts";
 import { getGuardianPaths, readState } from "../state.ts";
@@ -34,23 +35,20 @@ function matchesWorktree(expectedWorktree: string, actualPath: string) {
   return isSameOrInside(path.resolve(actualPath), path.resolve(expectedWorktree));
 }
 
-function samePath(left: string, right: string) {
-  return path.resolve(left) === path.resolve(right);
-}
-
 async function validateRecordedBinding(repoRoot: string, config: GuardianConfig, session: MutableRecord, actualWorktree: string) {
   const expectedWorktree = session.worktree_path;
   if (typeof expectedWorktree !== "string") return { ok: false, reason: "recorded session has no worktree path" };
   if (!matchesWorktree(expectedWorktree, actualWorktree)) return { ok: false, reason: "session worktree path does not match actual worktree" };
   const entries = await listWorktrees(repoRoot);
-  const matches = entries.filter((entry: WorktreeEntry) => samePath(entry.path, expectedWorktree));
+  const matchingEntries = await Promise.all(entries.map(async (entry: WorktreeEntry) => await samePathOnDisk(entry.path, expectedWorktree) ? entry : null));
+  const matches = matchingEntries.filter((entry): entry is WorktreeEntry => entry !== null);
   if (matches.length !== 1) return { ok: false, reason: matches.length > 1 ? "recorded worktree path matches multiple git worktrees" : "recorded worktree is not checked out in git worktree list" };
   const entry = matches[0];
   if (!entry) return { ok: false, reason: "recorded worktree is not checked out in git worktree list" };
   if (entry.detached || !entry.branch) return { ok: false, reason: "recorded worktree is detached" };
   if (typeof session.branch === "string" && entry.branch !== session.branch) return { ok: false, reason: "recorded branch does not match checked-out worktree branch" };
   if (Array.isArray(config.protectedBranches) && config.protectedBranches.includes(entry.branch)) return { ok: false, reason: "recorded worktree branch is protected" };
-  if (samePath(entry.path, repoRoot)) return { ok: false, reason: "recorded worktree is the primary repository worktree" };
+  if (await samePathOnDisk(entry.path, repoRoot)) return { ok: false, reason: "recorded worktree is the primary repository worktree" };
   return { ok: true, branch: entry.branch };
 }
 

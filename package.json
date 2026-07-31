@@ -41,10 +41,6 @@
   },
   "dependencies": {
     "@opencode-ai/plugin": "^1.14.48",
-    "@opentui/core": "^0.2.6",
-    "@opentui/keymap": "^0.2.6",
-    "@opentui/solid": "^0.2.6",
-    "solid-js": "^1.9.12",
     "tsx": "^4.22.4",
     "zod": "^4.4.3"
   },

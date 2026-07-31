@@ -161,6 +161,7 @@ test("guardian report HTML renders escaped reviewable candidates separately from
           reviewableCandidateCount: 1,
           reviewableShownCount: 1,
           reviewableOmittedCount: 0,
+          reviewableTotalFileCount: 1,
           reviewableTruncated: false,
           bySeverity: { warn: 0, fail: 0 },
           byCategory: { "known-cleanable": 0, "nested-git": 0, suspicious: 0 },
@@ -169,6 +170,7 @@ test("guardian report HTML renders escaped reviewable candidates separately from
         reviewableCandidates: [{
           path: "review/<img src=x onerror=alert(1)>",
           status: "untracked",
+          fileCount: 1,
           reason: "review <script>alert(1)</script> before deleting",
           source: "git ls-files --others/--ignored",
           suggestedDeletePathCommand: "guardian_delete_paths mode=plan paths=[\"review/<img src=x onerror=alert(1)>\"]",
@@ -183,8 +185,9 @@ test("guardian report HTML renders escaped reviewable candidates separately from
   assert.match(html, /review\/&lt;img src&#61;x onerror&#61;alert\(1\)&gt;/);
   assert.match(html, /review &lt;script&gt;alert\(1\)&lt;\/script&gt; before deleting/);
   assert.match(html, /guardian_delete_paths mode&#61;plan paths&#61;\[&quot;review\/&lt;img src&#61;x onerror&#61;alert\(1\)&gt;&quot;\]/);
-  assert.match(html, /<span>Risks<\/span><strong>0<\/strong>/);
+  assert.match(html, /<span>Risks<\/span><strong>1<\/strong>/);
   assert.match(html, /<span>Hygiene Findings<\/span><strong>0<\/strong>/);
+  assert.match(html, /1 unreviewed workspace path outside Guardian cleanup rules/);
   assert.doesNotMatch(html, /<script/i);
   assert.doesNotMatch(html, /\son[a-z]+\s*=/i);
 });
@@ -204,7 +207,9 @@ test("guardian status and recover expose reviewable hygiene metadata", async () 
   assert.equal(status.hygiene.summary.reviewableCandidateCount, 2);
   assert.equal(status.hygiene.summary.reviewableShownCount, 2);
   assert.equal(status.hygiene.summary.reviewableOmittedCount, 0);
+  assert.equal(status.hygiene.summary.reviewableTotalFileCount, 2);
   assert.equal(status.hygiene.summary.reviewableTruncated, false);
+  assert.deepEqual(status.hygiene.reviewableCandidates.map((candidate) => candidate.fileCount), [1, 1]);
   assert.deepEqual(recover.hygiene.reviewableCandidates, status.hygiene.reviewableCandidates);
   assert.deepEqual(recover.hygiene.summary, status.hygiene.summary);
 });

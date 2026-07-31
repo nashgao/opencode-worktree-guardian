@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { assertReferenceTransactionHookSafe, controlledGitEnvironment, GUARDIAN_SUBPROCESS_TIMEOUT_MS } from "./git-process.ts";
 import { isRecordLike } from "./types.ts";
 
 const execFileAsync = promisify(execFile);
@@ -35,9 +36,13 @@ async function runGh(repoRoot: string, args: readonly string[]): Promise<GhResul
       cwd: repoRoot,
       encoding: "utf8",
       maxBuffer: 10 * 1024 * 1024,
+      timeout: GUARDIAN_SUBPROCESS_TIMEOUT_MS,
+      killSignal: "SIGTERM",
+      env: controlledGitEnvironment(),
     });
     return { ok: true, stdout: stdout.trim(), stderr: stderr.trim() };
   } catch (error) {
+    if (!(error instanceof Error)) throw error;
     return {
       ok: false,
       stdout: isRecordLike(error) ? outputText(error.stdout) : "",
@@ -117,6 +122,20 @@ export async function getOrCreatePullRequest(repoRoot: string, branch: string, b
 }
 
 export async function mergePullRequest(repoRoot: string, pr: PullRequestInfo, head: string, allowAdminBypass: boolean): Promise<{ readonly ok: true } | { readonly ok: false; readonly result: Record<string, unknown> }> {
+  try {
+    await assertReferenceTransactionHookSafe(repoRoot);
+  } catch (error) {
+    return {
+      ok: false,
+      result: {
+        ok: false,
+        status: "blocked",
+        reason: "Guardian refuses PR merge while the reference-transaction policy is indeterminate or executable",
+        pr,
+        error: errorMessage(error),
+      },
+    };
+  }
   const args = ["pr", "merge", String(pr.number), "--merge", "--match-head-commit", head];
   if (allowAdminBypass) args.push("--admin");
   const merged = await runGh(repoRoot, args);

@@ -23,7 +23,11 @@ export async function guardianPreserve(input: GuardianToolInput = {}): Promise<G
   const headCommit = await getHeadCommit(worktreePath);
   sessionId = sessionId ?? recoverySessionId(branch, headCommit);
   const preservedRef = buildPreservedRef(sessionId, branch, typeof input.timestamp === "string" ? input.timestamp : undefined);
-  await createRef(worktreePath, preservedRef, headCommit);
+  try {
+    await createRef(worktreePath, preservedRef, headCommit);
+  } catch (error) {
+    return { ok: false, status: "blocked", reason: "preserved ref could not be created", preservedRef, error: error instanceof Error ? error.message : String(error), branch, worktreePath };
+  }
   const recordedState = await recordSession(repoRoot, config, {
     session_id: sessionId,
     status: "preserved",

@@ -7,7 +7,7 @@ export function ensureToolArgs(output: GuardCommandPayload = {}) {
 }
 
 function sortedStringArgs(value: unknown) {
-  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string").sort((left, right) => left.localeCompare(right)) : [];
+  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string").sort((left, right) => left < right ? -1 : left > right ? 1 : 0) : [];
 }
 
 export function normalizeOptionalToolStrings(toolArgs: PlanCacheToolArgs) {
@@ -28,13 +28,16 @@ function planCacheKey(name: GuardianToolName, toolArgs: PlanCacheToolArgs) {
     allowTracked: toolArgs.allowTracked === true,
     allowRecursive: toolArgs.allowRecursive === true,
     allowDirtyNestedGit: toolArgs.allowDirtyNestedGit === true,
+    rescue: toolArgs.rescue === true,
     primary: toolArgs.primary === true,
     commitMessage: typeof toolArgs.commitMessage === "string" ? toolArgs.commitMessage : "",
     finishMode: typeof toolArgs.finishMode === "string" ? toolArgs.finishMode : "",
     deleteBranch: toolArgs.deleteBranch === true,
     abandonUnmerged: toolArgs.abandonUnmerged === true,
     allowIgnoredFiles: toolArgs.allowIgnoredFiles === true,
+    allowAdminBypass: toolArgs.allowAdminBypass === true,
     action: typeof toolArgs.action === "string" ? toolArgs.action : "",
+    timestamp: typeof toolArgs.timestamp === "string" ? toolArgs.timestamp : "",
   });
 }
 
@@ -49,12 +52,12 @@ function shouldUseCachedPlanToken(name: GuardianToolName, toolArgs: PlanCacheToo
   if (name === "guardian_delete_paths") return toolArgs.confirmDelete === true;
   if (name === "guardian_hygiene") return toolArgs.confirmDelete === true;
   if (name === "guardian_gc") return toolArgs.confirmDelete === true;
-  if (name === "guardian_done" || name === "guardian_finish_workflow" || name === "guardian_goal") return toolArgs.confirm === true || toolArgs.confirmDelete === true;
+  if (name === "guardian_done" || name === "guardian_finish_workflow" || name === "guardian_goal") return toolArgs.confirm === true;
   return false;
 }
 
 function isCacheablePlanStatus(status: unknown): boolean {
-  return status === "planned" || status === "planned-partial";
+  return status === "planned" || status === "planned-partial" || status === "rescue-planned";
 }
 
 export function maybeInjectPlanConfirmToken(name: GuardianToolName, toolArgs: PlanCacheToolArgs, planCache?: PlanTokenCache) {

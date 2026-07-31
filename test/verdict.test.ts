@@ -5,7 +5,7 @@ import { computeGuardianVerdict } from "../src/verdict.ts";
 test("clean repo with no active sessions reads good with no next action", () => {
   const verdict = computeGuardianVerdict({ ok: true, repoRoot: "/repo", activeSessions: [] });
   assert.equal(verdict.tone, "good");
-  assert.equal(verdict.headline, "No active Guardian sessions — clean, no risks detected.");
+  assert.equal(verdict.headline, "No active Guardian sessions — no Guardian risk signals (Guardian scope only; not a repo-cleanliness claim).");
   assert.equal(verdict.nextAction, null);
 });
 
@@ -16,7 +16,7 @@ test("single clean active session names its branch", () => {
     activeSessions: [{ session_id: "ses_1", branch: "guardian/foo" }],
   });
   assert.equal(verdict.tone, "good");
-  assert.equal(verdict.headline, "1 active session on guardian/foo — clean, no risks detected.");
+  assert.equal(verdict.headline, "1 active session on guardian/foo — no Guardian risk signals (Guardian scope only; not a repo-cleanliness claim).");
   assert.equal(verdict.nextAction, null);
 });
 
@@ -64,7 +64,7 @@ test("primary repo worktree-without-state is not counted as an external failure"
     worktreesWithoutState: [{ path: "/repo", severity: "fail", category: "external-worktree" }],
   });
   assert.equal(verdict.tone, "good");
-  assert.match(verdict.headline, /clean, no risks detected/);
+  assert.match(verdict.headline, /no Guardian risk signals/);
 });
 
 test("a genuine external worktree outside the repo root is a fail verdict", () => {
@@ -108,4 +108,28 @@ test("ok:false short-circuits to a fail verdict carrying the reason", () => {
   const verdict = computeGuardianVerdict({ ok: false, reason: "repo root not found" });
   assert.equal(verdict.tone, "bad");
   assert.equal(verdict.headline, "repo root not found");
+});
+
+test("reviewable candidates alone produce a warn verdict, never a clean headline", () => {
+  const verdict = computeGuardianVerdict({
+    ok: true,
+    repoRoot: "/repo",
+    activeSessions: [],
+    hygiene: { ok: true, summary: { findingCount: 0, bySeverity: { fail: 0, warn: 0 }, reviewableCandidateCount: 65 } },
+  });
+  assert.equal(verdict.tone, "warn");
+  assert.match(verdict.headline, /65 unreviewed workspace paths outside Guardian cleanup rules/);
+  assert.match(verdict.nextAction ?? "", /includeAllReviewableCandidates=true/);
+});
+
+test("a failed hygiene scan reports unknown cleanliness rather than a clean verdict", () => {
+  const verdict = computeGuardianVerdict({
+    ok: true,
+    repoRoot: "/repo",
+    activeSessions: [],
+    hygiene: { ok: false, reason: "scan crashed", summary: { scanFailed: true, findingCount: 0, reviewableCandidateCount: 0, bySeverity: { fail: 0, warn: 0 } } },
+  });
+  assert.equal(verdict.tone, "warn");
+  assert.match(verdict.headline, /cleanliness unknown/);
+  assert.match(verdict.nextAction ?? "", /guardian_hygiene/);
 });

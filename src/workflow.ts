@@ -4,6 +4,7 @@ import { configForResolvedBase, resolveBaseRef } from "./done-base-ref.ts";
 import { syncLocalBase } from "./done-main-sync.ts";
 import { guardianDeleteWorktree } from "./delete.ts";
 import { createSafetyRef, deleteRemoteBranch, fetchRemotePrune, getCurrentBranch, getDirtyFiles, getRefCommit, getRepoRoot, listStashes } from "./git.ts";
+import { isTrustedRemoteNamespaceOverlapError } from "./git-authority.ts";
 import { runFinalCleanupPostflight } from "./final-postflight.ts";
 import { hasBlockingStashInventory } from "./stash-policy.ts";
 import { isRecordLike } from "./types.ts";
@@ -49,13 +50,38 @@ function plannedCleanupAllowances(candidates: readonly Record<string, unknown>[]
 }
 
 export async function guardianFinishWorkflow(input: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+  const mode = input.mode ?? "plan";
+  if (mode !== "plan" && mode !== "apply") {
+    const preflight = { mode, baseRefOid: null, baseRefFetched: false, maxCandidateCount: MAX_WORKFLOW_CLEANUP_CANDIDATES, candidateScanStatus: "skipped", candidateScanSkippedReason: "invalid-mode", blockers: [] };
+    return blocked("mode must be plan or apply", { lane: "finish-workflow", mode, remoteRefresh: "skipped" }, preflight);
+  }
+  if (mode === "apply" && input.confirm !== true) return { ok: false, status: "blocked", lane: "finish-workflow", reason: "guardian_finish_workflow apply requires confirm=true before remote refresh or cleanup", confirmationRequired: true, tokenChecked: false, remoteRefresh: "skipped", nextAction: "guardian_finish_workflow mode=apply confirm=true" };
   const cwd = typeof input.cwd === "string" ? input.cwd : typeof input.repoRoot === "string" ? input.repoRoot : process.cwd();
   const repoRoot = typeof input.repoRoot === "string" ? input.repoRoot : await getRepoRoot(cwd);
   const { config } = input.config && typeof input.config === "object" ? { config: input.config as Record<string, unknown> } : await loadConfig(repoRoot);
-  const mode = input.mode ?? "plan";
-  const resolvedBase = await resolveBaseRef(repoRoot, config);
+  let resolvedBase: Awaited<ReturnType<typeof resolveBaseRef>>;
+  try {
+    resolvedBase = await resolveBaseRef(repoRoot, config);
+  } catch (error) {
+    if (!isTrustedRemoteNamespaceOverlapError(error)) throw error;
+    const baseRef = `${String(config.remote)}/${String(config.baseBranch)}`;
+    const preflight = {
+      repoRoot: path.resolve(repoRoot),
+      mode,
+      remote: config.remote,
+      baseBranch: config.baseBranch,
+      baseRef,
+      baseRefOid: null,
+      baseRefFetched: false,
+      blockers: [],
+      candidateScanStatus: "skipped",
+      candidateScanSkippedReason: "configured-remote-authority",
+    };
+    return blocked("configured remote authority is invalid", { baseRef, error: error instanceof Error ? error.message : String(error) }, preflight);
+  }
   const effectiveConfig = configForResolvedBase(config, resolvedBase);
   const baseRef = resolvedBase.baseRef;
+  const baseAuthorityRef = resolvedBase.authorityRef;
   const guardianRoot = path.resolve(repoRoot, expandWorktreeRoot(String(config.worktreeRoot), repoRoot));
   const preflight: Record<string, unknown> = {
     repoRoot: path.resolve(repoRoot),
@@ -73,21 +99,16 @@ export async function guardianFinishWorkflow(input: Record<string, unknown> = {}
     dirtyFiles: [],
     dirtyFileCount: 0,
     stashCount: 0,
+    allowIgnoredFiles: input.allowIgnoredFiles === true,
     blockerCount: 0,
     maxCandidateCount: MAX_WORKFLOW_CLEANUP_CANDIDATES,
     blockers: [],
   };
 
-  if (mode !== "plan" && mode !== "apply") {
-    preflight.candidateScanStatus = "skipped";
-    preflight.candidateScanSkippedReason = "invalid-mode";
-    return blocked("mode must be plan or apply", { mode }, preflight);
-  }
-
   try {
     await fetchRemotePrune(repoRoot, resolvedBase.remote);
     preflight.baseRefFetched = true;
-    preflight.baseRefOid = await getRefCommit(repoRoot, baseRef);
+    preflight.baseRefOid = await getRefCommit(repoRoot, baseAuthorityRef);
   } catch (error) {
     preflight.candidateScanStatus = "skipped";
     preflight.candidateScanSkippedReason = "base-unavailable";
@@ -120,7 +141,7 @@ export async function guardianFinishWorkflow(input: Record<string, unknown> = {}
   try {
     const excludedBranches = Array.isArray(input.excludeBranches) ? input.excludeBranches.filter((branch): branch is string => typeof branch === "string") : [];
     preflight.excludedBranches = excludedBranches;
-    const discovered = await discoverCandidates(repoRoot, cwd, effectiveConfig, preflight, input.allowIgnoredFiles === true, excludedBranches, input.abandonUnmerged === true);
+    const discovered = await discoverCandidates(repoRoot, cwd, effectiveConfig, preflight, input.allowIgnoredFiles === true, excludedBranches, input.abandonUnmerged === true, input.timestamp ?? preflight.baseRefOid);
     candidates = discovered.candidates;
     blockers = discovered.blockers;
     preflight.candidateScanStatus = "completed";
@@ -131,6 +152,9 @@ export async function guardianFinishWorkflow(input: Record<string, unknown> = {}
     return blocked("candidate discovery failed; cleanup inventory is incomplete", { candidates: [], blockers: [] }, preflight);
   }
 
+  const confirmToken = createWorkflowToken(preflight, candidates);
+  if (mode === "apply" && input.confirmToken !== confirmToken) return blocked("confirm token mismatch; re-run mode=plan and use the returned confirmToken", { tokenMatched: false, tokenChecked: true, driftDetected: true, plannedConfirmToken: input.confirmToken, refreshedConfirmToken: confirmToken, candidates, blockers }, preflight);
+
   const hardBlocker = blockers.find((blocker) => blocker.kind === "candidate-bound");
   const primaryDirtyBlocksCleanup = blockingDirtyFiles.length > 0 && (candidates.length === 0 || preflightBlockers(preflight).length > 0 || Boolean(hardBlocker));
   if (primaryDirtyBlocksCleanup) return blocked(dirtyPrimaryReason, { dirtyFiles: blockingDirtyFiles, candidates, blockers }, preflight);
@@ -140,7 +164,6 @@ export async function guardianFinishWorkflow(input: Record<string, unknown> = {}
   if (blockers.length > 0 && candidates.length === 0) {
     return blocked("cleanup blockers must be resolved before apply", { candidates, blockers }, preflight);
   }
-  const confirmToken = createWorkflowToken(preflight, candidates);
   const primaryDirtyRemaining = blockingDirtyFiles.length > 0 ? [{ kind: "primary-dirty", status: "blocked", reason: dirtyPrimaryReason, blockingDirtyFiles }] : [];
   if (mode === "plan") {
     const finalPostflight = input.skipFinalPostflight === true
@@ -149,8 +172,6 @@ export async function guardianFinishWorkflow(input: Record<string, unknown> = {}
     const remaining = finalPostflight.ok === true ? [...blockers, ...primaryDirtyRemaining] : [...blockers, ...primaryDirtyRemaining, { kind: "final-postflight", status: "blocked", reason: finalPostflight.reason ?? "final cleanup postflight failed", finalPostflight }];
     return { ok: true, status: remaining.length > 0 ? "planned-partial" : "planned", confirmToken, preflight, candidates, blockers, remaining, finalPostflight };
   }
-  if (input.confirmToken !== confirmToken) return blocked("confirm token mismatch; re-run mode=plan and use the returned confirmToken", { tokenMatched: false, candidates, blockers }, preflight);
-
   const applyBlockers = [...blockers];
   let baseSync: Record<string, unknown> | undefined;
   if (candidates.length > 0 && blockingDirtyFiles.length === 0) {
@@ -174,12 +195,13 @@ export async function guardianFinishWorkflow(input: Record<string, unknown> = {}
       const remote = typeof candidate.remote === "string" ? candidate.remote : String(effectiveConfig.remote);
       const remoteBranch = typeof candidate.remoteBranch === "string" ? candidate.remoteBranch : typeof candidate.branch === "string" ? candidate.branch : "";
       const head = typeof candidate.head === "string" ? candidate.head : "";
-      if (!remoteBranch || !head) {
+      const plannedSafetyRef = typeof candidate.safetyRef === "string" ? candidate.safetyRef : "";
+      if (!remoteBranch || !head || !plannedSafetyRef) {
         results.push({ ...candidateTokenMaterial(candidate), ok: false, status: "blocked", reason: "remote branch cleanup candidate is incomplete" });
         continue;
       }
       try {
-        const safetyRef = await createSafetyRef(repoRoot, { sessionId: "remote-branch-cleanup", branch: `${remote}/${remoteBranch}`, commit: head, timestamp: input.timestamp });
+        const safetyRef = await createSafetyRef(repoRoot, { sessionId: "remote-branch-cleanup", branch: `${remote}/${remoteBranch}`, commit: head, ref: plannedSafetyRef });
         await deleteRemoteBranch(repoRoot, remote, remoteBranch, head);
         results.push({ ...candidateTokenMaterial(candidate), ok: true, status: "deleted", remote, remoteBranch, branch: remoteBranch, head, remoteBranchDeleted: true, safetyRef });
       } catch (error) {
@@ -190,12 +212,12 @@ export async function guardianFinishWorkflow(input: Record<string, unknown> = {}
     const targetPath = targetKind === "worktree" && typeof candidate.targetPath === "string" ? candidate.targetPath : undefined;
     const branch = targetKind !== "worktree" && typeof candidate.branch === "string" ? candidate.branch : undefined;
     const abandonUnmerged = candidate.abandonUnmerged === true;
-    const plan = await guardianDeleteWorktree({ repoRoot, cwd: repoRoot, mode: "plan", targetPath, branch, deleteBranch: true, allowMergedGuardianBranch: !abandonUnmerged, ancestryBaseRef: baseRef, allowIgnoredFiles: input.allowIgnoredFiles === true, abandonUnmerged, config: effectiveConfig });
-    if (!plan.ok) {
-      results.push({ ...candidateTokenMaterial(candidate), ok: false, status: "blocked", reason: plan.reason });
+    const confirmToken = typeof candidate.confirmToken === "string" ? candidate.confirmToken : null;
+    if (!confirmToken) {
+      results.push({ ...candidateTokenMaterial(candidate), ok: false, status: "blocked", reason: "cleanup candidate is missing its approved delete token" });
       continue;
     }
-    const apply = await guardianDeleteWorktree({ repoRoot, cwd: repoRoot, mode: "apply", targetPath, branch, deleteBranch: true, allowMergedGuardianBranch: !abandonUnmerged, ancestryBaseRef: baseRef, allowIgnoredFiles: input.allowIgnoredFiles === true, abandonUnmerged, confirmToken: plan.confirmToken, config: effectiveConfig });
+    const apply = await guardianDeleteWorktree({ repoRoot, cwd: repoRoot, mode: "apply", targetPath, branch, deleteBranch: true, allowMergedGuardianBranch: !abandonUnmerged, ancestryBaseRef: baseAuthorityRef, allowIgnoredFiles: input.allowIgnoredFiles === true, abandonUnmerged, confirmToken, config: effectiveConfig });
     const applyPreflight = isRecordLike(apply.preflight) ? apply.preflight : {};
     results.push({ ...candidateTokenMaterial(candidate), ok: apply.ok, status: apply.status, reason: apply.reason, worktreeRemoved: apply.worktreeRemoved, branchDeleted: apply.branchDeleted, safetyRef: apply.safetyRef, abandonUnmerged: apply.abandonUnmerged, unmergedCommits: applyPreflight.unmergedCommits });
   }

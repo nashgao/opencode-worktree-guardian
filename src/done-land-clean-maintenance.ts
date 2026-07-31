@@ -15,6 +15,8 @@ type LandCleanMaintenanceContext = {
 type CleanupLandedSessionOptions = {
   readonly allowRedundantDirtyPaths?: boolean;
   readonly ancestryBaseRef?: string;
+  readonly ignoredFiles: readonly string[];
+  readonly ignoredFileFingerprint: readonly unknown[];
 };
 
 function okField(value: unknown): unknown {
@@ -45,13 +47,14 @@ export function withMaintenanceOutcome(result: Record<string, unknown>, maintena
   return { ...result, ...maintenance };
 }
 
-export async function cleanupLandedSession(context: LandCleanMaintenanceContext, failurePrefix: string, options: CleanupLandedSessionOptions = {}): Promise<Record<string, unknown>> {
+export async function cleanupLandedSession(context: LandCleanMaintenanceContext, failurePrefix: string, options: CleanupLandedSessionOptions): Promise<Record<string, unknown>> {
   const cleanupPlan = await guardianDeleteWorktree({
     repoRoot: context.repoRoot,
     cwd: context.repoRoot,
     mode: "plan",
     sessionId: context.sessionId,
     deleteBranch: true,
+    allowIgnoredFiles: context.input.allowIgnoredFiles === true,
     allowRedundantDirtyPaths: options.allowRedundantDirtyPaths === true,
     ancestryBaseRef: options.ancestryBaseRef,
     timestamp: context.input.timestamp,
@@ -60,12 +63,18 @@ export async function cleanupLandedSession(context: LandCleanMaintenanceContext,
   if (cleanupPlan.ok !== true || typeof cleanupPlan.confirmToken !== "string") {
     return { ok: false, status: "cleanup-blocked", reason: `${failurePrefix} but stale worktree cleanup could not be planned`, cleanup: cleanupPlan };
   }
+  const cleanupPreflight = isRecordLike(cleanupPlan.preflight) ? cleanupPlan.preflight : {};
+  if (JSON.stringify(cleanupPreflight.ignoredFiles) !== JSON.stringify(options.ignoredFiles)
+    || JSON.stringify(cleanupPreflight.ignoredFileFingerprint) !== JSON.stringify(options.ignoredFileFingerprint)) {
+    return { ok: false, status: "cleanup-blocked", reason: `${failurePrefix} but ignored-file consent changed`, cleanup: cleanupPlan, ignoredFiles: options.ignoredFiles, ignoredFileFingerprint: options.ignoredFileFingerprint };
+  }
   const cleanup = await guardianDeleteWorktree({
     repoRoot: context.repoRoot,
     cwd: context.repoRoot,
     mode: "apply",
     sessionId: context.sessionId,
     deleteBranch: true,
+    allowIgnoredFiles: context.input.allowIgnoredFiles === true,
     allowRedundantDirtyPaths: options.allowRedundantDirtyPaths === true,
     ancestryBaseRef: options.ancestryBaseRef,
     confirmToken: cleanupPlan.confirmToken,

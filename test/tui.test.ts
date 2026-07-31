@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import plugin, { id, tui, type GuardianTuiApi } from "../src/tui.ts";
+import plugin, { id, tui } from "../src/tui.ts";
 
 const expectedSlashNames = [
   "guardian-delete-paths",
@@ -40,8 +40,10 @@ type RegisteredLayer = {
 function createApi(routeName = "session") {
   const prompts: unknown[] = [];
   const toasts: unknown[] = [];
+  const dialogSetSizes: unknown[] = [];
+  const dialogReplacements: unknown[] = [];
   let layer: RegisteredLayer | undefined;
-  const api: GuardianTuiApi = {
+  const api = {
     keymap: {
       registerLayer(input: RegisteredLayer) {
         layer = input;
@@ -66,8 +68,12 @@ function createApi(routeName = "session") {
         toasts.push(input);
       },
       dialog: {
-        setSize() {},
-        replace() {},
+        setSize(input: unknown) {
+          dialogSetSizes.push(input);
+        },
+        replace(input: unknown) {
+          dialogReplacements.push(input);
+        },
       },
     },
     theme: {
@@ -82,7 +88,7 @@ function createApi(routeName = "session") {
       },
     },
   };
-  return { api, prompts, toasts, get layer() { return layer; } };
+  return { api, prompts, toasts, dialogSetSizes, dialogReplacements, get layer() { return layer; } };
 }
 
 test("tui plugin exports OpenCode TUI module shape", () => {
@@ -100,6 +106,24 @@ test("tui plugin registers Guardian slash commands", async () => {
   assert.deepEqual(runtime.layer?.commands.map((command) => command.name).sort(), expectedSlashNames);
   assert.equal(runtime.layer?.commands.every((command) => command.namespace === "palette"), true);
   assert.equal(runtime.layer?.commands.every((command) => command.category === "Guardian"), true);
+});
+
+test("guardian-hud warns without submitting a prompt or opening a dialog", async () => {
+  const runtime = createApi();
+  await tui(runtime.api);
+  const command = runtime.layer?.commands.find((candidate) => candidate.slashName === "guardian-hud");
+  assert.ok(command);
+
+  await command.run();
+
+  assert.deepEqual(runtime.toasts, [{
+    variant: "warning",
+    title: "Guardian HUD unavailable",
+    message: "The visual Guardian HUD is temporarily unavailable. Use /guardian-status instead.",
+  }]);
+  assert.deepEqual(runtime.prompts, []);
+  assert.deepEqual(runtime.dialogSetSizes, []);
+  assert.deepEqual(runtime.dialogReplacements, []);
 });
 
 test("tui slash command dispatches a Guardian prompt in the current session", async () => {

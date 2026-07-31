@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import path from "node:path";
+import { samePathOnDisk } from "./done-shared.ts";
 import { getCommonGitDir, getHeadCommit } from "./git.ts";
 import { clearTerminalLifecycleFields } from "./lifecycle.ts";
 import type { GuardianConfig, GuardianPaths, GuardianSession, GuardianState, GuardianStateRecord, RecordLike } from "./types.ts";
@@ -166,8 +167,8 @@ export async function updateState(repoRoot: string, config: GuardianConfigInput,
 
 type SessionBindingFields = { readonly status?: unknown; readonly worktree_path?: unknown; readonly branch?: unknown; readonly session_id?: unknown };
 
-function isActivePrimaryBinding(repoRoot: string, session: SessionBindingFields | undefined): boolean {
-  return session?.status === "active" && typeof session.worktree_path === "string" && path.resolve(session.worktree_path) === path.resolve(repoRoot);
+async function isActivePrimaryBinding(repoRoot: string, session: SessionBindingFields | undefined): Promise<boolean> {
+  return session?.status === "active" && typeof session.worktree_path === "string" && await samePathOnDisk(session.worktree_path, repoRoot);
 }
 
 function isActiveProtectedBinding(protectedBranches: readonly string[], session: SessionBindingFields | undefined): boolean {
@@ -179,15 +180,15 @@ function isActiveProtectedBinding(protectedBranches: readonly string[], session:
 // write path (e.g. a tool-after checkpoint or a fresh start) can create poison. Re-recording
 // an already-poisoned active session is tolerated so finish/done/recovery can still process
 // and clean up legacy poison.
-function assertActiveSessionBoundary(
+async function assertActiveSessionBoundary(
   repoRoot: string,
   config: GuardianConfigInput,
   previous: SessionBindingFields | undefined,
   next: SessionBindingFields,
-): void {
+): Promise<void> {
   if (next.status !== "active") return;
   const protectedBranches = Array.isArray(config.protectedBranches) ? config.protectedBranches : [];
-  if (isActivePrimaryBinding(repoRoot, next) && !isActivePrimaryBinding(repoRoot, previous)) {
+  if (await isActivePrimaryBinding(repoRoot, next) && !await isActivePrimaryBinding(repoRoot, previous)) {
     throw stateError("illegal_active_binding", `Refusing to newly bind active session ${String(next.session_id)} to the primary repository worktree: ${repoRoot}`);
   }
   if (isActiveProtectedBinding(protectedBranches, next) && !isActiveProtectedBinding(protectedBranches, previous)) {
@@ -198,7 +199,7 @@ function assertActiveSessionBoundary(
 async function assertSameRepoBinding(repoRoot: string, previous: SessionBindingFields | undefined, next: SessionBindingFields): Promise<void> {
   if (next.status !== "active" || typeof next.worktree_path !== "string") return;
   // Tolerate re-recording an already cross-repo-bound active session so finish/done/recovery can clean up legacy contamination.
-  if (previous?.status === "active" && typeof previous.worktree_path === "string" && path.resolve(previous.worktree_path) === path.resolve(next.worktree_path)) return;
+  if (previous?.status === "active" && typeof previous.worktree_path === "string" && await samePathOnDisk(previous.worktree_path, next.worktree_path)) return;
   let repoCommonDir: string;
   let worktreeCommonDir: string;
   try {
@@ -221,7 +222,7 @@ export async function recordSession(repoRoot: string, config: GuardianConfigInpu
     const now = new Date().toISOString();
     if (session.status === "active" && typeof session.worktree_path === "string") {
       for (const [candidateSessionId, candidate] of Object.entries(state.sessions)) {
-        if (candidateSessionId !== sessionId && isRecordLike(candidate) && candidate.status === "active" && typeof candidate.worktree_path === "string" && path.resolve(candidate.worktree_path) === path.resolve(session.worktree_path)) {
+        if (candidateSessionId !== sessionId && isRecordLike(candidate) && candidate.status === "active" && typeof candidate.worktree_path === "string" && await samePathOnDisk(candidate.worktree_path, session.worktree_path)) {
           state.sessions[candidateSessionId] = {
             ...candidate,
             status: "superseded",
@@ -240,7 +241,7 @@ export async function recordSession(repoRoot: string, config: GuardianConfigInpu
       created_at: previous?.created_at ?? now,
       updated_at: now,
     });
-    assertActiveSessionBoundary(repoRoot, config, previous, merged);
+    await assertActiveSessionBoundary(repoRoot, config, previous, merged);
     await assertSameRepoBinding(repoRoot, previous, merged);
     state.sessions[sessionId] = merged;
     return state;
@@ -258,7 +259,7 @@ export async function checkpointSession(
     if (!state.sessions) state.sessions = {};
     const current = isRecordLike(state.sessions[sessionId]) ? state.sessions[sessionId] : undefined;
     if (!current || current.status !== "active" || typeof current.worktree_path !== "string") return state;
-    if (path.resolve(current.worktree_path) !== path.resolve(options.expectedWorktreePath)) return state;
+    if (!await samePathOnDisk(current.worktree_path, options.expectedWorktreePath)) return state;
     const headCommit = await getHeadCommit(current.worktree_path);
     state.sessions[sessionId] = { ...current, head_commit: headCommit, updated_at: new Date().toISOString() };
     return state;

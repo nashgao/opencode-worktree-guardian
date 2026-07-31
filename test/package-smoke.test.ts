@@ -181,7 +181,6 @@ test("packed artifact installs in a clean consumer and exposes plugin contract",
     "--ignore-scripts",
     "--no-audit",
     "--no-fund",
-    "--package-lock=false",
     "--cache",
     npmCache,
     path.join(packDir, packInfo.filename),
@@ -192,6 +191,8 @@ test("packed artifact installs in a clean consumer and exposes plugin contract",
     import plugin from "opencode-worktree-guardian";
     import serverPlugin from "opencode-worktree-guardian/server";
     import tuiPlugin from "opencode-worktree-guardian/tui";
+    const toasts = [];
+    const prompts = [];
     const hooks = await plugin.server({ directory: process.cwd(), worktree: process.cwd(), client: { app: { log: async () => {} } } });
     let layer;
     await tuiPlugin.tui({
@@ -203,9 +204,10 @@ test("packed artifact installs in a clean consumer and exposes plugin contract",
       },
       route: { current: { name: "session", params: { sessionID: "ses_package_smoke" } } },
       state: { path: { directory: process.cwd() } },
-      client: { session: { promptAsync: async () => {} } },
-      ui: { toast: () => {} },
+      client: { session: { promptAsync: async (input) => { prompts.push(input); } } },
+      ui: { toast: (input) => { toasts.push(input); } },
     });
+    await layer.commands.find((command) => command.slashName === "guardian-hud").run();
     console.log(JSON.stringify({
       id: plugin.id,
       serverId: serverPlugin.id,
@@ -214,6 +216,8 @@ test("packed artifact installs in a clean consumer and exposes plugin contract",
       tools: Object.keys(hooks.tool).sort(),
       hooks: Object.keys(hooks).filter((key) => key !== "tool").sort(),
       slashes: layer.commands.map((command) => command.slashName).sort(),
+      toasts,
+      prompts,
     }));
   `;
   const tsxLoader = path.join(consumer, "node_modules", "tsx", "dist", "loader.mjs");
@@ -243,5 +247,16 @@ test("packed artifact installs in a clean consumer and exposes plugin contract",
   assert.equal(result.hasTui, true);
   assert.deepEqual(result.tools, expectedToolNames);
   assert.deepEqual(result.slashes, expectedSlashNames);
+  assert.deepEqual(result.toasts, [{
+    variant: "warning",
+    title: "Guardian HUD unavailable",
+    message: "The visual Guardian HUD is temporarily unavailable. Use /guardian-status instead.",
+  }]);
+  assert.deepEqual(result.prompts, []);
   assert.equal(result.hooks.includes("tool.execute.before"), true);
+  for (const dependency of ["@opentui/core", "@opentui/keymap", "@opentui/solid", "solid-js"]) {
+    await assert.rejects(fs.access(path.join(consumer, "node_modules", dependency)));
+  }
+  const audit = await run("npm", ["audit", "--omit=dev", "--audit-level=low", "--json", "--registry=https://registry.npmjs.org"], { cwd: consumer, coverage: "suppress" });
+  assert.equal(JSON.parse(audit.stdout).metadata.vulnerabilities.total, 0);
 });

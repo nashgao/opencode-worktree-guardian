@@ -1,8 +1,10 @@
 import path from "node:path";
-import { blocked } from "./delete-worktree-report.ts";
+import { blocked, errorMessage } from "./delete-worktree-report.ts";
 import { cleanRedundantDirtyPaths, createDirtySnapshotRef, proveRedundantDirtyPaths, resolveRedundantDirtyBase } from "./delete-worktree-dirty-proof.ts";
-import type { RedundantDirtyProof } from "./delete-worktree-dirty-proof.ts";
+import type { DirtySnapshotResult, RedundantDirtyProof } from "./delete-worktree-dirty-proof.ts";
 import type { GuardianSession, WorktreeEntry } from "./types.ts";
+import { resolveRemoteAuthority } from "./git-authority.ts";
+import type { RemoteAuthority } from "./git-authority.ts";
 
 type DirtyPreflightContext = {
   readonly input: Record<string, unknown>;
@@ -42,9 +44,11 @@ function getRedundantDirtyProofs(preflight: Record<string, unknown>): readonly R
 }
 
 export function sessionSafetyRefs(session: GuardianSession, safetyRef: string, preflight: Record<string, unknown>) {
-  const refs = [...(session.safety_refs ?? []), safetyRef];
-  if (typeof preflight.dirtySnapshotRef === "string") refs.push(preflight.dirtySnapshotRef);
-  return refs;
+  return [...new Set([
+    ...(session.safety_refs ?? []),
+    safetyRef,
+    ...(typeof preflight.dirtySnapshotRef === "string" ? [preflight.dirtySnapshotRef] : []),
+  ])];
 }
 
 export function dirtyResultFields(preflight: Record<string, unknown>) {
@@ -66,14 +70,21 @@ export async function validateRedundantDirtyPreflight(context: DirtyPreflightCon
   if (input.allowRedundantDirtyPaths !== true) return blocked("worktree has uncommitted changes", { dirtyFiles, targetPath: entry.path }, preflight);
   const repoRoot = String(preflight.repoRoot);
   const baseRef = typeof input.ancestryBaseRef === "string" ? input.ancestryBaseRef : session?.base_ref ?? `${String(config.remote)}/${String(config.baseBranch)}`;
-  preflight.baseRef = baseRef;
-  const base = await resolveRedundantDirtyBase(repoRoot, String(config.remote), baseRef);
+  let authority: RemoteAuthority;
+  try {
+    authority = resolveRemoteAuthority(baseRef, config);
+    preflight.baseRef = authority.displayRef;
+  } catch (error) {
+    if (!(error instanceof Error)) throw error;
+    return blocked("base ref is malformed or untrusted for redundant dirty proof", { baseRef, error: errorMessage(error) }, preflight);
+  }
+  const base = await resolveRedundantDirtyBase(repoRoot, authority);
   if (!base.ok) {
     preflight.baseRefResolutionError = base.error;
     return blocked(base.reason, { baseRef, error: base.error }, preflight);
   }
   preflight.baseRefOid = base.baseRefOid;
-  const proof = await proveRedundantDirtyPaths(entry.path, base.baseRef, base.baseRefOid);
+  const proof = await proveRedundantDirtyPaths(entry.path, authority, base.baseRefOid);
   preflight.redundantDirtyProofs = proof.proofs;
   preflight.redundantDirtyFileCount = proof.proofs.length;
   if (!proof.ok) return blocked(proof.reason, { dirtyFiles, failedPath: proof.failedPath, redundantDirtyProofs: proof.proofs, targetPath: entry.path }, preflight);
@@ -85,13 +96,19 @@ export async function applyRedundantDirtyCleanup(context: DirtyCleanupContext, s
   const repoRoot = String(preflight.repoRoot);
   const redundantDirtyProofs = getRedundantDirtyProofs(preflight);
   if (redundantDirtyProofs.length === 0) return null;
-  const dirtySnapshot = await createDirtySnapshotRef(repoRoot, entry.path, {
-    sessionId: snapshot.safetySessionId,
-    branch: snapshot.branch,
-    head: snapshot.head,
-    paths: redundantDirtyProofs.map((proof) => proof.path),
-    timestamp: input.timestamp,
-  });
+  let dirtySnapshot: DirtySnapshotResult;
+  try {
+    dirtySnapshot = await createDirtySnapshotRef(repoRoot, entry.path, {
+      sessionId: snapshot.safetySessionId,
+      branch: snapshot.branch,
+      head: snapshot.head,
+      paths: redundantDirtyProofs.map((proof) => proof.path),
+      timestamp: input.timestamp,
+    });
+  } catch (error) {
+    if (!(error instanceof Error)) throw error;
+    return blocked("dirty snapshot ref could not be created; refusing to remove worktree", { targetPath: path.resolve(entry.path), error: errorMessage(error) }, preflight);
+  }
   preflight.dirtySnapshotCommit = dirtySnapshot.dirtySnapshotCommit;
   preflight.dirtySnapshotRef = dirtySnapshot.dirtySnapshotRef;
   preflight.dirtySnapshotFiles = dirtySnapshot.dirtySnapshotFiles;

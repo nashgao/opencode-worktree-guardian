@@ -4,13 +4,15 @@ import { classifyDirtyFiles } from "./finish-dirty-files.ts";
 import { finishMergeToBase } from "./finish-merge-to-base.ts";
 import { blocked, errorMessage, isFinishStateInput, withFinishReport } from "./finish-report.ts";
 import type { FinishPreflight, GuardianFinishResult, LooseRecord } from "./finish-report.ts";
-import { createSafetyRef, getCurrentBranch, getDirtyFiles, getHeadCommit, getRepoRoot, listStashes, pushBranch } from "./git.ts";
+import { buildSafetyRef, createOrReuseSafetyRef, createSafetyRef, getCurrentBranch, getDirtyFiles, getHeadCommit, getRepoRoot, listStashes, pushBranchNormally } from "./git.ts";
+import { configuredRemoteAuthority, isTrustedRemoteNamespaceOverlapError } from "./git-authority.ts";
 import { isActiveSession, isTerminalSession } from "./lifecycle.ts";
 import { hasBlockingStashInventory } from "./stash-policy.ts";
 import { getGuardianPaths, readState, recordSession } from "./state.ts";
 import type { GuardianSession } from "./types.ts";
 import { isRecordLike } from "./types.ts";
 import { recoverableGuardianWorktreeBlocker, recoverySessionId } from "./worktree-recovery.ts";
+import { samePathOnDisk } from "./done-shared.ts";
 
 function samePath(a: string, b: string) {
   return path.resolve(a) === path.resolve(b);
@@ -59,6 +61,17 @@ export async function guardianFinish(input: LooseRecord = {}): Promise<GuardianF
     mode,
     blockers: [],
   };
+  if (mode === "merge-to-base") {
+    try {
+      configuredRemoteAuthority(config);
+    } catch (error) {
+      if (!isTrustedRemoteNamespaceOverlapError(error)) throw error;
+      return blocked("configured remote authority is invalid", { error: errorMessage(error) }, preflight);
+    }
+  }
+  if (mode === "merge-to-base" && input.allowMergeToBase !== true) {
+    return blocked("merge-to-base requires explicit allowMergeToBase=true", input.mode === "plan" ? {} : { safetyRef: null }, preflight, { action: "requires-explicit-merge-approval" });
+  }
   const paths = await getGuardianPaths(repoRoot);
   const state = isFinishStateInput(input.state) ? input.state : await readState(paths, { repoRoot, config });
   const currentWorktree = await getRepoRoot(cwd);
@@ -112,7 +125,7 @@ export async function guardianFinish(input: LooseRecord = {}): Promise<GuardianF
     return blocked(`session ${sessionId} is terminal (${session.status}); start a new session instead of finishing a deleted or closed worktree`, { sessionId, sessionStatus: session.status }, preflight);
   }
 
-  preflight.sessionOwnedWorktree = samePath(session.worktree_path, currentWorktree);
+  preflight.sessionOwnedWorktree = await samePathOnDisk(session.worktree_path, currentWorktree);
   if (!preflight.sessionOwnedWorktree) {
     return blocked("current session does not own this worktree", { sessionWorktree: session.worktree_path, currentWorktree }, preflight);
   }
@@ -148,6 +161,7 @@ export async function guardianFinish(input: LooseRecord = {}): Promise<GuardianF
   preflight.commit = commit;
   const existingSafetyRefs = Array.isArray(session.safety_refs) ? session.safety_refs.filter((ref: unknown) => typeof ref === "string") : [];
   const existingSafetyRef = existingSafetyRefs[existingSafetyRefs.length - 1];
+  const plannedSafetyRef = buildSafetyRef(sessionId, branch, input.timestamp);
   if (planMode) {
     if (mode === "merge-to-base" && input.allowMergeToBase !== true) {
       return blocked("merge-to-base requires explicit allowMergeToBase=true", { branch }, preflight, { action: "requires-explicit-merge-approval" });
@@ -158,14 +172,23 @@ export async function guardianFinish(input: LooseRecord = {}): Promise<GuardianF
     preflight.safetyRef = existingSafetyRef;
     return withFinishReport({ ok: true, status: "preserved", mode, branch, worktree: currentWorktree, commit, safetyRef: existingSafetyRef, idempotent: true }, preflight, { action: "already-preserved" });
   }
-  const safetyRef = await createSafetyRef(currentWorktree, { sessionId, branch, commit, timestamp: input.timestamp });
+  let safetyRef: string;
+  try {
+    const createSafetyRefAtCommit = mode !== "preserve-only" && session.head_commit === commit && existingSafetyRefs.includes(plannedSafetyRef)
+      ? createOrReuseSafetyRef
+      : createSafetyRef;
+    safetyRef = await createSafetyRefAtCommit(currentWorktree, { sessionId, branch, commit, ref: plannedSafetyRef });
+  } catch (error) {
+    if (!(error instanceof Error)) throw error;
+    return blocked("safety ref creation failed", { branch, error: errorMessage(error) }, preflight);
+  }
   preflight.safetyRef = safetyRef;
   await recordSession(repoRoot, config, {
     ...session,
     session_id: sessionId,
     status: mode === "preserve-only" ? "preserved" : session.status,
     head_commit: commit,
-    safety_refs: [...(session.safety_refs ?? []), safetyRef],
+    safety_refs: [...new Set([...(session.safety_refs ?? []), safetyRef])],
   }, { event: { type: "safety_ref_created", session_id: sessionId, ref: safetyRef } });
 
   if (mode === "preserve-only") {
@@ -174,7 +197,7 @@ export async function guardianFinish(input: LooseRecord = {}): Promise<GuardianF
 
   if (mode === "push-branch" || mode === "create-pr") {
     try {
-      await pushBranch(currentWorktree, config.remote, branch);
+      await pushBranchNormally(currentWorktree, config.remote, branch, commit);
     } catch (error) {
       if (!(error instanceof Error)) throw error;
       return blocked("push failed", { safetyRef, branch, error: errorMessage(error) }, preflight);
@@ -184,7 +207,7 @@ export async function guardianFinish(input: LooseRecord = {}): Promise<GuardianF
       session_id: sessionId,
       status: "preserved",
       head_commit: commit,
-      safety_refs: [...(session.safety_refs ?? []), safetyRef],
+      safety_refs: [...new Set([...(session.safety_refs ?? []), safetyRef])],
     }, { event: { type: "guardian_finish", session_id: sessionId, ref: safetyRef } });
     const result: LooseRecord = { ok: true, status: mode === "push-branch" ? "pushed" : "pr-suggested", mode, branch, safetyRef };
     if (mode === "create-pr") {

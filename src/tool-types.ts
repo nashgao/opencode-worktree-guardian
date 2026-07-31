@@ -187,6 +187,7 @@ export type PlanCacheToolArgs = MutableRecord & {
   confirm?: unknown;
   confirmDelete?: unknown;
   confirmToken?: unknown;
+  rescue?: unknown;
   primary?: unknown;
   branch?: unknown;
   targetPath?: unknown;
