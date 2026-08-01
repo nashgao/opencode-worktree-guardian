@@ -1,12 +1,9 @@
-import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { promisify } from "node:util";
-import { buildSafetyRef, createRef, fetchRemote, getRefCommit, runGit, snapshotWorktreeDirtCommit } from "./git.ts";
+import { buildSafetyRef, createRef, fetchRemote, getRefCommit, runGit, runGitNullSeparated, snapshotWorktreeDirtCommit } from "./git.ts";
 import { errorMessage } from "./delete-worktree-report.ts";
-
-const execFileAsync = promisify(execFile);
+import type { RemoteAuthority } from "./git-authority.ts";
 
 export type RedundantDirtyKind = "tracked-modified" | "tracked-deleted" | "untracked";
 
@@ -68,7 +65,6 @@ function tempIndexPath(prefix: string) {
 
 function scopedIndexEnv(tempIndex: string) {
   return {
-    ...process.env,
     GIT_INDEX_FILE: tempIndex,
   };
 }
@@ -95,23 +91,24 @@ async function assertRegularWorktreePath(worktreePath: string, filePath: string)
     if (!stats.isFile()) return `unsupported dirty path ${filePath}`;
     return null;
   } catch (error) {
+    if (!(error instanceof Error)) throw error;
     return `unreadable dirty path ${filePath}: ${errorMessage(error)}`;
   }
 }
 
-async function basePathExists(worktreePath: string, baseRef: string, filePath: string) {
-  const result = await runGit(worktreePath, ["ls-tree", "-z", baseRef, "--", filePath]);
+async function basePathExists(worktreePath: string, baseAuthorityRef: string, filePath: string) {
+  const result = await runGit(worktreePath, ["--literal-pathspecs", "ls-tree", "-z", baseAuthorityRef, "--", filePath]);
   return result.stdout.length > 0;
 }
 
-async function worktreePathMatchesBase(worktreePath: string, baseRef: string, filePath: string) {
+async function worktreePathMatchesBase(worktreePath: string, baseAuthorityRef: string, filePath: string) {
   const tempIndex = tempIndexPath("guardian-redundant-dirty-index");
   const env = scopedIndexEnv(tempIndex);
   try {
-    await runGit(worktreePath, ["read-tree", baseRef], { env });
-    await runGit(worktreePath, ["add", "--", filePath], { env });
+    await runGit(worktreePath, ["read-tree", baseAuthorityRef], { env });
+    await runGit(worktreePath, ["--literal-pathspecs", "add", "--", filePath], { env });
     const tree = (await runGit(worktreePath, ["write-tree"], { env })).stdout;
-    const diff = await runGit(worktreePath, ["diff", "--name-only", "-z", baseRef, tree, "--", filePath], { env });
+    const diff = await runGit(worktreePath, ["--literal-pathspecs", "diff", "--name-only", "-z", baseAuthorityRef, tree, "--", filePath], { env });
     return diff.stdout.length === 0;
   } finally {
     await fs.rm(tempIndex, { force: true });
@@ -119,10 +116,7 @@ async function worktreePathMatchesBase(worktreePath: string, baseRef: string, fi
 }
 
 export async function getRichDirtyStatus(repoPath: string): Promise<DirtyStatusEntry[]> {
-  const { stdout } = await execFileAsync("git", ["-C", repoPath, "status", "--porcelain=v1", "--untracked-files=all", "-z"], { maxBuffer: 10 * 1024 * 1024 });
-  const status = String(stdout);
-  if (!status) return [];
-  const rawEntries = status.split("\0").filter(Boolean);
+  const rawEntries = await runGitNullSeparated(repoPath, ["status", "--porcelain=v1", "--untracked-files=all", "-z"]);
   const entries: DirtyStatusEntry[] = [];
   for (let index = 0; index < rawEntries.length; index += 1) {
     const rawEntry = rawEntries[index];
@@ -141,22 +135,23 @@ export async function getRichDirtyStatus(repoPath: string): Promise<DirtyStatusE
   return entries;
 }
 
-export async function resolveRedundantDirtyBase(repoRoot: string, remote: string, baseRef: string): Promise<RedundantDirtyBaseResult> {
+export async function resolveRedundantDirtyBase(repoRoot: string, authority: RemoteAuthority): Promise<RedundantDirtyBaseResult> {
   try {
-    await fetchRemote(repoRoot, remote);
-    const baseRefOid = await getRefCommit(repoRoot, baseRef);
-    return { ok: true, baseRef, baseRefOid };
+    await fetchRemote(repoRoot, authority.remote);
+    const baseRefOid = await getRefCommit(repoRoot, authority.authorityRef);
+    return { ok: true, baseRef: authority.displayRef, baseRefOid };
   } catch (error) {
+    if (!(error instanceof Error)) throw error;
     return {
       ok: false,
-      baseRef,
+      baseRef: authority.displayRef,
       reason: "base ref could not be resolved for redundant dirty proof",
       error: errorMessage(error),
     };
   }
 }
 
-export async function proveRedundantDirtyPaths(worktreePath: string, baseRef: string, baseRefOid: string): Promise<RedundantDirtyProofResult> {
+export async function proveRedundantDirtyPaths(worktreePath: string, authority: RemoteAuthority, baseRefOid: string): Promise<RedundantDirtyProofResult> {
   const entries = await getRichDirtyStatus(worktreePath);
   const proofs: RedundantDirtyProof[] = [];
   for (const entry of entries) {
@@ -165,12 +160,12 @@ export async function proveRedundantDirtyPaths(worktreePath: string, baseRef: st
     if (!isPathInside(worktreePath, entry.path)) return { ok: false, reason: `unsupported dirty path ${entry.path}`, proofs, failedPath: entry.path };
 
     if (classified.kind === "tracked-deleted") {
-      const matchesBase = !(await basePathExists(worktreePath, baseRef, entry.path));
+      const matchesBase = !(await basePathExists(worktreePath, authority.authorityRef, entry.path));
       const proof: RedundantDirtyProof = {
         path: entry.path,
         status: entry.status,
         kind: classified.kind,
-        baseRef,
+        baseRef: authority.displayRef,
         baseRefOid,
         matchesBase,
         ...(matchesBase ? {} : { reason: "path still exists in base tree" }),
@@ -182,12 +177,12 @@ export async function proveRedundantDirtyPaths(worktreePath: string, baseRef: st
 
     const pathError = await assertRegularWorktreePath(worktreePath, entry.path);
     if (pathError) return { ok: false, reason: pathError, proofs, failedPath: entry.path };
-    const matchesBase = await worktreePathMatchesBase(worktreePath, baseRef, entry.path);
+    const matchesBase = await worktreePathMatchesBase(worktreePath, authority.authorityRef, entry.path);
     const proof: RedundantDirtyProof = {
       path: entry.path,
       status: entry.status,
       kind: classified.kind,
-      baseRef,
+      baseRef: authority.displayRef,
       baseRefOid,
       matchesBase,
       ...(matchesBase ? {} : { reason: "worktree path differs from base tree" }),
@@ -213,7 +208,7 @@ export async function createDirtySnapshotRef(repoRoot: string, worktreePath: str
 export async function cleanRedundantDirtyPaths(worktreePath: string, proofs: readonly RedundantDirtyProof[]): Promise<DirtyCleanupResult> {
   const trackedPaths = proofs.filter((proof) => proof.kind !== "untracked").map((proof) => proof.path);
   const untrackedPaths = proofs.filter((proof) => proof.kind === "untracked").map((proof) => proof.path);
-  if (trackedPaths.length > 0) await runGit(worktreePath, ["restore", "--worktree", "--", ...trackedPaths]);
+  if (trackedPaths.length > 0) await runGit(worktreePath, ["--literal-pathspecs", "restore", "--worktree", "--", ...trackedPaths]);
   for (const filePath of untrackedPaths) {
     const pathError = await assertRegularWorktreePath(worktreePath, filePath);
     if (pathError) continue;

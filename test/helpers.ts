@@ -1,10 +1,15 @@
 import { execFile } from "node:child_process";
+import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { DEFAULT_CONFIG } from "../src/config.ts";
 import { getGuardianPaths, readState, writeStateAtomic } from "../src/state.ts";
+import { guardianStart } from "../src/start.ts";
+import { isRecordLike } from "../src/types.ts";
+
+export { installFakeGh } from "./delete-fixtures.ts";
 
 const execFileAsync = promisify(execFile);
 const safeTempDirectoryName = "opencode-worktree-guardian-tests";
@@ -72,6 +77,46 @@ export async function createRepoWithOrigin() {
   return { base, repo, remote };
 }
 
+export type AlreadyLandedDirtyFixture = {
+  readonly base: string;
+  readonly branch: string;
+  readonly featureFile: string;
+  readonly remote: string;
+  readonly repo: string;
+  readonly sessionId: string;
+  readonly worktree: string;
+};
+
+function requireRecord(value: unknown, name: string): Record<string, unknown> {
+  if (isRecordLike(value)) return value;
+  throw new TypeError(`${name} must be an object`);
+}
+
+function requireString(value: unknown, name: string): string {
+  if (typeof value === "string" && value.length > 0) return value;
+  throw new TypeError(`${name} must be a non-empty string`);
+}
+
+export async function makeAlreadyLandedDirtySession(sessionId: string): Promise<AlreadyLandedDirtyFixture> {
+  const { base, remote, repo } = await createRepoWithOrigin();
+  const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId, taskName: "done redundant dirty token", createWorktree: true, config: DEFAULT_CONFIG });
+  const session = requireRecord(started.session, "started.session");
+  const branch = requireString(session.branch, "started.session.branch");
+  const worktree = requireString(session.worktree_path, "started.session.worktree_path");
+  const featureFile = "redundant-dirty-token.txt";
+  await fs.writeFile(path.join(worktree, featureFile), "landed content\n", "utf8");
+  await git(worktree, ["add", featureFile]);
+  await git(worktree, ["commit", "-m", "add redundant dirty token fixture"]);
+  await git(repo, ["merge", "--no-ff", branch, "-m", "merge redundant dirty token fixture"]);
+  await git(repo, ["push", "origin", "main"]);
+  await fs.writeFile(path.join(repo, featureFile), "advanced base content\n", "utf8");
+  await git(repo, ["add", featureFile]);
+  await git(repo, ["commit", "-m", "advance redundant dirty token base"]);
+  await git(repo, ["push", "origin", "main"]);
+  await fs.writeFile(path.join(worktree, featureFile), "advanced base content\n", "utf8");
+  return { base, branch, featureFile, remote, repo, sessionId, worktree };
+}
+
 export async function makeBranchCommit(repo: string, branch = "guardian/test") {
   await git(repo, ["checkout", "-b", branch]);
   const file = path.join(repo, "feature.txt");
@@ -81,185 +126,6 @@ export async function makeBranchCommit(repo: string, branch = "guardian/test") {
   const { stdout } = await git(repo, ["rev-parse", "HEAD"]);
   return { branch, commit: stdout };
 }
-
-type TestLifecycle = {
-  readonly after: (callback: () => void) => void;
-};
-
-type FakeGhOptions = {
-  readonly repo: string;
-  readonly branch: string;
-  readonly head?: string;
-  readonly dynamicHead?: boolean;
-  readonly existingPr?: boolean;
-  readonly mergeFails?: boolean;
-  readonly expectAdmin?: boolean;
-};
-
-function restoreEnv(key: string, value: string | undefined): void {
-  if (value === undefined) {
-    delete process.env[key];
-    return;
-  }
-  process.env[key] = value;
-}
-
-export async function installFakeGh(t: TestLifecycle, options: FakeGhOptions) {
-  const binDir = await createTempDir("guardian-fake-gh-");
-  const stateDir = await createTempDir("guardian-fake-gh-state-");
-  const ghPath = path.join(binDir, "gh");
-  const logPath = path.join(stateDir, "gh.log");
-  const createdPath = path.join(stateDir, "pr-created");
-  const url = "https://github.example/acme/widget/pull/1";
-  const script = `#!/bin/sh
-set -eu
-pr_head() {
-  if [ "\${GUARDIAN_TEST_DYNAMIC_HEAD:-0}" = "1" ]; then
-    git -C "$GUARDIAN_TEST_REPO" rev-parse "$GUARDIAN_TEST_BRANCH"
-  else
-    printf '%s\\n' "$GUARDIAN_TEST_HEAD"
-  fi
-}
-pr_list_json() {
-  printf '[{"number":1,"url":"%s","headRefName":"%s","headRefOid":"%s"}]\\n' "$GUARDIAN_TEST_PR_URL" "$GUARDIAN_TEST_BRANCH" "$(pr_head)"
-}
-pr_view_json() {
-  printf '{"number":1,"url":"%s","headRefName":"%s","headRefOid":"%s"}\\n' "$GUARDIAN_TEST_PR_URL" "$GUARDIAN_TEST_BRANCH" "$(pr_head)"
-}
-printf '%s\\n' "$*" >> "$GUARDIAN_TEST_GH_LOG"
-if [ "$1" = "pr" ] && [ "\${2:-}" = "list" ]; then
-  if [ -f "$GUARDIAN_TEST_PR_CREATED" ]; then
-    pr_list_json
-  else
-    printf '[]\\n'
-  fi
-elif [ "$1" = "pr" ] && [ "\${2:-}" = "create" ]; then
-  : > "$GUARDIAN_TEST_PR_CREATED"
-  printf '%s\\n' "$GUARDIAN_TEST_PR_URL"
-elif [ "$1" = "pr" ] && [ "\${2:-}" = "view" ]; then
-  pr_view_json
-elif [ "$1" = "pr" ] && [ "\${2:-}" = "merge" ]; then
-  has_admin=0
-  for arg in "$@"; do
-    if [ "$arg" = "--admin" ]; then has_admin=1; fi
-  done
-  if [ "\${GUARDIAN_TEST_EXPECT_ADMIN:-0}" = "1" ] && [ "$has_admin" != "1" ]; then
-    echo "admin bypass was expected" >&2
-    exit 8
-  fi
-  if [ "\${GUARDIAN_TEST_EXPECT_ADMIN:-0}" != "1" ] && [ "$has_admin" = "1" ]; then
-    echo "admin bypass was not expected" >&2
-    exit 9
-  fi
-  if [ "\${GUARDIAN_TEST_MERGE_FAILS:-0}" = "1" ]; then
-    echo "review required" >&2
-    exit 4
-  fi
-  git -C "$GUARDIAN_TEST_REPO" checkout main >/dev/null
-  git -C "$GUARDIAN_TEST_REPO" merge --ff-only "$GUARDIAN_TEST_BRANCH" >/dev/null
-  git -C "$GUARDIAN_TEST_REPO" push origin main >/dev/null
-else
-  echo "unexpected gh invocation: $*" >&2
-  exit 2
-fi
-`;
-  await fs.writeFile(ghPath, script, "utf8");
-  await fs.chmod(ghPath, 0o755);
-  if (options.existingPr === true) await fs.writeFile(createdPath, "", "utf8");
-
-  const originalEnv = {
-    PATH: process.env.PATH,
-    GUARDIAN_TEST_REPO: process.env.GUARDIAN_TEST_REPO,
-    GUARDIAN_TEST_BRANCH: process.env.GUARDIAN_TEST_BRANCH,
-    GUARDIAN_TEST_HEAD: process.env.GUARDIAN_TEST_HEAD,
-    GUARDIAN_TEST_DYNAMIC_HEAD: process.env.GUARDIAN_TEST_DYNAMIC_HEAD,
-    GUARDIAN_TEST_GH_LOG: process.env.GUARDIAN_TEST_GH_LOG,
-    GUARDIAN_TEST_PR_CREATED: process.env.GUARDIAN_TEST_PR_CREATED,
-    GUARDIAN_TEST_PR_URL: process.env.GUARDIAN_TEST_PR_URL,
-    GUARDIAN_TEST_MERGE_FAILS: process.env.GUARDIAN_TEST_MERGE_FAILS,
-    GUARDIAN_TEST_EXPECT_ADMIN: process.env.GUARDIAN_TEST_EXPECT_ADMIN,
-  };
-  process.env.PATH = `${binDir}${path.delimiter}${process.env.PATH ?? ""}`;
-  process.env.GUARDIAN_TEST_REPO = options.repo;
-  process.env.GUARDIAN_TEST_BRANCH = options.branch;
-  process.env.GUARDIAN_TEST_HEAD = options.head ?? "";
-  process.env.GUARDIAN_TEST_DYNAMIC_HEAD = options.dynamicHead === true ? "1" : "0";
-  process.env.GUARDIAN_TEST_GH_LOG = logPath;
-  process.env.GUARDIAN_TEST_PR_CREATED = createdPath;
-  process.env.GUARDIAN_TEST_PR_URL = url;
-  process.env.GUARDIAN_TEST_MERGE_FAILS = options.mergeFails === true ? "1" : "0";
-  process.env.GUARDIAN_TEST_EXPECT_ADMIN = options.expectAdmin === true ? "1" : "0";
-  t.after(() => {
-    for (const [key, value] of Object.entries(originalEnv)) restoreEnv(key, value);
-  });
-
-  return { logPath, url };
-}
-
-// Merges on the remote via a separate clone, like real gh, so the primary repo's local base
-// branch is never moved and guardian's post-merge fast-forward is actually exercised. Relies on
-// land-clean calling `pr create -> view -> merge` sequentially per session: create records its
-// --head branch to a file that view/merge replay. Merges use --no-ff so independent branches land.
-export async function installMultiBranchFakeGh(t: TestLifecycle, options: { readonly repo: string; readonly remote: string }) {
-  const binDir = await createTempDir("guardian-multi-gh-");
-  const stateDir = await createTempDir("guardian-multi-gh-state-");
-  const mergerDir = await createTempDir("guardian-multi-gh-merger-");
-  await execFileAsync("git", ["clone", "--quiet", options.remote, mergerDir]);
-  await execFileAsync("git", ["-C", mergerDir, "config", "user.email", "guardian@example.test"]);
-  await execFileAsync("git", ["-C", mergerDir, "config", "user.name", "Guardian Test"]);
-  const ghPath = path.join(binDir, "gh");
-  const logPath = path.join(stateDir, "gh.log");
-  const currentPath = path.join(stateDir, "current-branch");
-  const script = `#!/bin/sh
-set -eu
-printf '%s\\n' "$*" >> "$GUARDIAN_TEST_GH_LOG"
-sub="\${2:-}"
-head_branch=""
-prev=""
-for arg in "$@"; do
-  if [ "$prev" = "--head" ]; then head_branch="$arg"; fi
-  prev="$arg"
-done
-if [ "$1" = "pr" ] && [ "$sub" = "list" ]; then
-  printf '[]\\n'
-elif [ "$1" = "pr" ] && [ "$sub" = "create" ]; then
-  printf '%s\\n' "$head_branch" > "$GUARDIAN_TEST_CURRENT_BRANCH"
-  printf 'https://github.example/acme/widget/pull/%s\\n' "$head_branch"
-elif [ "$1" = "pr" ] && [ "$sub" = "view" ]; then
-  branch="$(cat "$GUARDIAN_TEST_CURRENT_BRANCH")"
-  oid="$(git -C "$GUARDIAN_TEST_REPO" rev-parse "$branch")"
-  printf '{"number":1,"url":"https://github.example/acme/widget/pull/%s","headRefName":"%s","headRefOid":"%s"}\\n' "$branch" "$branch" "$oid"
-elif [ "$1" = "pr" ] && [ "$sub" = "merge" ]; then
-  branch="$(cat "$GUARDIAN_TEST_CURRENT_BRANCH")"
-  git -C "$GUARDIAN_TEST_MERGER" fetch -q origin
-  git -C "$GUARDIAN_TEST_MERGER" checkout -q -B main origin/main
-  git -C "$GUARDIAN_TEST_MERGER" merge -q --no-ff "origin/$branch" -m "merge $branch"
-  git -C "$GUARDIAN_TEST_MERGER" push -q origin main
-else
-  echo "unexpected gh invocation: $*" >&2
-  exit 2
-fi
-`;
-  await fs.writeFile(ghPath, script, "utf8");
-  await fs.chmod(ghPath, 0o755);
-  const originalEnv = {
-    PATH: process.env.PATH,
-    GUARDIAN_TEST_REPO: process.env.GUARDIAN_TEST_REPO,
-    GUARDIAN_TEST_MERGER: process.env.GUARDIAN_TEST_MERGER,
-    GUARDIAN_TEST_GH_LOG: process.env.GUARDIAN_TEST_GH_LOG,
-    GUARDIAN_TEST_CURRENT_BRANCH: process.env.GUARDIAN_TEST_CURRENT_BRANCH,
-  };
-  process.env.PATH = `${binDir}${path.delimiter}${process.env.PATH ?? ""}`;
-  process.env.GUARDIAN_TEST_REPO = options.repo;
-  process.env.GUARDIAN_TEST_MERGER = mergerDir;
-  process.env.GUARDIAN_TEST_GH_LOG = logPath;
-  process.env.GUARDIAN_TEST_CURRENT_BRANCH = currentPath;
-  t.after(() => {
-    for (const [key, value] of Object.entries(originalEnv)) restoreEnv(key, value);
-  });
-  return { logPath };
-}
-
 
 export async function seedSession(repo: string, session: Record<string, unknown>, config: Record<string, unknown> = DEFAULT_CONFIG): Promise<void> {
   const paths = await getGuardianPaths(repo);
@@ -276,4 +142,96 @@ export async function seedSession(repo: string, session: Record<string, unknown>
     updated_at: typeof session.updated_at === "string" ? session.updated_at : now,
   };
   await writeStateAtomic(paths, state);
+}
+
+type FilesystemEntry = {
+  readonly path: string;
+  readonly kind: "directory" | "file" | "missing" | "other" | "symlink";
+  readonly value: string | null;
+};
+
+export type RescueMutationSurface = {
+  readonly branch: string;
+  readonly fetchHead: FilesystemEntry;
+  readonly files: readonly FilesystemEntry[];
+  readonly head: string;
+  readonly index: FilesystemEntry;
+  readonly indexLock: FilesystemEntry;
+  readonly objects: readonly FilesystemEntry[];
+  readonly reflogs: readonly FilesystemEntry[];
+  readonly refs: readonly FilesystemEntry[];
+  readonly state: readonly FilesystemEntry[];
+  readonly status: string;
+  readonly unreachable: string;
+  readonly worktrees: string;
+};
+
+async function fileEntry(root: string, absolutePath: string): Promise<FilesystemEntry> {
+  const relative = path.relative(root, absolutePath) || ".";
+  try {
+    const stat = await fs.lstat(absolutePath);
+    if (stat.isSymbolicLink()) return { path: relative, kind: "symlink", value: await fs.readlink(absolutePath) };
+    if (stat.isDirectory()) return { path: relative, kind: "directory", value: null };
+    if (stat.isFile()) return { path: relative, kind: "file", value: crypto.createHash("sha256").update(await fs.readFile(absolutePath)).digest("hex") };
+    return { path: relative, kind: "other", value: String(stat.mode) };
+  } catch (error) {
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") return { path: relative, kind: "missing", value: null };
+    throw error;
+  }
+}
+
+async function directoryEntries(root: string, excludedChild = ""): Promise<readonly FilesystemEntry[]> {
+  const first = await fileEntry(root, root);
+  if (first.kind === "missing") return [first];
+  const entries: FilesystemEntry[] = [first];
+  async function visit(current: string): Promise<void> {
+    const stat = await fs.lstat(current);
+    if (!stat.isDirectory()) return;
+    const children = await fs.readdir(current);
+    for (const child of children.sort((left, right) => left.localeCompare(right))) {
+      if (current === root && child === excludedChild) continue;
+      const childPath = path.join(current, child);
+      try {
+        entries.push(await fileEntry(root, childPath));
+        await visit(childPath);
+      } catch (error) {
+        if (!(typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT")) throw error;
+      }
+    }
+  }
+  await visit(root);
+  return entries;
+}
+
+export async function rescueMutationSurface(commonRepo: string, observedWorktree = commonRepo): Promise<RescueMutationSurface> {
+  const common = (await git(commonRepo, ["rev-parse", "--path-format=absolute", "--git-common-dir"])).stdout;
+  const index = (await git(observedWorktree, ["rev-parse", "--path-format=absolute", "--git-path", "index"])).stdout;
+  const branch = await git(observedWorktree, ["branch", "--show-current"]);
+  const head = await git(observedWorktree, ["rev-parse", "HEAD"]);
+  const status = await git(observedWorktree, ["status", "--porcelain=v1", "--ignored", "--untracked-files=all", "-z"]);
+  const worktrees = await git(commonRepo, ["worktree", "list", "--porcelain"]);
+  const unreachable = await git(commonRepo, ["fsck", "--no-reflogs", "--unreachable", "--no-progress"]);
+  const files = await directoryEntries(observedWorktree, ".git");
+  const objects = await directoryEntries(path.join(common, "objects"));
+  const reflogs = await directoryEntries(path.join(common, "logs"));
+  const refs = await directoryEntries(path.join(common, "refs"));
+  const state = await directoryEntries(path.join(common, "opencode-guardian"));
+  const fetchHead = await fileEntry(common, path.join(common, "FETCH_HEAD"));
+  const indexEntry = await fileEntry(common, index);
+  const indexLock = await fileEntry(common, `${index}.lock`);
+  return {
+    branch: branch.stdout,
+    fetchHead,
+    files,
+    head: head.stdout,
+    index: indexEntry,
+    indexLock,
+    objects,
+    reflogs,
+    refs,
+    state,
+    status: status.stdout,
+    unreachable: unreachable.stdout,
+    worktrees: worktrees.stdout,
+  };
 }

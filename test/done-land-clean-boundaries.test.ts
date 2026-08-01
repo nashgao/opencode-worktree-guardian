@@ -6,7 +6,8 @@ import { DEFAULT_CONFIG } from "../src/config.ts";
 import { guardianDone } from "../src/done.ts";
 import { guardianStart } from "../src/start.ts";
 import { isRecordLike } from "../src/types.ts";
-import { createRepoWithOrigin, git, installFakeGh } from "./helpers.ts";
+import { createRepoWithOrigin, git, rescueMutationSurface } from "./helpers.ts";
+import { installFakeGh } from "./delete-fixtures.ts";
 
 function requireRecord(value: unknown, name: string): Record<string, unknown> {
   if (isRecordLike(value)) return value;
@@ -64,9 +65,18 @@ test("guardian_done active-session plan is read-only and previews land-and-clean
   assert.equal(result.branch, branch);
   assert.equal(result.head, head);
   assert.equal(result.nextAction, "guardian_done mode=apply confirm=true");
+  assert.equal(typeof result.confirmToken, "string");
   await assertWorktreePresent(repo, worktree);
   await git(repo, ["rev-parse", "--verify", `refs/heads/${branch}`]);
   await assert.rejects(git(repo, ["merge-base", "--is-ancestor", head, "origin/main"]));
+});
+
+test("guardian_done apply without confirm stops before land-clean preflight work", async (t) => {
+  const sessionId = "land-clean-no-confirm-artifact-read-only"; const { repo, worktree, branch, head } = await createCommittedSession(sessionId, "no-confirm");
+  const fakeGh = await installFakeGh(t, { repo, branch, head, dynamicHead: true }); const before = await rescueMutationSurface(repo);
+  const result = await guardianDone({ repoRoot: repo, cwd: worktree, sessionId, mode: "apply", commitMessage: "feat: must not reach preflight", config: DEFAULT_CONFIG });
+  assert.equal(result.ok, false, JSON.stringify(result)); assert.equal(result.status, "blocked"); assert.match(String(result.reason), /confirm=true/);
+  assert.deepEqual(await rescueMutationSurface(repo), before); assert.equal(await fs.access(fakeGh.logPath).then(() => true, () => false), false);
 });
 
 
@@ -76,8 +86,9 @@ test("guardian_done cleans already-merged sessions without creating a PR", async
   await git(repo, ["merge", "--ff-only", branch]);
   await git(repo, ["push", "origin", "main"]);
   const fakeGh = await installFakeGh(t, { repo, branch, head });
+  const plan = requireRecord(await guardianDone({ repoRoot: repo, cwd: worktree, sessionId, mode: "plan", config: DEFAULT_CONFIG, timestamp: "20260624T120000" }), "plan");
 
-  const result = await guardianDone({ repoRoot: repo, cwd: worktree, sessionId, mode: "apply", confirm: true, config: DEFAULT_CONFIG, timestamp: "20260624T120000" });
+  const result = await guardianDone({ repoRoot: repo, cwd: worktree, sessionId, mode: "apply", confirm: true, confirmToken: requireString(plan.confirmToken, "plan.confirmToken"), config: DEFAULT_CONFIG, timestamp: "20260624T120000" });
 
   assert.equal(result.ok, true, JSON.stringify(result));
   assert.equal(result.status, "already-landed-and-cleaned");
@@ -94,7 +105,8 @@ test("guardian_done reuses an existing open PR before cleanup", async (t) => {
   const sessionId = "land-clean-existing-pr";
   const { repo, worktree, branch, head } = await createCommittedSession(sessionId, "existing-pr");
   const fakeGh = await installFakeGh(t, { repo, branch, head, existingPr: true });
-  const result = await guardianDone({ repoRoot: repo, cwd: worktree, sessionId, mode: "apply", confirm: true, config: DEFAULT_CONFIG });
+  const plan = requireRecord(await guardianDone({ repoRoot: repo, cwd: worktree, sessionId, mode: "plan", config: DEFAULT_CONFIG }), "plan");
+  const result = await guardianDone({ repoRoot: repo, cwd: worktree, sessionId, mode: "apply", confirm: true, confirmToken: requireString(plan.confirmToken, "plan.confirmToken"), config: DEFAULT_CONFIG });
 
   assert.equal(result.ok, true);
   assert.equal(result.status, "landed-and-cleaned");
@@ -109,7 +121,8 @@ test("guardian_done leaves worktree and branch intact when PR merge is waiting",
   const sessionId = "land-clean-waiting";
   const { repo, worktree, branch, head } = await createCommittedSession(sessionId, "merge-waiting");
   const fakeGh = await installFakeGh(t, { repo, branch, head, mergeFails: true });
-  const result = await guardianDone({ repoRoot: repo, cwd: worktree, sessionId, mode: "apply", confirm: true, config: DEFAULT_CONFIG });
+  const plan = requireRecord(await guardianDone({ repoRoot: repo, cwd: worktree, sessionId, mode: "plan", config: DEFAULT_CONFIG }), "plan");
+  const result = await guardianDone({ repoRoot: repo, cwd: worktree, sessionId, mode: "apply", confirm: true, confirmToken: requireString(plan.confirmToken, "plan.confirmToken"), config: DEFAULT_CONFIG });
 
   assert.equal(result.ok, false);
   assert.equal(result.status, "waiting");
@@ -122,7 +135,7 @@ test("guardian_done leaves worktree and branch intact when PR merge is waiting",
   await assert.rejects(git(repo, ["merge-base", "--is-ancestor", head, "origin/main"]));
 });
 
-test("guardian_done blocks dirty session apply without an explicit commit message", async () => {
+test("guardian_done blocks dirty session apply without a plan token before fetch", async () => {
   const sessionId = "land-clean-dirty-no-message";
   const { repo, worktree, branch, head } = await createCommittedSession(sessionId, "dirty-no-message");
   await fs.writeFile(path.join(worktree, "uncommitted.txt"), "needs a message\n", "utf8");
@@ -131,7 +144,8 @@ test("guardian_done blocks dirty session apply without an explicit commit messag
 
   assert.equal(result.ok, false);
   assert.equal(result.status, "blocked");
-  assert.match(String(result.reason), /commitMessage/);
+  assert.match(String(result.reason), /plan changed/);
+  assert.equal(result.tokenMatched, false);
   await assertWorktreePresent(repo, worktree);
   await git(repo, ["rev-parse", "--verify", `refs/heads/${branch}`]);
   await assert.rejects(git(repo, ["merge-base", "--is-ancestor", head, "origin/main"]));
@@ -251,15 +265,15 @@ test("guardian_done only uses admin bypass when allowAdminBypass is explicit", a
   const sessionId = "land-clean-admin";
   const { repo, worktree, branch, head } = await createCommittedSession(sessionId, "admin-bypass");
   const fakeGh = await installFakeGh(t, { repo, branch, head, expectAdmin: true });
-  const result = await guardianDone({
+  const request = {
     repoRoot: repo,
     cwd: worktree,
     sessionId,
-    mode: "apply",
-    confirm: true,
     allowAdminBypass: true,
     config: DEFAULT_CONFIG,
-  });
+  };
+  const plan = requireRecord(await guardianDone({ ...request, mode: "plan" }), "plan");
+  const result = await guardianDone({ ...request, mode: "apply", confirm: true, confirmToken: requireString(plan.confirmToken, "plan.confirmToken") });
 
   assert.equal(result.ok, true);
   assert.equal(result.status, "landed-and-cleaned");

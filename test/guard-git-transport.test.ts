@@ -1,6 +1,46 @@
 import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import path from "node:path";
 import test from "node:test";
+import { DEFAULT_CONFIG } from "../src/config.ts";
+import { guardianStart } from "../src/start.ts";
+import { deleteRemoteBranch, fetchRemote, fetchRemotePrune, listRemoteBranches, pushBranchNormally, pushBranchWithLease } from "../src/git.ts";
 import { classifyGuardCommand, classifyNormalAgentGitCommand } from "../src/guards.ts";
+import { createRepoWithOrigin, createTempDir, git } from "./helpers.ts";
+
+type GitRefusalCheck = { readonly marker: string; readonly bin: string; readonly command: () => Promise<unknown>; readonly errorPattern: RegExp; readonly markedCommand?: string };
+
+async function assertRefusedBeforeGit({ marker, bin, command, errorPattern, markedCommand }: GitRefusalCheck) {
+  const originalPath = process.env.PATH;
+  const originalMarker = process.env.GUARDIAN_GIT_MARKER;
+  const originalRealPath = process.env.GUARDIAN_REAL_PATH;
+  const originalMarkedCommand = process.env.GUARDIAN_MARKED_COMMAND;
+  process.env.PATH = `${bin}${path.delimiter}${originalPath ?? ""}`;
+  process.env.GUARDIAN_GIT_MARKER = marker;
+  process.env.GUARDIAN_REAL_PATH = originalPath ?? "";
+  if (markedCommand === undefined) delete process.env.GUARDIAN_MARKED_COMMAND;
+  else process.env.GUARDIAN_MARKED_COMMAND = markedCommand;
+  let failure: unknown;
+  try {
+    try {
+      await command();
+    } catch (error) {
+      failure = error;
+    }
+  } finally {
+    if (originalPath === undefined) delete process.env.PATH;
+    else process.env.PATH = originalPath;
+    if (originalMarker === undefined) delete process.env.GUARDIAN_GIT_MARKER;
+    else process.env.GUARDIAN_GIT_MARKER = originalMarker;
+    if (originalRealPath === undefined) delete process.env.GUARDIAN_REAL_PATH;
+    else process.env.GUARDIAN_REAL_PATH = originalRealPath;
+    if (originalMarkedCommand === undefined) delete process.env.GUARDIAN_MARKED_COMMAND;
+    else process.env.GUARDIAN_MARKED_COMMAND = originalMarkedCommand;
+  }
+  await assert.rejects(fs.access(marker));
+  assert.ok(failure instanceof Error);
+  assert.match(failure.message, errorPattern);
+}
 
 function assertTransportBlocked(command: string): void {
   assert.equal(classifyGuardCommand(command).blocked, true, command);
@@ -172,4 +212,58 @@ test("allows ordinary static transport and source-only fetches", () => {
   ]) {
     assertTransportAllowed(command);
   }
+});
+
+test("remote command boundary rejects unsafe and unconfigured remotes before Git starts", async (t) => {
+  // Given a real repository, a configured option-shaped remote, and a fake Git executable.
+  const { base, repo } = await createRepoWithOrigin();
+  const toolRoot = await createTempDir("guardian-git-boundary-tools-");
+  t.after(async () => fs.rm(base, { recursive: true, force: true }));
+  t.after(async () => fs.rm(toolRoot, { recursive: true, force: true }));
+  const uploadPack = path.join(toolRoot, "upload-pack");
+  const optionRemote = `--upload-pack=${uploadPack}`;
+  const fakeGit = path.join(toolRoot, "git");
+  await fs.writeFile(uploadPack, '#!/bin/sh\n: > "$GUARDIAN_UPLOAD_PACK_MARKER"\nexit 93\n');
+  await fs.writeFile(fakeGit, '#!/bin/sh\nif [ "$3" = config ]; then PATH="$GUARDIAN_REAL_PATH" exec git "$@"; fi\nif [ -z "$GUARDIAN_MARKED_COMMAND" ] || [ "$3" = "$GUARDIAN_MARKED_COMMAND" ]; then : > "$GUARDIAN_GIT_MARKER"; exit 94; fi\nPATH="$GUARDIAN_REAL_PATH" exec git "$@"\n');
+  await fs.chmod(uploadPack, 0o755);
+  await fs.chmod(fakeGit, 0o755);
+  await fs.appendFile(path.join(repo, ".git", "config"), `\n[remote "${optionRemote}"]\n\turl = ${base}/remote.git\n`);
+  const head = (await git(repo, ["rev-parse", "HEAD"])).stdout;
+  const unsafeRemotes = [optionRemote, "-ccore.fsmonitor=false", "", "origin//team", "unconfigured/team"];
+  const remoteCommands = [
+    (remote: string) => fetchRemote(repo, remote), (remote: string) => fetchRemotePrune(repo, remote),
+    (remote: string) => pushBranchWithLease(repo, remote, "main", head, null), (remote: string) => pushBranchNormally(repo, remote, "main", head),
+    (remote: string) => deleteRemoteBranch(repo, remote, "main", head), (remote: string) => listRemoteBranches(repo, remote),
+  ];
+
+  for (const [index, remote] of unsafeRemotes.entries()) {
+    // When every remote-bearing boundary receives the unsafe value.
+    for (const [commandIndex, command] of remoteCommands.entries()) {
+      const marker = path.join(toolRoot, `git-${index}-${commandIndex}.marker`);
+      await assertRefusedBeforeGit({ marker, bin: toolRoot, command: () => command(remote), errorPattern: /remote/i });
+
+      // Then it rejects before the fake Git command runner can execute.
+    }
+  }
+  await assertRefusedBeforeGit({
+    marker: path.join(toolRoot, "start.marker"),
+    bin: toolRoot,
+    command: () => guardianStart({ repoRoot: repo, cwd: repo, sessionId: "unsafe-remote", taskName: "unsafe remote", createWorktree: true, config: { ...DEFAULT_CONFIG, remote: optionRemote } }),
+    errorPattern: /remote/i,
+    markedCommand: "worktree",
+  });
+
+  // When an option-shaped configured remote is passed directly to Git's fetch grammar.
+  const uploadPackMarker = path.join(toolRoot, "upload-pack.marker");
+  const originalUploadPackMarker = process.env.GUARDIAN_UPLOAD_PACK_MARKER;
+  process.env.GUARDIAN_UPLOAD_PACK_MARKER = uploadPackMarker;
+  try {
+    await assert.rejects(fetchRemote(repo, optionRemote), /remote/i);
+  } finally {
+    if (originalUploadPackMarker === undefined) delete process.env.GUARDIAN_UPLOAD_PACK_MARKER;
+    else process.env.GUARDIAN_UPLOAD_PACK_MARKER = originalUploadPackMarker;
+  }
+
+  // Then Git never reaches the configured upload-pack executable.
+  await assert.rejects(fs.access(uploadPackMarker));
 });

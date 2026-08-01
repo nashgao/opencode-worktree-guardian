@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import fs, { readFile } from "node:fs/promises";
 import test from "node:test";
 import plugin from "../src/index.ts";
-import type { GuardianToolName } from "../src/types.ts";
+import { maybeInjectPlanConfirmToken, rememberPlanConfirmToken } from "../src/plugin/plan-token-cache.ts";
+import { createToolContext, runTool } from "./plugin-contract-helpers.ts";
+import type { GuardianToolName, PlanCacheToolArgs, PlanTokenCache } from "../src/types.ts";
 
 const expectedToolNames = [
   "guardian_delete_paths",
@@ -108,6 +110,24 @@ test("README documents local shim and readiness command names", async () => {
   assert.match(readme, /\.git\/opencode-guardian\/report\.html/);
 });
 
+test("canonical docs define the cooperative ignored-deletion concurrency boundary", async () => {
+  const [readme, changelog, adr] = await Promise.all([
+    readFile(new URL("../README.md", import.meta.url), "utf8"),
+    readFile(new URL("../CHANGELOG.md", import.meta.url), "utf8"),
+    readFile(new URL("../docs/adr/0001-guardian-safety-policy.md", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(adr, /# ADR 0001: Threat Model and Concurrency Boundary/);
+  assert.match(adr, /Guardian mediates cooperative native and routed writers/);
+  assert.match(adr, /uncooperative or malicious same-UID writers are outside this guarantee/);
+  assert.match(adr, /rechecked at the removal boundary/);
+  assert.match(adr, /non-force removal fails, Guardian rescans and preserves/);
+  assert.match(readme, /cooperative boundary/);
+  assert.match(readme, /observed drift blocks and requires a fresh plan/);
+  assert.doesNotMatch(readme, /added or changed ignored data remains preserved/i);
+  assert.match(changelog, /Wave 5C/);
+});
+
 test("packaged command files route to native guardian tools", async () => {
   for (const [commandName, toolName] of expectedPackagedCommands) {
     const command = await readFile(new URL(`../commands/${commandName}.md`, import.meta.url), "utf8");
@@ -129,4 +149,84 @@ test("packaged Codex skill starts hygiene with scan inventory before cleanup pla
   assert.equal(scanCommandIndex < planCommandIndex, true);
   assert.doesNotMatch(skill, /guardian_hygiene '\{"mode":"plan"\}' first/);
   assert.doesNotMatch(skill, /guardian_hygiene`, `guardian_delete_paths`, `guardian_delete_worktree`, and `guardian_finish_workflow`, always run `mode=plan` first/);
+});
+
+test("guardian_done plugin confirm reuses planned-partial tokens", () => {
+  const cache: PlanTokenCache = new Map();
+  const planArgs: PlanCacheToolArgs = { repoRoot: "/repo", cwd: "/repo", mode: "plan", allowIgnoredFiles: true };
+  const applyArgs: PlanCacheToolArgs = { repoRoot: "/repo", cwd: "/repo", mode: "apply", confirm: true, confirmToken: "", allowIgnoredFiles: true };
+  const changedApplyArgs: PlanCacheToolArgs = { ...applyArgs, allowIgnoredFiles: false };
+  const adminApplyArgs: PlanCacheToolArgs = { ...applyArgs, allowAdminBypass: true };
+
+  rememberPlanConfirmToken("guardian_done", planArgs, { ok: true, status: "planned-partial", confirmToken: "partial-token" }, cache);
+  maybeInjectPlanConfirmToken("guardian_done", applyArgs, cache);
+  maybeInjectPlanConfirmToken("guardian_done", changedApplyArgs, cache);
+  maybeInjectPlanConfirmToken("guardian_done", adminApplyArgs, cache);
+
+  assert.equal(applyArgs.confirmToken, "partial-token");
+  assert.equal(changedApplyArgs.confirmToken, "");
+  assert.equal(adminApplyArgs.confirmToken, "");
+});
+
+test("guardian_done plugin cache keys include primary target", () => {
+  const cache: PlanTokenCache = new Map();
+  const primaryPlanArgs: PlanCacheToolArgs = { repoRoot: "/repo", cwd: "/repo", mode: "plan", primary: true, commitMessage: "feat: primary target" };
+  const bareApplyArgs: PlanCacheToolArgs = { repoRoot: "/repo", cwd: "/repo", mode: "apply", confirm: true, confirmToken: "", commitMessage: "feat: primary target" };
+  const primaryApplyArgs: PlanCacheToolArgs = { ...bareApplyArgs, primary: true };
+
+  rememberPlanConfirmToken("guardian_done", primaryPlanArgs, { ok: true, status: "planned", confirmToken: "primary-token" }, cache);
+  maybeInjectPlanConfirmToken("guardian_done", bareApplyArgs, cache);
+  maybeInjectPlanConfirmToken("guardian_done", primaryApplyArgs, cache);
+
+  assert.equal(bareApplyArgs.confirmToken, "");
+  assert.equal(primaryApplyArgs.confirmToken, "primary-token");
+});
+
+test("guardian_done exposes rescue and injects only a matching confirmed rescue plan token", async (t) => {
+  const { createRepoWithOrigin, git } = await import("./helpers.ts");
+  const path = await import("node:path");
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  await fs.writeFile(path.join(repo, "README.md"), "rescued change\n");
+  await fs.writeFile(path.join(repo, "rescue-note.txt"), "rescue note\n");
+  const hooks = await plugin.server({ directory: repo, worktree: repo });
+  const { context } = createToolContext();
+  context.directory = repo;
+  context.worktree = repo;
+  assert.equal(typeof hooks.tool.guardian_done.args.rescue.safeParse, "function");
+
+  const planArgs = { repoRoot: repo, cwd: repo, rescue: true, mode: "plan", timestamp: "20260730T120000" };
+  const plan = await runTool(hooks.tool.guardian_done.execute, planArgs, context);
+  const noConfirm = await runTool(hooks.tool.guardian_done.execute, { ...planArgs, mode: "apply", confirmToken: "" }, context);
+
+  assert.equal(plan.metadata.status, "rescue-planned");
+  assert.equal(noConfirm.metadata.status, "blocked");
+  assert.equal(await fs.readFile(path.join(repo, "README.md"), "utf8"), "rescued change\n");
+  assert.equal((await git(repo, ["for-each-ref", "--format=%(refname)", "refs/opencode-guardian/rescue"])).stdout, "");
+  const confirmed = await runTool(hooks.tool.guardian_done.execute, { ...planArgs, mode: "apply", confirm: true, confirmToken: "" }, context);
+  assert.equal(confirmed.metadata.status, "rescued");
+  await assert.rejects(fs.access(path.join(repo, "rescue-note.txt")));
+});
+
+test("guardian_done rescue cache keys separate rescue and changed rescue options", () => {
+  const cache: PlanTokenCache = new Map();
+  const planArgs: PlanCacheToolArgs = { repoRoot: "/repo", cwd: "/repo", rescue: true, mode: "plan", timestamp: "20260730T120000" };
+  const matchingApply: PlanCacheToolArgs = { ...planArgs, mode: "apply", confirm: true, confirmToken: "" };
+  const unconfirmedApply: PlanCacheToolArgs = { ...planArgs, mode: "apply", confirmToken: "" };
+  const legacyConfirmDeleteApply: PlanCacheToolArgs = { ...planArgs, mode: "apply", confirmDelete: true, confirmToken: "" };
+  const ordinaryApply: PlanCacheToolArgs = { ...matchingApply, rescue: false };
+  const changedApply: PlanCacheToolArgs = { ...matchingApply, timestamp: "20260730T120001" };
+
+  rememberPlanConfirmToken("guardian_done", planArgs, { ok: true, status: "rescue-planned", confirmToken: "rescue-token" }, cache);
+  maybeInjectPlanConfirmToken("guardian_done", matchingApply, cache);
+  maybeInjectPlanConfirmToken("guardian_done", unconfirmedApply, cache);
+  maybeInjectPlanConfirmToken("guardian_done", legacyConfirmDeleteApply, cache);
+  maybeInjectPlanConfirmToken("guardian_done", ordinaryApply, cache);
+  maybeInjectPlanConfirmToken("guardian_done", changedApply, cache);
+
+  assert.equal(matchingApply.confirmToken, "rescue-token");
+  assert.equal(unconfirmedApply.confirmToken, "");
+  assert.equal(legacyConfirmDeleteApply.confirmToken, "");
+  assert.equal(ordinaryApply.confirmToken, "");
+  assert.equal(changedApply.confirmToken, "");
 });

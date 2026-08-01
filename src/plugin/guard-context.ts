@@ -1,10 +1,10 @@
 import { loadConfig } from "../config.ts";
-import { listWorktrees, tryGit } from "../git.ts";
+import { listWorktrees, tryGit, tryGitReadOnly } from "../git.ts";
 import { collectKnownWorktreePaths } from "../session/worktree-binding.ts";
 import { getGuardianPaths, readState } from "../state.ts";
 import type { GuardianConfig, WorktreeEntry } from "../types.ts";
 import type { GuardOptions } from "../tool-types.ts";
-import { inspectEffectiveGitConfig, gitInspectionTarget, gitTargetArgs } from "./effective-git-config.ts";
+import { inspectEffectiveGitConfig, gitInspectionTarget } from "./effective-git-config.ts";
 import type { GitInspectionTarget } from "./effective-git-config.ts";
 import { collectGuardPathFacts } from "./guard-path-facts.ts";
 
@@ -28,9 +28,9 @@ export async function collectProtectedBranchWorktrees(repoRoot: string, config: 
 }
 
 async function primaryRepoRoot(target: GitInspectionTarget): Promise<string> {
-  const topLevel = await tryGit(target.cwd, [...gitTargetArgs(target), "rev-parse", "--show-toplevel"]);
+  const topLevel = await tryGitReadOnly(target, ["rev-parse", "--show-toplevel"]);
   if (!topLevel.ok) throw topLevel.error;
-  const common = await tryGit(target.cwd, [...gitTargetArgs(target), "rev-parse", "--path-format=absolute", "--git-common-dir"]);
+  const common = await tryGitReadOnly(target, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
   if (!common.ok) throw common.error;
   const entries = await listWorktrees(topLevel.stdout);
   const candidates = await Promise.all(entries.map(async (entry) => {
@@ -65,7 +65,7 @@ export async function collectGuardContext(input: {
   readonly explicitPushSources?: readonly string[];
 }) {
   const target = input.target ?? gitInspectionTarget(input.command, input.effectiveCwd);
-  const configRoot = await tryGit(target.cwd, [...gitTargetArgs(target), "rev-parse", "--show-toplevel"]);
+  const configRoot = await tryGitReadOnly(target, ["rev-parse", "--show-toplevel"]);
   const primaryConfig = await loadConfig(input.repoRoot);
   const targetConfig = configRoot.ok ? await loadConfig(configRoot.stdout) : primaryConfig;
   const guardConfig = targetConfig.loaded ? targetConfig.config : primaryConfig.config;
@@ -102,7 +102,7 @@ export async function collectGuardContext(input: {
     inspection = { state: "failed", stage: "path-facts", reason: error.message };
     revisionIdentities = [];
   }
-  const branch = await tryGit(target.cwd, [...gitTargetArgs(target), "symbolic-ref", "--quiet", "--short", "HEAD"]);
+  const branch = await tryGitReadOnly(target, ["symbolic-ref", "--quiet", "--short", "HEAD"]);
   return {
     guardConfig,
     guardianBranches,

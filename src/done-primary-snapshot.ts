@@ -1,13 +1,12 @@
-import { execFile } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { promisify } from "node:util";
 import { expandWorktreeRoot } from "./config.ts";
+import { runGitNullSeparated } from "./git.ts";
+import { runGitNullSeparatedInArtifactSandbox } from "./git.ts";
 import type { RecordLike } from "./types.ts";
+import type { GitArtifactSandbox } from "./git.ts";
 import { errorCode } from "./types.ts";
-
-const execFileAsync = promisify(execFile);
 
 export type StatusEntry = { readonly status: string; readonly path: string; readonly sourcePath?: string };
 
@@ -37,15 +36,17 @@ export function isGuardianWorktreeStatusPath(repoRoot: string, config: RecordLik
 
 type StatusEntriesOptions = {
   readonly includeIgnored?: boolean;
+  readonly artifactSandbox?: GitArtifactSandbox;
+  readonly optionalLocksDisabled?: boolean;
 };
 
 export async function statusEntries(repoRoot: string, options: StatusEntriesOptions = {}): Promise<StatusEntry[]> {
   const statusArgs = options.includeIgnored === true
     ? ["status", "--porcelain=v1", "--untracked-files=all", "--ignored", "-z"]
     : ["status", "--porcelain=v1", "--untracked-files=all", "-z"];
-  const { stdout } = await execFileAsync("git", ["-C", repoRoot, ...statusArgs], { maxBuffer: 10 * 1024 * 1024 });
-  if (!stdout) return [];
-  const rawEntries = stdout.split("\0").filter(Boolean);
+  const rawEntries = options.artifactSandbox
+    ? await runGitNullSeparatedInArtifactSandbox(repoRoot, statusArgs, options.artifactSandbox)
+    : await runGitNullSeparated(repoRoot, statusArgs, options.optionalLocksDisabled ? { env: { GIT_OPTIONAL_LOCKS: "0" } } : {});
   const entries: StatusEntry[] = [];
   for (let index = 0; index < rawEntries.length; index += 1) {
     const entry = rawEntries[index];
@@ -76,11 +77,14 @@ export async function fileFingerprint(repoRoot: string, relativePath: string): P
   }
 }
 
-export async function dirtySnapshot(repoRoot: string, config?: RecordLike): Promise<DirtySnapshot> {
-  const allEntries = await statusEntries(repoRoot);
+export async function dirtySnapshotFromEntries(repoRoot: string, allEntries: readonly StatusEntry[], config?: RecordLike): Promise<DirtySnapshot> {
   const entries = config ? allEntries.filter((entry) => !isGuardianWorktreeStatusPath(repoRoot, config, entry.path)) : allEntries;
   const paths = [...new Set(entries.flatMap((entry) => [entry.path, entry.sourcePath].filter((value): value is string => typeof value === "string" && value.length > 0)))].sort((left, right) => left.localeCompare(right));
   const fingerprints = [];
   for (const filePath of paths) fingerprints.push(await fileFingerprint(repoRoot, filePath));
   return { entries, paths, fingerprints };
+}
+
+export async function dirtySnapshot(repoRoot: string, config?: RecordLike, options: Pick<StatusEntriesOptions, "optionalLocksDisabled"> = {}): Promise<DirtySnapshot> {
+  return dirtySnapshotFromEntries(repoRoot, await statusEntries(repoRoot, options), config);
 }

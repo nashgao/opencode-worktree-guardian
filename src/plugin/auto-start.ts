@@ -2,6 +2,7 @@ import path from "node:path";
 import { guardianStart } from "../start.ts";
 import type { GuardCommandPayload, GuardianConfig, GuardianToolResult, HookContext, SessionWorktreeResult } from "../types.ts";
 import { errorMessage } from "../types.ts";
+import { canonicalPath } from "./canonical-path.ts";
 import { directFileMutationPathArg } from "./direct-file-routing.ts";
 import { getSessionId } from "./hook-context.ts";
 import { rememberSessionWorktree, resolveActualWorktreeOrPath } from "./session-routing.ts";
@@ -25,9 +26,14 @@ function isPathInside(parent: string, candidate: string) {
   return relative === "" || Boolean(relative) && !relative.startsWith("..") && !path.isAbsolute(relative);
 }
 
-function directFileMutationTargetsRepo(input: GuardCommandPayload, output: GuardCommandPayload, repoRoot: string | undefined, executionCwd: string) {
+async function directFileMutationTargetsRepo(input: GuardCommandPayload, output: GuardCommandPayload, repoRoot: string | undefined, executionCwd: string) {
   const pathArg = directFileMutationPathArg(input, output, executionCwd);
-  return Boolean(pathArg && repoRoot && isPathInside(repoRoot, pathArg.value));
+  if (!pathArg || !repoRoot) return false;
+  const [canonicalRepoRoot, canonicalTarget] = await Promise.all([
+    canonicalPath(repoRoot),
+    canonicalPath(pathArg.value),
+  ]);
+  return isPathInside(canonicalRepoRoot, canonicalTarget);
 }
 
 export async function tryInvisibleStart(input: GuardCommandPayload, context: HookContext, config: GuardianConfig): Promise<GuardianToolResult | null> {
@@ -57,7 +63,7 @@ export async function tryLazyStart(request: LazyStartRequest) {
     && Boolean(request.context.directory)
     && request.sessionWorktree?.terminal !== true
     && typeof request.sessionWorktree?.expectedWorktree !== "string"
-    && (directFileMutationTargetsRepo(request.input, request.output, request.context.directory, request.executionCwd) || Boolean(typeof request.command === "string" && request.command.length > 0 && !request.readOnly.allowed));
+    && (await directFileMutationTargetsRepo(request.input, request.output, request.context.directory, request.executionCwd) || Boolean(typeof request.command === "string" && request.command.length > 0 && !request.readOnly.allowed));
   if (!shouldStart || !sessionId || !request.context.directory) return null;
 
   const result = await guardianStart({

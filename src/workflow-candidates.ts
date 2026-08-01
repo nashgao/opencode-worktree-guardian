@@ -2,7 +2,8 @@ import crypto from "node:crypto";
 import path from "node:path";
 import { expandWorktreeRoot } from "./config.ts";
 import { guardianDeleteWorktree } from "./delete.ts";
-import { getDirtyFiles, getRepoRoot, isAncestor, listBranches, listRemoteBranches, listWorktrees } from "./git.ts";
+import { buildSafetyRef, getDirtyFiles, getRepoRoot, isAncestor, listBranches, listRemoteBranches, listWorktrees } from "./git.ts";
+import { configuredRemoteAuthority } from "./git-authority.ts";
 
 const DEFAULT_MAX_WORKFLOW_CLEANUP_CANDIDATES = 25;
 
@@ -39,6 +40,8 @@ export function candidateTokenMaterial(candidate: Record<string, unknown>): Reco
     targetKind: candidate.targetKind ?? null,
     remote: candidate.remote ?? null,
     remoteBranch: candidate.remoteBranch ?? null,
+    confirmToken: candidate.confirmToken ?? null,
+    safetyRef: candidate.safetyRef ?? null,
   };
 }
 
@@ -47,6 +50,7 @@ export function createWorkflowToken(preflight: Record<string, unknown>, candidat
     repoRoot: preflight.repoRoot,
     baseRef: preflight.baseRef,
     baseRefOid: preflight.baseRefOid,
+    allowIgnoredFiles: preflight.allowIgnoredFiles === true,
     candidates: candidates.map(candidateTokenMaterial),
   };
   return crypto.createHash("sha256").update(JSON.stringify(material)).digest("hex");
@@ -58,7 +62,7 @@ export function isGuardianWorktreeStatusPath(repoRoot: string, guardianRoot: str
 }
 
 export async function plannedCandidate(repoRoot: string, config: Record<string, unknown>, input: Record<string, unknown>): Promise<Record<string, unknown>> {
-  const plan = await guardianDeleteWorktree({ repoRoot, cwd: repoRoot, mode: "plan", deleteBranch: true, allowMergedGuardianBranch: true, ancestryBaseRef: `${String(config.remote)}/${String(config.baseBranch)}`, config, ...input });
+  const plan = await guardianDeleteWorktree({ repoRoot, cwd: repoRoot, mode: "plan", deleteBranch: true, allowMergedGuardianBranch: true, config, ...input, ancestryBaseRef: configuredRemoteAuthority(config).authorityRef });
   if (!plan.ok) return { ok: false, reason: plan.reason, plan };
   const preflight = plan.preflight as Record<string, unknown>;
   return {
@@ -73,8 +77,8 @@ export async function plannedCandidate(repoRoot: string, config: Record<string, 
   };
 }
 
-export async function discoverCandidates(repoRoot: string, cwd: string, config: Record<string, unknown>, preflight: Record<string, unknown>, allowIgnoredFiles = false, excludedBranches: readonly string[] = [], allowAbandonUnmerged = false): Promise<{ readonly candidates: Record<string, unknown>[]; readonly blockers: Record<string, unknown>[] }> {
-  const baseRef = `${String(config.remote)}/${String(config.baseBranch)}`;
+export async function discoverCandidates(repoRoot: string, cwd: string, config: Record<string, unknown>, preflight: Record<string, unknown>, allowIgnoredFiles = false, excludedBranches: readonly string[] = [], allowAbandonUnmerged = false, safetyRefStamp: unknown = preflight.baseRefOid): Promise<{ readonly candidates: Record<string, unknown>[]; readonly blockers: Record<string, unknown>[] }> {
+  const baseAuthorityRef = configuredRemoteAuthority(config).authorityRef;
   const guardianRoot = path.resolve(repoRoot, expandWorktreeRoot(String(config.worktreeRoot), repoRoot));
   const currentWorktree = await getRepoRoot(cwd);
   const worktrees = await listWorktrees(repoRoot) as Array<{ path: string; branch?: string; head?: string }>;
@@ -101,7 +105,7 @@ export async function discoverCandidates(repoRoot: string, cwd: string, config: 
       blockers.push({ kind: "worktree", targetPath: worktree.path, branch: worktree.branch, head: worktree.head, reason: "worktree has uncommitted changes", dirtyFileCount: dirtyFiles.length });
       continue;
     }
-    if (!(await isAncestor(repoRoot, worktree.head, baseRef))) {
+    if (!(await isAncestor(repoRoot, worktree.head, baseAuthorityRef))) {
       blockers.push({ kind: "worktree", targetPath: worktree.path, branch: worktree.branch, head: worktree.head, reason: "worktree branch is not proven reachable from base ref" });
       continue;
     }
@@ -123,7 +127,7 @@ export async function discoverCandidates(repoRoot: string, cwd: string, config: 
     if (checkedOutBranches.has(branch.name)) continue;
     if ((config.protectedBranches as string[]).includes(branch.name)) continue;
     const guardianPrefixed = branchPrefix.length > 0 && branch.name.startsWith(branchPrefix);
-    const ancestryProven = await isAncestor(repoRoot, branch.commit, baseRef);
+    const ancestryProven = await isAncestor(repoRoot, branch.commit, baseAuthorityRef);
     const abandonUnmergedBranch = guardianPrefixed && allowAbandonUnmerged;
     if (!ancestryProven && !abandonUnmergedBranch) continue;
     const candidate = await plannedCandidate(repoRoot, config, {
@@ -144,8 +148,8 @@ export async function discoverCandidates(repoRoot: string, cwd: string, config: 
     if (isReservedCleanupBranch(remoteBranch.branch)) continue;
     if ((config.protectedBranches as string[]).includes(remoteBranch.branch)) continue;
     if (checkedOutBranches.has(remoteBranch.branch) && !cleanableCheckedOutBranches.has(remoteBranch.branch)) continue;
-    if (!(await isAncestor(repoRoot, remoteBranch.commit, baseRef))) continue;
-    candidates.push({ kind: "remote-branch", targetKind: "remote-branch", remote, remoteBranch: remoteBranch.branch, branch: remoteBranch.branch, head: remoteBranch.commit, localBranchExists: localBranches.has(remoteBranch.branch) });
+    if (!(await isAncestor(repoRoot, remoteBranch.commit, baseAuthorityRef))) continue;
+    candidates.push({ kind: "remote-branch", targetKind: "remote-branch", remote, remoteBranch: remoteBranch.branch, branch: remoteBranch.branch, head: remoteBranch.commit, safetyRef: buildSafetyRef("remote-branch-cleanup", `${remote}/${remoteBranch.branch}`, safetyRefStamp), localBranchExists: localBranches.has(remoteBranch.branch) });
   }
 
   if (candidates.length > MAX_WORKFLOW_CLEANUP_CANDIDATES) {

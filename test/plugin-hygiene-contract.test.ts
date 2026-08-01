@@ -1,10 +1,19 @@
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
+import path from "node:path";
 import test from "node:test";
+import { DEFAULT_CONFIG } from "../src/config.ts";
+import { guardianHygiene, scanWorkspaceHygiene } from "../src/hygiene.ts";
 import plugin from "../src/index.ts";
 import { formatGuardianHygieneOutput } from "../src/plugin/readable-output-cleanup.ts";
 import { createToolContext, metadataRecord, runTool } from "./plugin-contract-helpers.ts";
 import { createRepo, createTempDir } from "./helpers.ts";
+
+async function writeArtifact(repo: string, relative: string) {
+  const target = path.join(repo, relative);
+  await fs.mkdir(path.dirname(target), { recursive: true });
+  await fs.writeFile(target, "artifact\n");
+}
 
 test("guardian_hygiene tool execute returns readable output with raw metadata", async () => {
   const repo = await createRepo();
@@ -22,6 +31,26 @@ test("guardian_hygiene tool execute returns readable output with raw metadata", 
   assert.match(result.output, /\[(GOOD|WARN)\] guardian_hygiene scan/);
   assert.match(result.output, /findings: \d+/);
   assert.match(result.output, /suggested commands:/);
+});
+
+test("hygiene cleanup blocks an explicit finding parent that contains a scan exclusion", async () => {
+  const repo = await createRepo();
+  const parent = "librarian-exclusion-parent";
+  const exclusion = `${parent}/node_modules`;
+  await writeArtifact(repo, `${parent}/marker.txt`);
+  await writeArtifact(repo, `${exclusion}/pkg/index.js`);
+
+  const scan = await scanWorkspaceHygiene({ repoRoot: repo, config: DEFAULT_CONFIG });
+  const plan = await guardianHygiene({ repoRoot: repo, config: DEFAULT_CONFIG, mode: "plan", cleanupPaths: [parent] });
+
+  assert.deepEqual((scan.exclusions as Array<Record<string, unknown>>).map((entry) => entry.path).sort(), [exclusion]);
+  assert.deepEqual(scan.reviewableCandidates, []);
+  assert.equal(plan.ok, false);
+  assert.equal(plan.status, "blocked");
+  assert.equal(plan.confirmToken, undefined);
+  assert.deepEqual((plan.targets as Array<Record<string, unknown>>).map((entry) => entry.path).sort(), []);
+  assert.equal((plan.blockers as Array<Record<string, unknown>>).some((blocker) => blocker.fatal === true && blocker.path === parent && String(blocker.reason).includes(exclusion)), true);
+  assert.equal(await fs.access(path.join(repo, parent)).then(() => true, () => false), true);
 });
 
 test("guardian_hygiene readable scan output shows reviewable candidates when scan is truncated", async () => {
@@ -49,6 +78,10 @@ test("guardian_hygiene readable scan output shows reviewable candidates when sca
   for (const relative of reviewablePaths) {
     await fs.writeFile(path.join(repo, relative), "reviewable\n");
   }
+  await fs.mkdir(path.join(repo, "zzz-bulk"));
+  for (const relative of ["one.txt", "two.txt", "three.txt", "four.txt", "five.txt"]) {
+    await fs.writeFile(path.join(repo, "zzz-bulk", relative), "reviewable\n");
+  }
   const hooks = await plugin.server({ directory: repo, worktree: repo });
   const { context } = createToolContext();
   context.directory = repo;
@@ -58,17 +91,19 @@ test("guardian_hygiene readable scan output shows reviewable candidates when sca
   const result = await runTool(execute, { repoRoot: repo }, context);
 
   const summary = metadataRecord(result.metadata, "summary");
-  assert.equal(summary.reviewableCandidateCount, 14);
+  assert.equal(summary.reviewableCandidateCount, 15);
   assert.equal(summary.reviewableShownCount, 12);
-  assert.equal(summary.reviewableOmittedCount, 2);
+  assert.equal(summary.reviewableOmittedCount, 3);
+  assert.equal(summary.reviewableTotalFileCount, 19);
   assert.equal(summary.reviewableTruncated, true);
-  assert.match(result.output, /reviewable candidates: 14/);
-  assert.match(result.output, /omitted: 2/);
+  assert.match(result.output, /reviewable candidates: 15 \| omitted: 3 \| files covered: 19/);
+  assert.match(result.output, /the 12 rows below are the largest of 15 by file count/);
+  assert.match(result.output, /untracked zzz-bulk \(5 files\):/);
   assert.match(result.output, /reviewable entries require exact-path guardian_delete_paths planning if cleanup is intended/);
   assert.equal(result.output.includes(specialPath), true);
   assert.equal(result.output.includes(`guardian_delete_paths mode=plan paths=${JSON.stringify([specialPath])}`), true);
-  assert.equal(result.output.includes("alpha-11.txt"), true);
-  assert.equal(result.output.includes("alpha-12.txt"), false);
+  assert.equal(result.output.includes("alpha-10.txt"), true);
+  assert.equal(result.output.includes("alpha-11.txt"), false);
   assert.equal(result.output.indexOf("[WARN] reviewable candidates:") > result.output.indexOf("[WARN] top findings:"), true);
   assert.doesNotMatch(result.output, /mode=apply|rm -rf|git clean|confirmDelete|confirmToken|CONFIRM_DELETE|<token>|\[token\]/);
 });

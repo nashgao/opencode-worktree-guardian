@@ -1,5 +1,7 @@
 import crypto from "node:crypto";
 import path from "node:path";
+import { fetchRemote, getRefCommit, isAncestor, runGit } from "./git.ts";
+import { classifyLandBaseTransition } from "./done-land-clean-consent.ts";
 import { candidateTokenMaterial } from "./workflow-candidates.ts";
 import { isRecordLike } from "./types.ts";
 import type { GuardianConfig } from "./types.ts";
@@ -11,6 +13,7 @@ export type DoneAllTokenPlan = {
   readonly head: string | null;
   readonly dirtyFileCount: number;
   readonly disposition: string;
+  readonly finishConfirmToken?: string;
 };
 
 type DoneAllTokenInput = {
@@ -21,6 +24,8 @@ type DoneAllTokenInput = {
   readonly protectedBranches: readonly string[];
   readonly plans: readonly DoneAllTokenPlan[];
   readonly cleanupPlan: Record<string, unknown>;
+  readonly allowIgnoredFiles: boolean;
+  readonly allowAdminBypass: boolean;
 };
 
 type CleanupSweepInput = {
@@ -29,6 +34,13 @@ type CleanupSweepInput = {
   readonly cleanupBlockers: number;
   readonly cleanupApply: Record<string, unknown> | null;
 };
+
+export async function observeBaseTransition(repoRoot: string, baseAuthorityRef: string, remote: string, before: string, approvedHead: string) {
+  await fetchRemote(repoRoot, remote);
+  const after = await getRefCommit(repoRoot, baseAuthorityRef);
+  const parents = after === before || after === approvedHead ? [] : (await runGit(repoRoot, ["show", "-s", "--format=%P", after])).stdout.split(" ").filter(Boolean);
+  return { ...classifyLandBaseTransition({ before, after, approvedHead, parents, approvedHeadIsAncestor: await isAncestor(repoRoot, approvedHead, baseAuthorityRef), beforeIsAncestor: await isAncestor(repoRoot, before, after) }), before, after, parents };
+}
 
 function cleanupPlanTokenMaterial(cleanupPlan: Record<string, unknown>): Record<string, unknown> {
   const candidates = Array.isArray(cleanupPlan.candidates) ? cleanupPlan.candidates.filter((candidate): candidate is Record<string, unknown> => isRecordLike(candidate)) : [];
@@ -59,6 +71,8 @@ export function createDoneAllConfirmToken(input: DoneAllTokenInput): string {
     baseBranch: input.config.baseBranch,
     baseRef: input.baseRef,
     baseRefOid: input.baseRefOid,
+    allowIgnoredFiles: input.allowIgnoredFiles,
+    allowAdminBypass: input.allowAdminBypass,
     protectedBranches: [...input.protectedBranches].sort(),
     sessions: input.plans.map((plan) => ({
       session_id: plan.session_id,
@@ -67,6 +81,7 @@ export function createDoneAllConfirmToken(input: DoneAllTokenInput): string {
       head: plan.head,
       dirtyFileCount: plan.dirtyFileCount,
       disposition: plan.disposition,
+      finishConfirmToken: plan.finishConfirmToken ?? null,
     })),
     cleanupPlan: cleanupPlanTokenMaterial(input.cleanupPlan),
   };

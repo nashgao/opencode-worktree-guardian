@@ -129,6 +129,7 @@ async function buildHygieneCleanupPreflight(input: Record<string, unknown>) {
   const selectedInput = stringArray(input.cleanupPaths);
   const scan = await scanWorkspaceHygiene({ ...input, repoRoot, config });
   const findings = (scan.findings as Array<Record<string, unknown>> | undefined ?? []).filter((finding) => typeof finding.path === "string");
+  const exclusions = (scan.exclusions as Array<Record<string, unknown>> | undefined ?? []).filter((exclusion) => typeof exclusion.path === "string");
   const findingsByPath = new Map(findings.map((finding) => [String(finding.path), finding]));
   const blockers: CleanupBlocker[] = invalidAllowCategories.map((category) => ({ category, reason: `unsupported allowCategories entry: ${category}`, fatal: true }));
   if (scan.ok === false) blockers.push({ reason: `guardian_hygiene scan failed: ${String(scan.reason ?? "unknown error")}`, fatal: true });
@@ -166,11 +167,21 @@ async function buildHygieneCleanupPreflight(input: Record<string, unknown>) {
     if (stat?.isSymbolicLink()) pathBlockers.push({ path: relative, reason: "symlink cleanup roots are not allowed", fatal: true });
     const trackedContents = pathBlockers.some((blocker) => blocker.fatal) ? [] : await listTrackedContents(repoRoot, relative);
     if (trackedContents.length > 0) pathBlockers.push({ path: relative, reason: "selected cleanup root contains tracked files", fatal: true });
+    const exclusion = exclusions.find((candidate) => {
+      const exclusionPath = path.resolve(repoRoot, String(candidate.path));
+      return isSameOrInside(exclusionPath, absolutePath) || isSameOrInside(absolutePath, exclusionPath);
+    });
+    if (exclusion) pathBlockers.push({ path: relative, reason: `selected cleanup path overlaps scan exclusion ${String(exclusion.path)}`, fatal: true });
     if (!finding) pathBlockers.push({ path: relative, reason: "selected path is not a current guardian_hygiene finding", fatal: true });
     const category = String(finding?.category ?? "");
-    const metadata = recordValue(finding?.metadata);
-    if (finding && !allowCategories.includes(category)) pathBlockers.push({ path: relative, category, reason: `category ${category} is not allowed for hygiene cleanup`, fatal: selectedInput.length > 0 });
-    if (finding && category === "nested-git" && metadata.dirty === true && !allowDirtyNestedGit) pathBlockers.push({ path: relative, category, reason: "dirty nested Git repositories require allowDirtyNestedGit=true", fatal: true });
+    for (const descendant of findings) {
+      const descendantPath = String(descendant.path);
+      if (!isSameOrInside(path.resolve(repoRoot, descendantPath), absolutePath)) continue;
+      const descendantCategory = String(descendant.category);
+      const descendantMetadata = recordValue(descendant.metadata);
+      if (!allowCategories.includes(descendantCategory)) pathBlockers.push({ path: relative, category: descendantCategory, reason: `category ${descendantCategory} is not allowed for hygiene cleanup`, fatal: true });
+      else if (descendantCategory === "nested-git" && descendantMetadata.dirty === true && !allowDirtyNestedGit) pathBlockers.push({ path: relative, category: descendantCategory, reason: "dirty nested Git repositories require allowDirtyNestedGit=true", fatal: true });
+    }
     if (pathBlockers.length > 0) {
       blockers.push(...pathBlockers);
       continue;

@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { expandWorktreeRoot, loadConfig, normalizeConfig } from "./config.ts";
-import { realPathOrResolved } from "./done-shared.ts";
+import { realPathOrResolved, samePathOnDisk } from "./done-shared.ts";
 import { getCommonGitDir, getDirtyFiles, getRepoRoot, listBranches, listRecoveryCandidates, listRefs, listStashes, listWorktrees } from "./git.ts";
 import type { GitBranchEntry, GitRefEntry, GitStashEntry } from "./git.ts";
 import { scanWorkspaceHygiene } from "./hygiene.ts";
@@ -129,9 +129,9 @@ async function annotateWorktreeWithoutState(worktree: WorktreeEntry, repoRoot: s
   };
 }
 
-function poisonedSessionReason(session: GuardianSession, repoRoot: string, config: GuardianConfig) {
+async function poisonedSessionReason(session: GuardianSession, repoRoot: string, config: GuardianConfig) {
   const reasons: string[] = [];
-  if (typeof session.worktree_path === "string" && path.resolve(session.worktree_path) === path.resolve(repoRoot)) {
+  if (typeof session.worktree_path === "string" && await samePathOnDisk(session.worktree_path, repoRoot)) {
     reasons.push("active session is recorded on the primary repository worktree");
   }
   if (typeof session.branch === "string" && Array.isArray(config.protectedBranches) && config.protectedBranches.includes(session.branch)) {
@@ -140,8 +140,8 @@ function poisonedSessionReason(session: GuardianSession, repoRoot: string, confi
   return reasons.join("; ");
 }
 
-function annotatePoisonedSession(session: GuardianSession, repoRoot: string, config: GuardianConfig): PoisonedSession | null {
-  const reason = poisonedSessionReason(session, repoRoot, config);
+async function annotatePoisonedSession(session: GuardianSession, repoRoot: string, config: GuardianConfig): Promise<PoisonedSession | null> {
+  const reason = await poisonedSessionReason(session, repoRoot, config);
   if (!reason) return null;
   return {
     ...session,
@@ -201,7 +201,7 @@ export async function guardianStatus(input: GuardianToolInput = {}): Promise<Gua
     if (!sessionWorktreePath || !worktreePaths.has(canonicalSessionWorktreePath) || !(await pathExists(sessionWorktreePath))) {
       orphanedSessions.push(session);
     }
-    const poisonedSession = annotatePoisonedSession(session, repoRoot, config);
+    const poisonedSession = await annotatePoisonedSession(session, repoRoot, config);
     if (poisonedSession) poisonedSessions.push(poisonedSession);
   }
 

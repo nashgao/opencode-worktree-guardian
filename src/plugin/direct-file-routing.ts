@@ -38,7 +38,18 @@ export async function routeDirectFileMutation(input: GuardCommandPayload, output
   const pathArg = directFileMutationPathArg(input, output, executionCwd);
   if (!pathArg) return { routed: false, blocked: false, reason: null };
   if (!repoRoot) return { routed: false, blocked: true, reason: "direct file mutation cannot be checked without a Guardian repo root" };
-  if (!isPathInside(repoRoot, pathArg.value)) return { routed: false, blocked: false, reason: null };
+  const lexicallyInsideRepo = isPathInside(repoRoot, pathArg.value);
+  let canonicalRepoRoot: string;
+  let canonicalTarget: string;
+  try {
+    [canonicalRepoRoot, canonicalTarget] = await Promise.all([
+      canonicalPath(repoRoot),
+      canonicalPath(pathArg.value),
+    ]);
+  } catch (error) {
+    return { routed: false, blocked: true, reason: errorMessage(error) };
+  }
+  if (!lexicallyInsideRepo && !isPathInside(canonicalRepoRoot, canonicalTarget)) return { routed: false, blocked: false, reason: null };
   if (sessionWorktree?.sessionId == null) return { routed: false, blocked: false, reason: null };
   // A terminal session has intentionally given up its worktree, so there is no live ownership to
   // enforce; treat it like "no session" and allow normal edits instead of locking the agent out.
@@ -59,15 +70,9 @@ export async function routeDirectFileMutation(input: GuardCommandPayload, output
   if (typeof expectedWorktree !== "string") {
     return { routed: false, blocked: true, reason: "direct file mutation cannot be routed without a recorded Guardian worktree" };
   }
-  let canonicalRepoRoot: string;
-  let canonicalTarget: string;
   let canonicalExpectedWorktree: string;
   try {
-    [canonicalRepoRoot, canonicalTarget, canonicalExpectedWorktree] = await Promise.all([
-      canonicalPath(repoRoot),
-      canonicalPath(pathArg.value),
-      canonicalPath(expectedWorktree),
-    ]);
+    canonicalExpectedWorktree = await canonicalPath(expectedWorktree);
   } catch (error) {
     return { routed: false, blocked: true, reason: errorMessage(error) };
   }

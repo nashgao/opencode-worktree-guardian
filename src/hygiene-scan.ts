@@ -81,9 +81,8 @@ function knownCleanableMatch(relative: string) {
 }
 
 function suspiciousPath(relative: string) {
-  const parts = relative.split("/").filter(Boolean);
-  if (RESIDUE_ROOT_PATTERN.test(parts[0] ?? "")) return parts[0];
-  const index = parts.findIndex((part) => SUSPICIOUS_NAME_PATTERN.test(part));
+  const parts = relative.split("/").filter(Boolean); if (RESIDUE_ROOT_PATTERN.test(parts[0] ?? "")) return parts[0];
+  const index = parts.slice(0, -1).findIndex((part) => SUSPICIOUS_NAME_PATTERN.test(part));
   return index >= 0 ? parts.slice(0, index + 1).join("/") : relative;
 }
 
@@ -242,9 +241,8 @@ export async function scanWorkspaceHygiene(input: Record<string, unknown> = {}) 
         }
         continue;
       }
-      const baseName = path.basename(relative);
-      if (SUSPICIOUS_NAME_PATTERN.test(relative) || SUSPICIOUS_NAME_PATTERN.test(baseName)) {
-        const findingPath = suspiciousPath(relative);
+      const findingPath = suspiciousPath(relative);
+      if (findingPath !== relative) {
         const key = `suspicious:${findingPath}`;
         if (!seenFindings.has(key)) {
           findings.push({ path: findingPath, category: "suspicious" satisfies HygieneCategory, severity: "warn" satisfies HygieneSeverity, reason: "untracked path resembles a clone, research dump, or scratch workspace", source: "git ls-files --others/--ignored" });

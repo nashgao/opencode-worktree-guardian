@@ -1,7 +1,9 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { expandWorktreeRoot } from "./config.ts";
-import { getCommonGitDir, getCurrentBranch, getHeadCommit, getRepoRoot, runGit } from "./git.ts";
+import { samePathOnDisk } from "./done-shared.ts";
+import { getCommonGitDir, getCurrentBranch, getHeadCommit, getRepoRoot, runGit, validateConfiguredRemote, validateGitRef } from "./git.ts";
+import { configuredRemoteAuthority, isTrustedRemoteNamespaceOverlapError } from "./git-authority.ts";
 import { isTerminalSession } from "./lifecycle.ts";
 import { getGuardianPaths, readState, recordSession } from "./state.ts";
 import type { GuardianSession, GuardianToolInput, GuardianToolResult, MutableRecord } from "./types.ts";
@@ -71,8 +73,18 @@ async function createSessionWorktree(repoRoot: string, config: Awaited<ReturnTyp
   const branchName = typeof input.branch === "string" ? input.branch : `${config.branchPrefix}${slug(input.taskName)}-${slug(sessionId).slice(0, 8)}`;
   const unsafeReason = protectedBranchReason(config, branchName);
   if (unsafeReason) return { ok: false, status: "blocked", reason: unsafeReason, branch: branchName };
+  validateGitRef(branchName);
+  await validateConfiguredRemote(repoRoot, config.remote);
+  validateGitRef(config.baseBranch);
+  let baseAuthorityRef: string;
+  try {
+    baseAuthorityRef = configuredRemoteAuthority(config).authorityRef;
+  } catch (error) {
+    if (!isTrustedRemoteNamespaceOverlapError(error)) throw error;
+    return { ok: false, status: "blocked", reason: error instanceof Error ? error.message : String(error), branch: branchName };
+  }
   const worktreePath = await resolveWorktreeTarget(repoRoot, config, typeof input.worktreePath === "string" ? input.worktreePath : undefined, branchName);
-  await runGit(repoRoot, ["worktree", "add", "-b", branchName, worktreePath, `${config.remote}/${config.baseBranch}`]);
+  await runGit(repoRoot, ["worktree", "add", "-b", branchName, worktreePath, baseAuthorityRef]);
   return { ok: true, branch: branchName, worktreePath };
 }
 
@@ -153,7 +165,7 @@ export async function guardianStart(input: GuardianToolInput = {}): Promise<Guar
       stateVersion: state.state_version,
     };
   }
-  if (input.createWorktree !== true && path.resolve(worktreePath) === path.resolve(repoRoot)) {
+  if (input.createWorktree !== true && await samePathOnDisk(worktreePath, repoRoot)) {
     return {
       ok: false,
       status: "blocked",

@@ -5,10 +5,14 @@ import path from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
 import { DEFAULT_CONFIG } from "../src/config.ts";
-import { createSafetyRef } from "../src/git.ts";
+import { createSafetyRef, pushBranchNormally } from "../src/git.ts";
+import { guardianDone } from "../src/done.ts";
 import { syncLocalBase } from "../src/done-main-sync.ts";
+import { guardianStart } from "../src/tools.ts";
 import { guardianFinishWorkflow } from "../src/workflow.ts";
 import { createRepoWithOrigin, createTempDir, git, seedSession } from "./helpers.ts";
+import { doneAllCandidateSnapshot, installMultiBranchFakeGh } from "./workflow-test-support.ts";
+import { guardianDoneAll } from "../src/done-all.ts";
 
 const execFileAsync = promisify(execFile);
 const TRUST_GITLAB_CONFIG = { ...DEFAULT_CONFIG, trustedUpstreamRemotes: ["gitlab"] };
@@ -89,6 +93,68 @@ test("syncLocalBase fast-forwards main from its tracked upstream instead of conf
   assert.notEqual((await git(repo, ["rev-parse", "origin/main"])).stdout, upstreamHead);
 });
 
+test("guardian_done all=true is a no-op when no active feature sessions exist", async (t) => {
+  const { base, repo } = await createRepoWithOrigin(); t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const result = await guardianDone({ repoRoot: repo, cwd: repo, all: true, mode: "plan" }) as Record<string, unknown>;
+  assert.equal(result.ok, true); assert.equal(result.lane, "done-all"); assert.equal(result.status, "no-op");
+});
+
+test("guardian_done all=true finishes a session through a configured slash-containing remote", async (t) => {
+  const { base, repo, remote } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  await git(repo, ["remote", "rename", "origin", "origin/team"]);
+  await git(repo, ["branch", "--unset-upstream", "main"]);
+  const config = { ...DEFAULT_CONFIG, remote: "origin/team" };
+  const session = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_slash_remote", taskName: "slash remote", createWorktree: true, config });
+  await fs.writeFile(path.join(session.session.worktree_path, "slash-remote.txt"), "slash remote\n");
+  await git(session.session.worktree_path, ["add", "slash-remote.txt"]);
+  await git(session.session.worktree_path, ["commit", "-m", "add slash remote work"]);
+  await installMultiBranchFakeGh(t, { repo, remote });
+
+  const plan = await guardianDone({ repoRoot: repo, cwd: repo, all: true, mode: "plan", config });
+  const apply = await guardianDone({ repoRoot: repo, cwd: repo, all: true, mode: "apply", confirm: true, confirmToken: plan.confirmToken, config });
+
+  assert.equal(apply.ok, true, JSON.stringify(apply));
+  assert.equal(apply.status, "finished");
+});
+
+test("guardian_done all=true skips remote refresh until confirmed, then blocks remote base token drift", async (t) => {
+  const { base, remote, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const branch = "guardian/done-all-confirmation-race";
+  const candidateFileName = "done-all-confirmation-race.txt";
+  await git(repo, ["checkout", "-b", branch]);
+  await fs.writeFile(path.join(repo, candidateFileName), `${branch}\n`);
+  await git(repo, ["add", candidateFileName]);
+  await git(repo, ["commit", "-m", `add ${candidateFileName}`]);
+  await git(repo, ["checkout", "main"]);
+  await git(repo, ["merge", "--no-ff", branch, "-m", `merge ${branch}`]);
+  await git(repo, ["push", "origin", "main"]);
+  const worktreePath = path.join(repo, ".worktrees", path.basename(repo), "done-all-confirmation-race");
+  await git(repo, ["worktree", "add", worktreePath, branch]);
+  const candidateFile = path.join(worktreePath, candidateFileName);
+  const plan = await guardianDoneAll({ repoRoot: repo, cwd: repo, all: true, mode: "plan" }) as Record<string, unknown>;
+  assert.equal(plan.ok, true, JSON.stringify(plan));
+  assert.equal(typeof plan.confirmToken, "string");
+  const updater = path.join(base, "remote-updater");
+  await git(base, ["clone", remote, updater]);
+  await git(updater, ["config", "user.email", "test@example.com"]);
+  await git(updater, ["config", "user.name", "Test User"]);
+  await fs.writeFile(path.join(updater, "done-all-remote-race.txt"), "remote advance\n");
+  await git(updater, ["add", "done-all-remote-race.txt"]); await git(updater, ["commit", "-m", "advance remote base"]); await git(updater, ["push", "origin", "main"]);
+  const childPlan = { sessions: plan.sessions, cleanupPlan: plan.cleanupPlan };
+  const before = await doneAllCandidateSnapshot(repo, branch, worktreePath, candidateFile, childPlan);
+  const unconfirmed = await guardianDoneAll({ repoRoot: repo, cwd: repo, all: true, mode: "apply", confirmToken: plan.confirmToken as string }) as Record<string, unknown>;
+  assert.equal(unconfirmed.ok, false, JSON.stringify(unconfirmed)); assert.equal(unconfirmed.status, "blocked"); assert.equal(unconfirmed.lane, "done-all"); assert.equal(unconfirmed.confirmationRequired, true); assert.equal(unconfirmed.tokenChecked, false); assert.equal(unconfirmed.remoteRefresh, "skipped"); assert.equal(unconfirmed.nextAction, "guardian_done all=true mode=apply confirm=true"); assert.equal("sessions" in unconfirmed, false); assert.equal("cleanupPlan" in unconfirmed, false); assert.deepEqual(await doneAllCandidateSnapshot(repo, branch, worktreePath, candidateFile, childPlan), before);
+  const confirmed = await guardianDoneAll({ repoRoot: repo, cwd: repo, all: true, mode: "apply", confirm: true, confirmToken: plan.confirmToken as string }) as Record<string, unknown>;
+  assert.equal(confirmed.ok, false, JSON.stringify(confirmed)); assert.equal(confirmed.status, "blocked"); assert.equal(confirmed.driftDetected, true); assert.equal(confirmed.plannedConfirmToken, plan.confirmToken); assert.equal(typeof confirmed.refreshedConfirmToken, "string"); assert.notEqual(confirmed.refreshedConfirmToken, plan.confirmToken);
+  const refreshed = await doneAllCandidateSnapshot(repo, branch, worktreePath, candidateFile, childPlan);
+  assert.equal(refreshed.branchOid, before.branchOid); assert.equal(refreshed.worktreeExists, true); assert.equal(refreshed.candidateContent, before.candidateContent); assert.equal(refreshed.state, before.state);
+  const refreshedPlan = await guardianDoneAll({ repoRoot: repo, cwd: repo, all: true, mode: "plan" }) as Record<string, unknown>;
+  const applied = await guardianDoneAll({ repoRoot: repo, cwd: repo, all: true, mode: "apply", confirm: true, confirmToken: refreshedPlan.confirmToken as string }) as Record<string, unknown>;
+  assert.equal(applied.ok, true, JSON.stringify(applied)); assert.equal(await fs.access(worktreePath).then(() => true, () => false), false); await assert.rejects(git(repo, ["rev-parse", "--verify", branch]));
+});
+
 test("guardian_finish_workflow cleans local branches merged to tracked upstream", async (t) => {
   const { base, repo, gitlab } = await createRepoWithGitlabUpstream();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
@@ -114,7 +180,7 @@ test("guardian_finish_workflow cleans local branches merged to tracked upstream"
   assert.deepEqual(plan.candidates.map((candidate) => candidate.targetKind).sort(), ["remote-branch", "stale-branch"]);
   assert.equal(plan.candidates.every((candidate) => candidate.branch === branch && candidate.head === branchHead), true);
 
-  const apply = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "apply", confirmToken: plan.confirmToken, config: TRUST_GITLAB_CONFIG }));
+  const apply = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "apply", confirm: true, confirmToken: plan.confirmToken, config: TRUST_GITLAB_CONFIG }));
 
   assert.equal(apply.ok, true, JSON.stringify(apply));
   assert.equal(apply.status, "cleaned");
@@ -179,11 +245,29 @@ test("guardian_finish_workflow cleans recorded worktrees using trusted effective
   assert.deepEqual(plan.candidates.map((candidate) => candidate.targetKind).sort(), ["remote-branch", "worktree"]);
   assert.equal(plan.candidates.every((candidate) => candidate.branch === branch), true);
 
-  const apply = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "apply", confirmToken: plan.confirmToken, config: TRUST_GITLAB_CONFIG }));
+  const apply = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "apply", confirm: true, confirmToken: plan.confirmToken, config: TRUST_GITLAB_CONFIG }));
 
   assert.equal(apply.ok, true, JSON.stringify(apply));
   assert.equal(apply.results.some((result) => result.worktreeRemoved === true), true);
   assert.equal(apply.results.some((result) => result.branchDeleted === true), true);
   assert.equal(apply.results.some((result) => result.remoteBranchDeleted === true), true);
   await assert.rejects(() => git(repo, ["rev-parse", "--verify", branch]));
+});
+
+test("normal push configures a fully qualified remote-tracking upstream", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const branch = "feature/nested";
+  await git(repo, ["checkout", "-b", branch]);
+  await fs.writeFile(path.join(repo, "feature.txt"), "feature\n");
+  await git(repo, ["add", "feature.txt"]);
+  await git(repo, ["commit", "-m", "feature upstream"]);
+  const head = (await git(repo, ["rev-parse", "HEAD"])).stdout;
+  await git(repo, ["branch", "origin/feature/nested", "main"]);
+
+  await pushBranchNormally(repo, "origin", branch, head);
+
+  assert.equal((await git(repo, ["config", `branch.${branch}.remote`])).stdout, "origin");
+  assert.equal((await git(repo, ["config", `branch.${branch}.merge`])).stdout, `refs/heads/${branch}`);
+  assert.equal((await git(repo, ["rev-parse", `${branch}@{upstream}`])).stdout, head);
 });

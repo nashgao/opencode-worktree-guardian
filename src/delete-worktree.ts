@@ -1,15 +1,21 @@
 import path from "node:path";
 import { expandWorktreeRoot, loadConfig } from "./config.ts";
-import { abandonBranch, createSafetyRef, deleteBranchAtHead, getDirtyFiles, getHeadCommit, getIgnoredFiles, getRepoRoot, listStashes, listWorktrees, removeWorktree } from "./git.ts";
+import { buildSafetyRef, createOrReuseSafetyRef, createSafetyRef, deleteBranchAtHead, getDirtyFiles, getHeadCommit, getIgnoredFiles, getRepoRoot, listStashes, listWorktrees, removeWorktree } from "./git.ts";
 import { applyRedundantDirtyCleanup, dirtyResultFields, sessionSafetyRefs, validateRedundantDirtyPreflight } from "./delete-worktree-dirty-runtime.ts";
 import { isSameOrInside, samePath } from "./filesystem-boundaries.ts";
 import { getGuardianPaths, readState, recordSession } from "./state.ts";
 import { blocked, createConfirmToken, errorMessage, withDeleteReport } from "./delete-worktree-report.ts";
 import { collectIgnoredFileFingerprint, recordAncestryPreflight } from "./delete-worktree-preflight.ts";
-import { preflightBranchOnlyDeletion } from "./delete-worktree-branch-only.ts";
+import { preflightBranchOnlyDeletion, rejectSymbolicBranchRef } from "./delete-worktree-branch-only.ts";
 import { findTarget } from "./delete-worktree-targets.ts";
 import { hasBlockingStashInventory } from "./stash-policy.ts";
 import type { GuardianSession, WorktreeEntry } from "./types.ts";
+import { resolveRemoteAuthority } from "./git-authority.ts";
+
+export type DeleteWorktreeRuntime = {
+  readonly afterSafetyRefCreated?: () => Promise<void>;
+  readonly beforeWorktreeRemoval?: () => Promise<void>;
+};
 
 function emptyDeletePreflight(repoRoot: string, mode: unknown, deleteRequestedBranch: boolean, abandonUnmerged: boolean, allowIgnoredFiles: boolean, allowRedundantDirtyPaths: boolean): Record<string, unknown> {
   return {
@@ -79,7 +85,7 @@ function deleteBranchWasSpecified(input: Record<string, unknown>): boolean {
   return Object.hasOwn(input, "deleteBranch");
 }
 
-async function preflightWorktreeDeletion(input: Record<string, unknown>, config: Record<string, unknown>, preflight: Record<string, unknown>, entry: WorktreeEntry, session: GuardianSession | undefined, cwd: string) {
+async function preflightWorktreeDeletion(input: Record<string, unknown>, config: Record<string, unknown>, preflight: Record<string, unknown>, entry: WorktreeEntry, session: GuardianSession | undefined, cwd: string, runtime: DeleteWorktreeRuntime) {
   const repoRoot = String(preflight.repoRoot);
   const deleteRequestedBranch = input.deleteBranch === true;
   const abandonUnmerged = input.abandonUnmerged === true;
@@ -95,6 +101,8 @@ async function preflightWorktreeDeletion(input: Record<string, unknown>, config:
   if (samePath(entry.path, currentWorktree)) return blocked("refusing to delete the current execution worktree", { targetPath: entry.path, currentWorktree }, preflight);
   if (entry.detached || !entry.branch) return blocked("detached HEAD worktrees cannot be deleted by guardian_delete_worktree", { targetPath: entry.path }, preflight);
   if ((config.protectedBranches as string[]).includes(entry.branch)) return blocked("protected branches cannot be deleted by guardian_delete_worktree", { branch: entry.branch }, preflight);
+  const symbolicBranch = await rejectSymbolicBranchRef(repoRoot, entry.branch, preflight);
+  if (symbolicBranch) return symbolicBranch;
   const guardianRoot = path.resolve(repoRoot, expandWorktreeRoot(String(config.worktreeRoot), repoRoot));
   if (!session && !isSameOrInside(path.resolve(entry.path), guardianRoot)) return blocked("unrecorded worktrees outside the Guardian worktree root cannot be deleted", { targetPath: entry.path, guardianRoot }, preflight);
   const dirtyFiles = await getDirtyFiles(entry.path);
@@ -113,8 +121,19 @@ async function preflightWorktreeDeletion(input: Record<string, unknown>, config:
   if (hasBlockingStashInventory(config, stashes)) return blocked("stash inventory is non-empty", { stashes }, preflight);
   const head = entry.head ?? await getHeadCommit(entry.path);
   preflight.head = head;
+  preflight.safetyTimestamp = input.timestamp ?? session?.created_at ?? session?.session_id ?? "unrecorded-worktree";
+  preflight.safetyRef = buildSafetyRef(session?.session_id ?? "unrecorded-worktree", entry.branch, preflight.safetyTimestamp);
   const baseRef = ancestryBaseRef(input, config, session);
-  const proven = await recordAncestryPreflight(repoRoot, head, baseRef, preflight);
+  let baseAuthorityRef: string;
+  try {
+    const authority = resolveRemoteAuthority(baseRef, config);
+    baseAuthorityRef = authority.authorityRef;
+    preflight.ancestryRef = authority.displayRef;
+  } catch (error) {
+    if (!(error instanceof Error)) throw error;
+    return blocked("ancestry base ref is malformed or untrusted", { baseRef, error: errorMessage(error) }, preflight);
+  }
+  const proven = await recordAncestryPreflight(repoRoot, head, baseAuthorityRef, preflight);
   const implicitRetainWouldStrandBranch = !deleteRequestedBranch && !deleteBranchWasSpecified(input) && !proven;
   if (deleteRequestedBranch) {
     if (!proven && abandonUnmerged && preflight.unmergedCommitError) return blocked("unmerged commits could not be listed", { branch: entry.branch, head, baseRef, error: preflight.unmergedCommitError }, preflight);
@@ -125,10 +144,10 @@ async function preflightWorktreeDeletion(input: Record<string, unknown>, config:
   if (input.mode === "plan") return withDeleteReport({ ok: true, status: "planned", confirmToken }, preflight, { action: "planned" });
   if (input.confirmToken !== confirmToken) return blocked("confirm token mismatch; re-run mode=plan and use the returned confirmToken", { tokenMatched: false }, preflight);
   if (implicitRetainWouldStrandBranch) return blocked("deleteBranch was not specified and the branch head is not proven reachable from base ref; pass deleteBranch=false to keep the branch, or deleteBranch=true with abandonUnmerged=true to abandon it", { branch: entry.branch, head, baseRef }, preflight);
-  return applyWorktreeDeletion(input, config, preflight, entry, session);
+  return applyWorktreeDeletion({ ...input, timestamp: preflight.safetyTimestamp }, config, preflight, entry, session, runtime);
 }
 
-async function applyWorktreeDeletion(input: Record<string, unknown>, config: Record<string, unknown>, preflight: Record<string, unknown>, entry: WorktreeEntry, session: GuardianSession | undefined) {
+async function applyWorktreeDeletion(input: Record<string, unknown>, config: Record<string, unknown>, preflight: Record<string, unknown>, entry: WorktreeEntry, session: GuardianSession | undefined, runtime: DeleteWorktreeRuntime) {
   const repoRoot = String(preflight.repoRoot);
   const deleteRequestedBranch = input.deleteBranch === true;
   const abandonUnmerged = input.abandonUnmerged === true;
@@ -136,10 +155,37 @@ async function applyWorktreeDeletion(input: Record<string, unknown>, config: Rec
   if (!branch) return blocked("detached HEAD worktrees cannot be deleted by guardian_delete_worktree", { targetPath: entry.path }, preflight);
   const safetySessionId = session?.session_id ?? "unrecorded-worktree";
   const head = String(preflight.head ?? await getHeadCommit(entry.path));
-  const safetyRef = await createSafetyRef(repoRoot, { sessionId: safetySessionId, branch, commit: head, timestamp: input.timestamp });
+  const safetyRef = String(preflight.safetyRef);
+  try {
+    const safetyRefOptions = { sessionId: safetySessionId, branch, commit: head, ref: safetyRef };
+    if (session?.head_commit === head && session.safety_refs?.includes(safetyRef)) await createOrReuseSafetyRef(repoRoot, safetyRefOptions);
+    else await createSafetyRef(repoRoot, safetyRefOptions);
+  } catch (error) {
+    if (error instanceof Error) return blocked("safety ref could not be created", { safetyRef, error: errorMessage(error) }, preflight);
+    throw error;
+  }
   preflight.safetyRef = safetyRef;
+  if (session?.session_id) {
+    await recordSession(repoRoot, config, { ...session, session_id: session.session_id, head_commit: head, safety_refs: sessionSafetyRefs(session, safetyRef, preflight) }, { event: { type: "guardian_delete_worktree_safety_ref", session_id: session.session_id, ref: safetyRef } });
+  }
+  await runtime.afterSafetyRefCreated?.();
   const cleanupBlocker = await applyRedundantDirtyCleanup({ input, preflight, entry }, { safetySessionId, branch, head });
   if (cleanupBlocker) return cleanupBlocker;
+  await runtime.beforeWorktreeRemoval?.();
+  const ignoredFiles = await getIgnoredFiles(entry.path);
+  const ignoredFileFingerprint = await collectIgnoredFileFingerprint(entry.path, ignoredFiles);
+  preflight.finalIgnoredFiles = ignoredFiles;
+  preflight.finalIgnoredFileFingerprint = ignoredFileFingerprint;
+  if (JSON.stringify(ignoredFiles) !== JSON.stringify(preflight.ignoredFiles) || JSON.stringify(ignoredFileFingerprint) !== JSON.stringify(preflight.ignoredFileFingerprint)) {
+    return blocked("ignored-file consent changed at deletion boundary; re-run plan and review the updated ignored inventory", {
+      safetyRef,
+      requiresFreshPlan: true,
+      expectedIgnoredFiles: preflight.ignoredFiles,
+      expectedIgnoredFileFingerprint: preflight.ignoredFileFingerprint,
+      ignoredFiles,
+      ignoredFileFingerprint,
+    }, preflight);
+  }
   try {
     await removeWorktree(repoRoot, entry.path);
   } catch (error) {
@@ -149,8 +195,7 @@ async function applyWorktreeDeletion(input: Record<string, unknown>, config: Rec
   let branchDeleted = false;
   if (deleteRequestedBranch) {
     try {
-      if (preflight.ancestryProven === false && abandonUnmerged) await abandonBranch(repoRoot, branch);
-      else await deleteBranchAtHead(repoRoot, branch, head);
+      await deleteBranchAtHead(repoRoot, branch, head);
       branchDeleted = true;
     } catch (error) {
       if (error instanceof Error) return recordPartialWorktreeDeletion(repoRoot, config, preflight, entry, session, head, safetyRef, abandonUnmerged, error);
@@ -167,10 +212,14 @@ async function applyWorktreeDeletion(input: Record<string, unknown>, config: Rec
 
 async function recordWorktreeRemovalFailure(repoRoot: string, config: Record<string, unknown>, preflight: Record<string, unknown>, entry: WorktreeEntry, session: GuardianSession | undefined, head: string, safetyRef: string, error: unknown) {
   const worktreeRemoveError = errorMessage(error);
+  const ignoredFiles = await getIgnoredFiles(entry.path);
+  const ignoredFileFingerprint = await collectIgnoredFileFingerprint(entry.path, ignoredFiles);
+  preflight.finalIgnoredFiles = ignoredFiles;
+  preflight.finalIgnoredFileFingerprint = ignoredFileFingerprint;
   if (session?.session_id) {
     await recordSession(repoRoot, config, { ...session, session_id: session.session_id, head_commit: head, safety_refs: sessionSafetyRefs(session, safetyRef, preflight), worktree_delete_failed: true, worktree_delete_error: worktreeRemoveError }, { event: { type: "guardian_delete_worktree_remove_failed", session_id: session.session_id, ref: safetyRef } });
   }
-  return withDeleteReport({ ok: false, status: "partial", reason: "worktree cleanup completed but worktree removal failed", targetPath: entry.path, branch: entry.branch, head, safetyRef, branchDeleted: false, worktreeRemoved: false, error: worktreeRemoveError, ...dirtyResultFields(preflight) }, preflight, { action: "worktree-remove-failed", worktreeRemoved: false, worktreeRemoveError });
+  return withDeleteReport({ ok: false, status: "blocked", reason: "worktree removal failed at deletion boundary; re-run plan and review current ignored-file consent", targetPath: entry.path, branch: entry.branch, head, safetyRef, branchDeleted: false, worktreeRemoved: false, error: worktreeRemoveError, requiresFreshPlan: true, ignoredFiles, ignoredFileFingerprint, ...dirtyResultFields(preflight) }, preflight, { action: "worktree-remove-failed", worktreeRemoved: false, worktreeRemoveError, requiresFreshPlan: true });
 }
 
 async function recordPartialWorktreeDeletion(repoRoot: string, config: Record<string, unknown>, preflight: Record<string, unknown>, entry: WorktreeEntry, session: GuardianSession | undefined, head: string, safetyRef: string, abandonUnmerged: boolean, error: unknown) {
@@ -181,13 +230,20 @@ async function recordPartialWorktreeDeletion(repoRoot: string, config: Record<st
   return withDeleteReport({ ok: false, status: "partial", reason: "worktree deleted but branch deletion failed", targetPath: entry.path, branch: entry.branch, head, safetyRef, branchDeleted: false, worktreeRemoved: true, error: branchDeleteError, ...dirtyResultFields(preflight) }, preflight, { action: "worktree-deleted-branch-delete-failed", worktreeRemoved: true, branchDeleteError });
 }
 
-export async function guardianDeleteWorktree(input: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+export async function guardianDeleteWorktree(input: Record<string, unknown> = {}, runtime: DeleteWorktreeRuntime = {}): Promise<Record<string, unknown>> {
+  const { timestamp, ...withoutTimestamp } = input;
+  const normalizedTimestamp = typeof timestamp === "string" && timestamp.trim().length > 0 ? timestamp.trim() : undefined;
+  input = normalizedTimestamp === undefined ? withoutTimestamp : { ...withoutTimestamp, timestamp: normalizedTimestamp };
   const cwd = typeof input.cwd === "string" ? input.cwd : typeof input.repoRoot === "string" ? input.repoRoot : process.cwd();
   const repoRoot = typeof input.repoRoot === "string" ? input.repoRoot : await getRepoRoot(cwd);
   const { config } = input.config && typeof input.config === "object" ? { config: input.config as Record<string, unknown> } : await loadConfig(repoRoot);
   const preflight = emptyDeletePreflight(repoRoot, input.mode, input.deleteBranch === true, input.abandonUnmerged === true, input.allowIgnoredFiles === true, input.allowRedundantDirtyPaths === true);
   const invalid = await rejectInvalidDeleteRequest(input, config, preflight);
   if (invalid) return invalid;
+  if (typeof input.branch === "string") {
+    const symbolicBranch = await rejectSymbolicBranchRef(repoRoot, input.branch, preflight);
+    if (symbolicBranch) return symbolicBranch;
+  }
   const { sessions, worktrees } = await loadDeleteContext(input, repoRoot, config);
   const target = await findTarget({ ...input, repoRoot }, worktrees, sessions);
   const { entry, session, targetKind, branch: resolvedBranch, head: resolvedHead, ownershipProof, unresolvedReason } = target;
@@ -201,5 +257,5 @@ export async function guardianDeleteWorktree(input: Record<string, unknown> = {}
     return preflightBranchOnlyDeletion(input, config, preflight, worktrees, targetKind, session, resolvedBranch, resolvedHead, ownershipProof, unresolvedReason);
   }
   if (!entry) return blocked(unresolvedReason, {}, preflight);
-  return preflightWorktreeDeletion(input, config, preflight, entry, session, cwd);
+  return preflightWorktreeDeletion(input, config, preflight, entry, session, cwd, runtime);
 }

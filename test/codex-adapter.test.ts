@@ -194,7 +194,7 @@ test("Codex guardian_done lands one dirty session from the primary cwd", async (
   const branch = started.session.branch;
   await fs.writeFile(path.join(worktree, "codex-session.txt"), "codex session\n");
 
-  const planArgs = { repoRoot: repo, cwd: repo, mode: "plan", commitMessage: "feat: codex session done" };
+  const planArgs = { repoRoot: repo, cwd: repo, mode: "plan", commitMessage: "feat: codex session done", timestamp: "20260629T010101" };
   const plan = await runCodexCli(["tool", "guardian_done", JSON.stringify(planArgs)]);
 
   assert.match(plan.stdout, /\[WARN\] guardian_done planned/);
@@ -204,7 +204,7 @@ test("Codex guardian_done lands one dirty session from the primary cwd", async (
   assert.match(plan.stdout, /commitMessage: feat: codex session done/);
 
   await installFakeGh(t, { repo, branch, dynamicHead: true });
-  const apply = await runCodexCli(["tool", "guardian_done", JSON.stringify({ ...planArgs, mode: "apply", confirm: true, timestamp: "20260629T010101" })]);
+  const apply = await runCodexCli(["tool", "guardian_done", JSON.stringify({ ...planArgs, mode: "apply", confirm: true })]);
 
   assert.match(apply.stdout, /\[GOOD\] guardian_done landed-and-cleaned/);
   assert.match(apply.stdout, /selectedTarget: session session=ses_codex_done_anywhere/);

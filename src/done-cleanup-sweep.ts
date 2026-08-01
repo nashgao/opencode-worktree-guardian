@@ -59,7 +59,7 @@ export async function runCleanupSweep(repoRoot: string, config: GuardianConfig, 
   const candidates = Array.isArray(plan.candidates) ? plan.candidates : [];
   if (candidates.length === 0) return { ok: true, status: "no-op", candidateCount: 0, plan };
   if (typeof plan.confirmToken !== "string") return { ok: false, status: "blocked", reason: "cleanup sweep plan did not return a confirm token", plan };
-  const applied = await guardianFinishWorkflow({ ...input, repoRoot, cwd: repoRoot, mode: "apply", confirmToken: plan.confirmToken, config, skipFinalPostflight: true, abandonUnmerged: true });
+  const applied = await guardianFinishWorkflow({ ...input, repoRoot, cwd: repoRoot, mode: "apply", confirm: true, confirmToken: plan.confirmToken, config, skipFinalPostflight: true, abandonUnmerged: true });
   const results = Array.isArray(applied.results) ? applied.results : [];
   const cleanedCount = results.filter((result) => result && typeof result === "object" && (result as { ok?: unknown }).ok === true).length;
   const failedCount = results.length - cleanedCount;

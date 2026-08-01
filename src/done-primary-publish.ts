@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import path from "node:path";
-import { createSafetyRef, fetchRemote, getCurrentBranch, getHeadCommit, getRefCommit, getRepoRoot, isAncestor, listStashes, runGit } from "./git.ts";
+import { createSafetyRef, fetchRemote, getCurrentBranch, getHeadCommit, getRefCommit, getRepoRoot, isAncestor, listStashes, runGit, validateConfiguredRemote, validateGitRef } from "./git.ts";
+import { configuredRemoteAuthority, isTrustedRemoteNamespaceOverlapError } from "./git-authority.ts";
 import { finalPostflightCommitsFromCleanupSweep, runCleanupSweep } from "./done-cleanup-sweep.ts";
 import { runFinalCleanupPostflight } from "./final-postflight.ts";
 import { hasBlockingStashInventory } from "./stash-policy.ts";
@@ -12,6 +13,8 @@ import { blocked, errorMessage, samePath, text } from "./done-shared.ts";
 type PrimaryPreflightResult =
   | { readonly ok: false; readonly preflight: MutableRecord; readonly result: MutableRecord }
   | { readonly ok: true; readonly preflight: MutableRecord; readonly snapshot: DirtySnapshot; readonly commitMessage: string; readonly confirmToken: string };
+
+type RemoteRefresh = "required" | "forbidden";
 
 export function createPrimaryToken(preflight: Record<string, unknown>, snapshot: Record<string, unknown>, commitMessage: string): string {
   const material = {
@@ -26,7 +29,7 @@ export function createPrimaryToken(preflight: Record<string, unknown>, snapshot:
   return crypto.createHash("sha256").update(JSON.stringify(material)).digest("hex");
 }
 
-export async function primaryPreflight(repoRoot: string, cwd: string, config: GuardianConfig, input: Record<string, unknown>): Promise<PrimaryPreflightResult> {
+export async function primaryPreflight(repoRoot: string, cwd: string, config: GuardianConfig, input: Record<string, unknown>, remoteRefresh: RemoteRefresh = "required"): Promise<PrimaryPreflightResult> {
   const currentWorktree = await getRepoRoot(cwd);
   const branch = await getCurrentBranch(currentWorktree);
   const baseRef = `${String(config.remote)}/${String(config.baseBranch)}`;
@@ -39,6 +42,8 @@ export async function primaryPreflight(repoRoot: string, cwd: string, config: Gu
     baseRef,
     baseRefOid: null,
     baseRefFetched: false,
+    remoteRefresh,
+    remoteFreshness: remoteRefresh === "required" ? "verified" : "unverified",
     head: null,
     branchProtected: Array.isArray(config.protectedBranches) && typeof branch === "string" ? config.protectedBranches.includes(branch) : false,
     stashCount: 0,
@@ -46,6 +51,14 @@ export async function primaryPreflight(repoRoot: string, cwd: string, config: Gu
     dirtyFiles: [],
     blockers: [],
   };
+  let baseAuthorityRef: string;
+  try {
+    baseAuthorityRef = configuredRemoteAuthority(config).authorityRef;
+  } catch (error) {
+    if (!isTrustedRemoteNamespaceOverlapError(error)) throw error;
+    if (!(error instanceof Error)) throw error;
+    return { ok: false, preflight, result: blocked("configured remote authority is invalid", { baseRef, error: errorMessage(error) }, preflight) };
+  }
 
   if (!samePath(currentWorktree, repoRoot)) return { ok: false, preflight, result: blocked("primary-main publish requires the primary repository worktree", { currentWorktree, repoRoot }, preflight) };
   if (!branch) return { ok: false, preflight, result: blocked("detached HEAD cannot be published by guardian_done", {}, preflight) };
@@ -53,23 +66,25 @@ export async function primaryPreflight(repoRoot: string, cwd: string, config: Gu
   if (!preflight.branchProtected) return { ok: false, preflight, result: blocked("primary-main publish lane requires a protected base branch", { branch }, preflight) };
 
   try {
-    await fetchRemote(repoRoot, String(config.remote));
-    preflight.baseRefFetched = true;
-    preflight.baseRefOid = await getRefCommit(repoRoot, baseRef);
+    if (remoteRefresh === "required") {
+      await fetchRemote(repoRoot, String(config.remote));
+      preflight.baseRefFetched = true;
+    }
+    preflight.baseRefOid = await getRefCommit(repoRoot, baseAuthorityRef);
   } catch (error) {
-    return { ok: false, preflight, result: blocked("remote base ref could not be fetched or resolved", { baseRef, error: errorMessage(error) }, preflight) };
+    if (!(error instanceof Error)) throw error;
+    return { ok: false, preflight, result: blocked(remoteRefresh === "required" ? "remote base ref could not be fetched or resolved" : "local remote-tracking base ref could not be resolved without refresh", { baseRef, error: errorMessage(error) }, preflight) };
   }
 
   const head = await getHeadCommit(repoRoot);
   preflight.head = head;
-  if (head !== preflight.baseRefOid) return { ok: false, preflight, result: blocked("primary base branch is not synced to remote; sync before publishing dirty primary work", { head, baseRefOid: preflight.baseRefOid }, preflight) };
 
   const stashes = await listStashes(repoRoot);
   preflight.stashCount = stashes.length;
   preflight.stashes = stashes;
   if (hasBlockingStashInventory(config, stashes)) return { ok: false, preflight, result: blocked("stash inventory is non-empty", { stashes }, preflight) };
 
-  const snapshot = await dirtySnapshot(repoRoot, config);
+  const snapshot = await dirtySnapshot(repoRoot, config, { optionalLocksDisabled: remoteRefresh === "forbidden" });
   preflight.dirtyFiles = snapshot.paths;
   preflight.dirtyFileCount = snapshot.paths.length;
   if (snapshot.paths.length === 0) return { ok: false, preflight, result: blocked("primary-main publish requires dirty implemented code; use cleanup-only lane instead", {}, preflight) };
@@ -81,9 +96,16 @@ export async function primaryPreflight(repoRoot: string, cwd: string, config: Gu
   return { ok: true, preflight, snapshot, commitMessage, confirmToken };
 }
 
+function baseSyncBlocker(preflight: MutableRecord): MutableRecord | null {
+  if (preflight.head === preflight.baseRefOid) return null;
+  return blocked("primary base branch is not synced to remote; sync before publishing dirty primary work", { head: preflight.head, baseRefOid: preflight.baseRefOid }, preflight);
+}
+
 export async function primaryMainDone(repoRoot: string, cwd: string, config: GuardianConfig, input: Record<string, unknown>): Promise<MutableRecord> {
   const mode = input.mode ?? "plan";
-  const planned = await primaryPreflight(repoRoot, cwd, config, input);
+  if (mode !== "plan" && mode !== "apply") return blocked("mode must be plan or apply", { mode });
+  const confirmationRequired = mode === "apply" && input.confirm !== true;
+  const planned = await primaryPreflight(repoRoot, cwd, config, input, confirmationRequired ? "forbidden" : "required");
   if (!planned.ok) return planned.result;
   const { preflight, snapshot, commitMessage, confirmToken } = planned;
   const plan = {
@@ -94,11 +116,20 @@ export async function primaryMainDone(repoRoot: string, cwd: string, config: Gua
     commitMessage,
     preflight,
     dirtySnapshot: snapshot,
+    remoteRefresh: "required",
     nextAction: "After explicit user confirmation, apply with confirm=true and the same commitMessage to create a safety ref, commit the token-bound dirty files, push the base branch, fetch, and return a fresh cleanup plan.",
   };
-  if (mode === "plan") return plan;
-  if (mode !== "apply") return blocked("mode must be plan or apply", { mode }, preflight);
-  if (input.confirmToken !== confirmToken) return blocked("plan changed; rerun plan and review the updated dirty files before applying", { tokenMatched: false }, preflight);
+  if (mode === "plan") {
+    const syncBlocker = baseSyncBlocker(preflight);
+    return syncBlocker ?? plan;
+  }
+  if (confirmationRequired) {
+    if (input.confirmToken !== confirmToken) return blocked("plan changed; rerun plan and review the updated dirty files before applying", { tokenMatched: false, remoteRefresh: "forbidden", remoteFreshness: "unverified" }, preflight);
+    return blocked("primary-main publish apply requires confirm=true", { tokenMatched: true, confirmationRequired: true, remoteRefresh: "forbidden", remoteFreshness: "unverified", nextAction: "guardian_done mode=apply confirm=true" }, preflight);
+  }
+  if (input.confirmToken !== confirmToken) return blocked("plan changed; rerun plan and review the updated dirty files before applying", { tokenMatched: false, driftDetected: true, plannedConfirmToken: input.confirmToken, refreshedConfirmToken: confirmToken, remoteRefresh: "required", remoteFreshness: "verified" }, preflight);
+  const syncBlocker = baseSyncBlocker(preflight);
+  if (syncBlocker) return syncBlocker;
 
   const branch = String(preflight.currentBranch);
   const head = String(preflight.head);
@@ -114,18 +145,22 @@ export async function primaryMainDone(repoRoot: string, cwd: string, config: Gua
     if (stageablePaths.length > 0) await runGit(repoRoot, ["add", "--all", "--", ...stageablePaths]);
     await runGit(repoRoot, ["commit", "-m", commitMessage]);
   } catch (error) {
+    if (!(error instanceof Error)) throw error;
     return blocked("commit failed", { safetyRef, error: errorMessage(error) }, preflight);
   }
 
   const commit = await getHeadCommit(repoRoot);
   try {
+    await validateConfiguredRemote(repoRoot, String(config.remote));
+    validateGitRef(branch);
     await runGit(repoRoot, ["push", String(config.remote), branch]);
     await fetchRemote(repoRoot, String(config.remote));
   } catch (error) {
+    if (!(error instanceof Error)) throw error;
     return blocked("push failed after commit; safety ref preserves the pre-commit head", { safetyRef, commit, error: errorMessage(error) }, preflight);
   }
 
-  const proven = await isAncestor(repoRoot, commit, `${String(config.remote)}/${String(config.baseBranch)}`);
+  const proven = await isAncestor(repoRoot, commit, configuredRemoteAuthority(config).authorityRef);
   if (!proven) return blocked("published commit is not proven reachable from remote base", { safetyRef, commit }, preflight);
   const cleanupSweep = await runCleanupSweep(repoRoot, config, input);
   const finalPostflight = await runFinalCleanupPostflight({ repoRoot, config, requiredCommits: [{ commit, source: branch, reason: "published primary-main commit must be present on final base" }, ...finalPostflightCommitsFromCleanupSweep(cleanupSweep)] });

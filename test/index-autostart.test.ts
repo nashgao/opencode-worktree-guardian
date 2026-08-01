@@ -141,6 +141,47 @@ test("lazy auto-start creates ownership before direct file mutation routing", as
   assert.equal(output.args.filePath, path.join(String(session.worktree_path), "src", "feature.ts"));
 });
 
+test("lazy auto-start creates ownership for a lexical outside symlink into the repository", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  await enableLazyAutoStart(repo);
+  await fs.mkdir(path.join(repo, "src"));
+  await fs.writeFile(path.join(repo, "src", "linked-target.ts"), "export {};\n");
+  const externalSymlink = path.join(base, "outside-linked-target.ts");
+  await fs.symlink(path.join(repo, "src", "linked-target.ts"), externalSymlink);
+  const sessionID = "ses_lazy_outside_symlink";
+  const hooks = await plugin.server({ directory: repo, worktree: repo, client: createClient([]) });
+  const output = { args: { filePath: externalSymlink, content: "export const linked = true;\n" } };
+
+  await hooks["tool.execute.before"]({ tool: "write", sessionID, callID: "call_lazy_outside_symlink" }, output);
+
+  const paths = await getGuardianPaths(repo);
+  const state = await readState(paths, { repoRoot: repo, config: { ...DEFAULT_CONFIG, autoStartMode: "lazy" } });
+  const session = requireSession(state.sessions[sessionID]);
+  assert.equal(session.status, "active");
+  assert.notEqual(session.worktree_path, repo);
+  assert.equal(output.args.filePath, path.join(String(session.worktree_path), "src", "linked-target.ts"));
+});
+
+test("lazy auto-start ignores a lexical inside symlink that resolves outside the repository", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  await enableLazyAutoStart(repo);
+  const outside = path.join(base, "outside");
+  await fs.mkdir(outside);
+  await fs.symlink(outside, path.join(repo, "src"));
+  const sessionID = "ses_lazy_inside_symlink_escape";
+  const hooks = await plugin.server({ directory: repo, worktree: repo, client: createClient([]) });
+  const output = { args: { filePath: "src/escaped.ts", content: "export const escaped = true;\n" } };
+
+  await hooks["tool.execute.before"]({ tool: "write", sessionID, callID: "call_lazy_inside_symlink_escape" }, output);
+
+  const paths = await getGuardianPaths(repo);
+  const state = await readState(paths, { repoRoot: repo, config: { ...DEFAULT_CONFIG, autoStartMode: "lazy" } });
+  assert.equal(state.sessions[sessionID], undefined);
+  assert.equal(output.args.filePath, "src/escaped.ts");
+});
+
 test("lazy auto-start creates ownership before mutating command routing", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));

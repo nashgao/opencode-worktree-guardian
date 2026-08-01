@@ -72,6 +72,15 @@ export type GuardianSessionStatus =
   | "superseded"
   | string;
 
+export type DirtyCommitSafetyRefReservation = {
+  readonly session_id: string;
+  readonly branch: string;
+  readonly expected_head: string;
+  readonly safety_ref: string;
+  readonly confirm_token: string;
+  readonly reserved_at: string;
+};
+
 export type GuardianSession = {
   readonly session_id?: string;
   readonly sessionId?: string;
@@ -82,6 +91,7 @@ export type GuardianSession = {
   readonly base_ref?: string;
   readonly head_commit?: string;
   readonly safety_refs?: readonly string[];
+  readonly dirty_commit_safety_ref_reservation?: DirtyCommitSafetyRefReservation;
   readonly deleted_worktree_path?: string;
   readonly deleted_branch?: string | null;
   readonly abandoned_branch?: string;

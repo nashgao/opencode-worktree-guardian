@@ -3,8 +3,14 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { DEFAULT_CONFIG } from "../src/config.ts";
-import { acquireStateLock, getGuardianPaths, readState, recordSession, writeReportAtomic } from "../src/state.ts";
-import { createRepo } from "./helpers.ts";
+import { acquireStateLock, checkpointSession, getGuardianPaths, readState, recordSession, updateState, writeReportAtomic } from "../src/state.ts";
+import { guardianStart } from "../src/start.ts";
+import { createRepo, createRepoWithOrigin, git } from "./helpers.ts";
+
+function requireString(value: unknown, name: string): string {
+  if (typeof value === "string" && value.length > 0) return value;
+  throw new TypeError(`${name} must be a non-empty string`);
+}
 
 test("state is repo-local under .git/opencode-guardian and records events", async () => {
   const repo = await createRepo();
@@ -123,4 +129,62 @@ test("recordSession refuses an active session whose worktree is a different git 
   const paths = await getGuardianPaths(repo);
   const state = await readState(paths, { repoRoot: repo, config: DEFAULT_CONFIG });
   assert.equal(state.sessions.ses_xrepo, undefined);
+});
+
+test("recordSession rejects a symlink spelling of the primary worktree", { skip: process.platform === "win32" }, async () => {
+  const repo = await createRepo();
+  const primaryAlias = path.join(path.dirname(repo), `${path.basename(repo)}-primary-alias`);
+  await fs.symlink(repo, primaryAlias, "dir");
+
+  await assert.rejects(() => recordSession(repo, DEFAULT_CONFIG, {
+    session_id: "ses_primary_alias",
+    status: "active",
+    branch: "guardian/primary-alias",
+    worktree_path: primaryAlias,
+    base_ref: "origin/main",
+    safety_refs: [],
+  }), /primary repository worktree/);
+});
+
+test("checkpointSession accepts an alias-equivalent recorded worktree", { skip: process.platform === "win32" }, async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_checkpoint_alias", taskName: "checkpoint alias", createWorktree: true, config: DEFAULT_CONFIG });
+  const worktree = requireString(started.session.worktree_path, "started.session.worktree_path");
+  const worktreeAlias = path.join(base, "checkpoint-worktree-alias");
+  await fs.symlink(worktree, worktreeAlias, "dir");
+  const expectedHead = (await git(worktree, ["rev-parse", "HEAD"])).stdout;
+  await updateState(repo, DEFAULT_CONFIG, (state) => {
+    const session = state.sessions.ses_checkpoint_alias;
+    if (!session) throw new Error("checkpoint alias fixture session is missing");
+    state.sessions.ses_checkpoint_alias = { ...session, head_commit: "stale" };
+    return state;
+  });
+
+  await checkpointSession(repo, DEFAULT_CONFIG, "ses_checkpoint_alias", { expectedWorktreePath: worktreeAlias });
+
+  const session = (await readState(await getGuardianPaths(repo), { repoRoot: repo, config: DEFAULT_CONFIG })).sessions.ses_checkpoint_alias;
+  assert.equal(session?.head_commit, expectedHead);
+});
+
+test("recordSession supersedes an active session with an alias-equivalent worktree", { skip: process.platform === "win32" }, async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_superseded_alias", taskName: "superseded alias", createWorktree: true, config: DEFAULT_CONFIG });
+  const worktree = requireString(started.session.worktree_path, "started.session.worktree_path");
+  const worktreeAlias = path.join(base, "superseded-worktree-alias");
+  await fs.symlink(worktree, worktreeAlias, "dir");
+
+  await recordSession(repo, DEFAULT_CONFIG, {
+    session_id: "ses_alias_replacement",
+    status: "active",
+    branch: requireString(started.session.branch, "started.session.branch"),
+    worktree_path: worktreeAlias,
+    base_ref: "origin/main",
+    safety_refs: [],
+  });
+
+  const state = await readState(await getGuardianPaths(repo), { repoRoot: repo, config: DEFAULT_CONFIG });
+  assert.equal(state.sessions.ses_superseded_alias?.status, "superseded");
+  assert.equal(state.sessions.ses_superseded_alias?.superseded_by, "ses_alias_replacement");
 });

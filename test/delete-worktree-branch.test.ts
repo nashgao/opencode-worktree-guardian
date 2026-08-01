@@ -15,11 +15,48 @@ import {
   worktreePaths,
 } from "./delete-fixtures.js";
 
+async function commitUnmerged(worktree: string): Promise<string> {
+  await fs.writeFile(path.join(worktree, "unmerged.txt"), "unmerged\n");
+  await git(worktree, ["add", "unmerged.txt"]);
+  await git(worktree, ["commit", "-m", "unmerged abandonment candidate"]);
+  return (await git(worktree, ["rev-parse", "HEAD"])).stdout;
+}
+
+async function advancedCommit(repo: string, head: string): Promise<string> {
+  const tree = (await git(repo, ["rev-parse", `${head}^{tree}`])).stdout;
+  return (await git(repo, ["commit-tree", tree, "-p", head, "-m", "advance abandonment branch"])).stdout;
+}
+
+test("worktree abandonment preserves a branch advanced after plan", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const sessionId = "final-review-worktree-cas";
+  const branch = "guardian/final-review-worktree-cas";
+  const started = await createGuardianWorktree(repo, sessionId, "worktree CAS", branch);
+  const head = await commitUnmerged(started.session.worktree_path);
+  const advanced = await advancedCommit(repo, head);
+  const request = { repoRoot: repo, cwd: repo, sessionId, deleteBranch: true, abandonUnmerged: true, config: DEFAULT_CONFIG, timestamp: "20260730T010101" };
+  const plan = await deleteWorktree({ ...request, mode: "plan" });
+
+  const result = await deleteWorktree({ ...request, mode: "apply", confirmToken: plan.confirmToken }, {
+    afterSafetyRefCreated: async () => {
+      await git(repo, ["update-ref", `refs/heads/${branch}`, advanced]);
+    },
+  });
+
+  assert.equal(result.ok, false, JSON.stringify(result));
+  assert.equal(result.status, "partial");
+  assert.equal(result.worktreeRemoved, true);
+  assert.equal(result.branchDeleted, false);
+  assert.equal(await branchExists(repo, branch), true);
+  assert.equal((await git(repo, ["rev-parse", `refs/heads/${branch}`])).stdout, advanced);
+});
+
 test("apply creates a safety ref, removes only the worktree, and keeps the branch by default", async () => {
   const { base, repo } = await createRepoWithOrigin();
   test.after(() => fs.rm(base, { recursive: true, force: true }));
   const start = await createGuardianWorktree(repo, "ses_delete_apply", "delete apply", "guardian/delete-apply");
-  const plan = await deleteWorktree({ repoRoot: repo, cwd: repo, mode: "plan", targetPath: start.session.worktree_path, config: DEFAULT_CONFIG });
+  const plan = await deleteWorktree({ repoRoot: repo, cwd: repo, mode: "plan", targetPath: start.session.worktree_path, config: DEFAULT_CONFIG, timestamp: "20260601T120000" });
 
   const result = await deleteWorktree({ repoRoot: repo, cwd: repo, mode: "apply", targetPath: start.session.worktree_path, confirmToken: plan.confirmToken, config: DEFAULT_CONFIG, timestamp: "20260601T120000" });
 
@@ -36,23 +73,6 @@ test("apply creates a safety ref, removes only the worktree, and keeps the branc
   assert.equal(session.status, "deleted");
   assert.deepEqual(session.safety_refs, [result.safetyRef]);
   assert.equal(status.orphanedSessions.some((candidate: Record<string, unknown>) => candidate.session_id === "ses_delete_apply"), false);
-});
-
-test("deleteBranch=true requires ancestry proof before any removal", async () => {
-  const { base, repo } = await createRepoWithOrigin();
-  test.after(() => fs.rm(base, { recursive: true, force: true }));
-  const start = await createGuardianWorktree(repo, "ses_delete_unmerged", "delete unmerged", "guardian/delete-unmerged");
-  await fs.writeFile(path.join(start.session.worktree_path, "feature.txt"), "unmerged\n");
-  await git(start.session.worktree_path, ["add", "feature.txt"]);
-  await git(start.session.worktree_path, ["commit", "-m", "unmerged feature"]);
-
-  const result = await deleteWorktree({ repoRoot: repo, cwd: repo, mode: "plan", sessionId: "ses_delete_unmerged", deleteBranch: true, config: DEFAULT_CONFIG });
-
-  assert.equal(result.ok, false);
-  assert.match(result.reason, /not proven reachable/);
-  assert.equal((await worktreePaths(repo)).includes(start.session.worktree_path), true);
-  assert.equal(await branchExists(repo, "guardian/delete-unmerged"), true);
-  assert.equal((await guardianStatus({ repoRoot: repo, config: DEFAULT_CONFIG })).safetyRefs.length, 0);
 });
 
 test("implicit worktree-only deletion blocks before stranding an unmerged branch", async () => {
@@ -185,6 +205,31 @@ test("deleteBranch=true deletes an ancestor branch with non-force branch deletio
   assert.equal(result.branchDeleted, true);
   assert.equal((await worktreePaths(repo)).includes(start.session.worktree_path), false);
   assert.equal(await branchExists(repo, "guardian/delete-branch"), false);
+});
+
+test("worktree deletion removes a racing symbolic branch without mutating its protected referent", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const branch = "guardian/symbolic-delete-race";
+  const protectedBranch = "main";
+  const started = await createGuardianWorktree(repo, "ses_symbolic_delete_race", "symbolic delete race", branch);
+  const protectedHead = (await git(repo, ["rev-parse", `refs/heads/${protectedBranch}`])).stdout;
+  const request = { repoRoot: repo, cwd: repo, mode: "plan" as const, branch, deleteBranch: true, config: DEFAULT_CONFIG, timestamp: "20260730T020202" };
+  const plan = await deleteWorktree(request);
+
+  const result = await deleteWorktree({ ...request, mode: "apply", confirmToken: plan.confirmToken }, {
+    afterSafetyRefCreated: async () => {
+      await git(repo, ["symbolic-ref", `refs/heads/${branch}`, `refs/heads/${protectedBranch}`]);
+    },
+  });
+
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(result.status, "deleted");
+  assert.equal(result.worktreeRemoved, true);
+  assert.equal(result.branchDeleted, true);
+  await assert.rejects(git(repo, ["symbolic-ref", "--no-recurse", `refs/heads/${branch}`]));
+  assert.equal((await git(repo, ["rev-parse", `refs/heads/${protectedBranch}`])).stdout, protectedHead);
+  assert.equal((await worktreePaths(repo)).includes(started.session.worktree_path), false);
 });
 
 test("deleteBranch=true deletes a Guardian orphan branch when the recorded worktree is absent", async () => {

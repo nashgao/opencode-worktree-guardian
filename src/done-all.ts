@@ -1,14 +1,17 @@
 import { loadConfig, normalizeConfig } from "./config.ts";
 import { fetchRemote, getDirtyFiles, getHeadCommit, getRefCommit, getRepoRoot } from "./git.ts";
+import { configuredRemoteAuthority } from "./git-authority.ts";
 import { getGuardianPaths, readState } from "./state.ts";
 import { guardianDoneLandClean } from "./done-land-clean.ts";
-import { combineCleanupSweeps, createDoneAllConfirmToken, preSessionCleanupSweep } from "./done-all-cleanup.ts";
+import { combineCleanupSweeps, createDoneAllConfirmToken, observeBaseTransition, preSessionCleanupSweep } from "./done-all-cleanup.ts";
 import { finalPostflightCommitsFromCleanupSweep, runCleanupSweep } from "./done-cleanup-sweep.ts";
 import { guardianFinishWorkflow } from "./workflow.ts";
 import { activeFeatureSessions, type FeatureSession } from "./done-feature-sessions.ts";
 import { syncLocalBase } from "./done-main-sync.ts";
 import { runFinalCleanupPostflight } from "./final-postflight.ts";
 import { isRecordLike } from "./types.ts";
+import { batchChildFailureCanContinue } from "./done-land-clean-consent.ts";
+import type { BatchLandAuthorization } from "./done-land-clean-consent.ts";
 
 // Bounds one batch finish so a runaway state file cannot fan out into an unbounded sequence
 // of pushes, PR merges, and worktree deletions. Mirrors MAX_WORKFLOW_CLEANUP_CANDIDATES.
@@ -24,6 +27,7 @@ type SessionPlan = {
   readonly dirtyFileCount: number;
   readonly disposition: Disposition;
   readonly reason?: string;
+  readonly finishConfirmToken?: string;
 };
 
 // Clean-only v1 contract: protected branches and no-branch sessions are hard-blocked, dirty
@@ -45,14 +49,22 @@ async function classifySession(session: FeatureSession, protectedBranches: reado
 // classifies, token-gates, then drives the existing per-session finish sequentially with
 // per-session failure isolation so one stuck PR cannot abort the rest.
 export async function guardianDoneAll(input: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+  const mode = input.mode ?? "plan";
+  if (mode !== "plan" && mode !== "apply") return { ok: false, status: "blocked", lane: "done-all", reason: "mode must be plan or apply", mode, remoteRefresh: "skipped" };
+  if (mode === "apply" && input.confirm !== true) return { ok: false, status: "blocked", lane: "done-all", reason: "guardian_done apply requires confirm=true before remote refresh or planning", confirmationRequired: true, tokenChecked: false, remoteRefresh: "skipped", nextAction: input.all === true ? "guardian_done all=true mode=apply confirm=true" : "guardian_done mode=apply confirm=true" };
+  const { timestamp: _timestamp, ...nestedInput } = input;
   const cwd = typeof input.cwd === "string" ? input.cwd : typeof input.repoRoot === "string" ? input.repoRoot : process.cwd();
   const repoRoot = typeof input.repoRoot === "string" ? input.repoRoot : await getRepoRoot(cwd);
   const config = isRecordLike(input.config) ? normalizeConfig(input.config) : (await loadConfig(repoRoot)).config;
-  const mode = input.mode ?? "plan";
-  if (mode !== "plan" && mode !== "apply") return { ok: false, status: "blocked", lane: "done-all", reason: "mode must be plan or apply", mode };
 
   const protectedBranches = Array.isArray(config.protectedBranches) ? config.protectedBranches.filter((branch): branch is string => typeof branch === "string") : [];
   const baseRef = `${String(config.remote)}/${String(config.baseBranch)}`;
+  let baseAuthorityRef: string;
+  try {
+    baseAuthorityRef = configuredRemoteAuthority(config).authorityRef;
+  } catch (error) {
+    return { ok: false, status: "blocked", lane: "done-all", reason: "remote base ref is invalid", baseRef, error: error instanceof Error ? error.message : String(error) };
+  }
   const state = await readState(await getGuardianPaths(repoRoot), { repoRoot, config });
   const sessions = await activeFeatureSessions(state, repoRoot, config);
 
@@ -61,14 +73,31 @@ export async function guardianDoneAll(input: Record<string, unknown> = {}): Prom
   try {
     await fetchRemote(repoRoot, String(config.remote));
     baseRefFetched = true;
-    baseRefOid = await getRefCommit(repoRoot, baseRef);
+    baseRefOid = await getRefCommit(repoRoot, baseAuthorityRef);
   } catch (error) {
     return { ok: false, status: "blocked", lane: "done-all", reason: "remote base ref could not be fetched or resolved", baseRef, error: error instanceof Error ? error.message : String(error) };
   }
 
   const plans: SessionPlan[] = [];
-  for (const session of sessions) plans.push(await classifySession(session, protectedBranches));
-  plans.sort((left, right) => left.session_id.localeCompare(right.session_id));
+  for (const session of sessions) {
+    const classified = await classifySession(session, protectedBranches);
+    if (classified.disposition !== "finishable") {
+      plans.push(classified);
+      continue;
+    }
+    const recorded = state.sessions?.[classified.session_id];
+    if (!isRecordLike(recorded)) {
+      plans.push({ ...classified, disposition: "blocked", reason: "session record disappeared before finish planning" });
+      continue;
+    }
+    const finishPlan = await guardianDoneLandClean({ input: { ...nestedInput, mode: "plan", skipPostFinishMaintenance: true }, repoRoot, cwd: classified.worktree_path, sessionId: classified.session_id, session: recorded, config });
+    if (finishPlan.ok !== true || typeof finishPlan.confirmToken !== "string" || finishPlan.baseRefOid !== baseRefOid || finishPlan.branch !== classified.branch || finishPlan.worktreePath !== classified.worktree_path || finishPlan.head !== classified.head) {
+      plans.push({ ...classified, disposition: "blocked", reason: typeof finishPlan.reason === "string" ? finishPlan.reason : "session finish could not be planned" });
+      continue;
+    }
+    plans.push({ ...classified, finishConfirmToken: finishPlan.confirmToken });
+  }
+  plans.sort((left, right) => left.session_id < right.session_id ? -1 : left.session_id > right.session_id ? 1 : 0);
 
   const finishable = plans.filter((plan) => plan.disposition === "finishable");
   const dirtySkipped = plans.filter((plan) => plan.disposition === "dirty-skipped");
@@ -81,7 +110,7 @@ export async function guardianDoneAll(input: Record<string, unknown> = {}): Prom
   }
 
   const cleanupExcludeBranches = plans.map((plan) => plan.branch).filter((branch): branch is string => typeof branch === "string" && branch.length > 0);
-  const cleanupPlan = await guardianFinishWorkflow({ repoRoot, cwd: repoRoot, mode: "plan", config, excludeBranches: cleanupExcludeBranches, allowIgnoredFiles: input.allowIgnoredFiles === true, abandonUnmerged: true });
+  const cleanupPlan = await guardianFinishWorkflow({ ...nestedInput, repoRoot, cwd: repoRoot, mode: "plan", config, excludeBranches: cleanupExcludeBranches, allowIgnoredFiles: input.allowIgnoredFiles === true, abandonUnmerged: true });
   const cleanupCandidates = Array.isArray(cleanupPlan.candidates) ? cleanupPlan.candidates.length : 0;
   const cleanupBlockerRecords = Array.isArray(cleanupPlan.blockers) ? cleanupPlan.blockers.filter((blocker): blocker is Record<string, unknown> => isRecordLike(blocker)) : [];
   const cleanupBlockers = cleanupBlockerRecords.length;
@@ -111,7 +140,7 @@ export async function guardianDoneAll(input: Record<string, unknown> = {}): Prom
       cleanupSummary: { candidates: cleanupCandidates, blockers: cleanupBlockers },
     };
   }
-  const confirmToken = createDoneAllConfirmToken({ repoRoot, config, baseRef, baseRefOid, protectedBranches, plans, cleanupPlan });
+  const confirmToken = createDoneAllConfirmToken({ repoRoot, config, baseRef, baseRefOid, protectedBranches, plans, cleanupPlan, allowIgnoredFiles: input.allowIgnoredFiles === true, allowAdminBypass: input.allowAdminBypass === true });
 
   if (mode === "plan") {
     const noSessionWork = plans.length === 0;
@@ -133,36 +162,48 @@ export async function guardianDoneAll(input: Record<string, unknown> = {}): Prom
     };
   }
 
-  if (input.confirm !== true) {
-    return { ok: false, status: "blocked", lane: "done-all", reason: "guardian_done apply requires confirm=true before finishing every active session", summary, confirmToken, nextAction: input.all === true ? "guardian_done all=true mode=apply confirm=true" : "guardian_done mode=apply confirm=true" };
-  }
   if (input.confirmToken !== confirmToken) {
     const planCommand = input.all === true ? "guardian_done all=true mode=plan" : "guardian_done mode=plan";
-    return { ok: false, status: "blocked", lane: "done-all", reason: `confirm token mismatch; the active session set, base ref, or a worktree changed since plan. Re-run ${planCommand} and use the returned confirmToken`, summary };
+    return { ok: false, status: "blocked", lane: "done-all", reason: `confirm token mismatch; the active session set, base ref, or a worktree changed since plan. Re-run ${planCommand} and use the returned confirmToken`, summary, tokenChecked: true, driftDetected: true, plannedConfirmToken: input.confirmToken, refreshedConfirmToken: confirmToken };
   }
 
   const cleanupApply = cleanupCandidates > 0 && cleanupHasApplyToken
-    ? await guardianFinishWorkflow({ ...input, repoRoot, cwd: repoRoot, mode: "apply", confirmToken: cleanupPlan.confirmToken, config, excludeBranches: cleanupExcludeBranches, skipFinalPostflight: true, abandonUnmerged: true })
+    ? await guardianFinishWorkflow({ ...nestedInput, repoRoot, cwd: repoRoot, mode: "apply", confirm: true, confirmToken: cleanupPlan.confirmToken, config, excludeBranches: cleanupExcludeBranches, skipFinalPostflight: true, abandonUnmerged: true })
     : null;
   const cleanupSweep = preSessionCleanupSweep({ cleanupPlan, cleanupCandidates, cleanupBlockers, cleanupApply });
 
   const results: Record<string, unknown>[] = [];
+  const baseTransitions: Record<string, unknown>[] = [];
+  let baseCursor = baseRefOid;
   for (const plan of finishable) {
     const session = state.sessions?.[plan.session_id];
     if (!isRecordLike(session)) {
       results.push({ session_id: plan.session_id, branch: plan.branch, ok: false, status: "blocked", reason: "session record disappeared before finish" });
       continue;
     }
+    if (!baseCursor || !plan.head) {
+      return { ok: false, status: "blocked", lane: "done-all", reason: "batch authorization is missing a base or session head", results, baseTransitions };
+    }
+    const cursor = baseCursor;
+    const approvedHead = plan.head;
     try {
+      if (typeof plan.finishConfirmToken !== "string") {
+        results.push({ session_id: plan.session_id, branch: plan.branch, ok: false, status: "blocked", reason: "session finish plan is missing its approved token" });
+        continue;
+      }
+      const batchAuthorization: BatchLandAuthorization = { kind: "done-all", originalConfirmToken: plan.finishConfirmToken, originalBaseRefOid: baseRefOid, authorizedBaseRefOid: cursor };
       const finish = await guardianDoneLandClean({
-        input: { ...input, mode: "apply", confirm: true, skipPostFinishMaintenance: true },
+        input: { ...nestedInput, mode: "apply", confirm: true, confirmToken: plan.finishConfirmToken, skipPostFinishMaintenance: true },
         repoRoot,
         cwd: plan.worktree_path,
         sessionId: plan.session_id,
         session,
         config,
+        batchAuthorization,
       });
-      results.push({
+      const transition = await observeBaseTransition(repoRoot, baseAuthorityRef, String(config.remote), cursor, approvedHead);
+      baseTransitions.push({ session_id: plan.session_id, ...transition });
+      const childResult = {
         session_id: plan.session_id,
         branch: plan.branch,
         ok: finish.ok === true,
@@ -173,9 +214,29 @@ export async function guardianDoneAll(input: Record<string, unknown> = {}): Prom
         worktreeRemoved: finish.worktreeRemoved === true,
         branchDeleted: finish.branchDeleted === true,
         safetyRef: finish.commitSafetyRef ?? (isRecordLike(finish.cleanup) ? finish.cleanup.safetyRef : undefined),
-      });
+      };
+      if (finish.ok !== true) {
+        results.push(childResult);
+        if (batchChildFailureCanContinue(false, transition.before, transition.after)) continue;
+        return { ok: false, status: "blocked", lane: "done-all", reason: "failed child moved the remote base; refusing to continue batch", results, baseTransitions, failedChildTransition: transition };
+      }
+      if (!transition.ok) {
+        results.push(childResult);
+        return { ok: false, status: "blocked", lane: "done-all", reason: "batch authorization rejected base transition", results, baseTransitions, batchAuthorizationError: transition };
+      }
+      baseCursor = transition.after;
+      results.push(childResult);
     } catch (error) {
-      results.push({ session_id: plan.session_id, branch: plan.branch, ok: false, status: "error", reason: error instanceof Error ? error.message : String(error) });
+      const childResult = { session_id: plan.session_id, branch: plan.branch, ok: false, status: "error", reason: error instanceof Error ? error.message : String(error) };
+      results.push(childResult);
+      try {
+        const transition = await observeBaseTransition(repoRoot, baseAuthorityRef, String(config.remote), cursor, approvedHead);
+        baseTransitions.push({ session_id: plan.session_id, ...transition });
+        if (transition.before === transition.after) continue;
+        return { ok: false, status: "blocked", lane: "done-all", reason: "failed child moved the remote base; refusing to continue batch", results, baseTransitions, failedChildTransition: transition };
+      } catch (observationError) {
+        return { ok: false, status: "blocked", lane: "done-all", reason: "failed child base observation could not be completed; refusing to continue batch", results, baseTransitions, observationError: observationError instanceof Error ? observationError.message : String(observationError) };
+      }
     }
   }
 
@@ -183,7 +244,7 @@ export async function guardianDoneAll(input: Record<string, unknown> = {}): Prom
   const failedCount = results.length - finishedCount;
   const hardFailure = failedCount > 0;
   const mainSync = await syncLocalBase(repoRoot, config);
-  const postSessionCleanupSweep = await runCleanupSweep(repoRoot, config, input);
+  const postSessionCleanupSweep = await runCleanupSweep(repoRoot, config, nestedInput);
   const combinedCleanupSweep = combineCleanupSweeps(cleanupSweep, postSessionCleanupSweep);
   const cleanupRemaining = Array.isArray(combinedCleanupSweep.remaining) ? combinedCleanupSweep.remaining.filter((entry): entry is Record<string, unknown> => isRecordLike(entry)) : [];
   const allRemaining = [...remaining, ...cleanupRemaining];
@@ -205,6 +266,7 @@ export async function guardianDoneAll(input: Record<string, unknown> = {}): Prom
     stashCount: finalPostflight.stashCount ?? cleanupPreflight.stashCount ?? 0,
     stashes: finalPostflight.stashes ?? cleanupPreflight.stashes ?? [],
     cleanupSweep: combinedCleanupSweep,
+    baseTransitions,
     ...(finalRemaining.length > 0 ? { remainingHint: "safe work was applied; remaining entries need explicit cleanup or individual guardian_done handling before the repo is done" } : {}),
   };
 }

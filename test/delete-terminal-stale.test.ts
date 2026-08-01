@@ -6,11 +6,30 @@ import {
   deleteWorktree,
   fs,
   git,
+  guardianDeleteWorktree,
   guardianStatus,
   path,
   recordSession,
   test,
 } from "./delete-fixtures.js";
+import { buildSafetyRef, createSafetyRef, deleteBranchAtHead, deleteRemoteBranch, getHeadCommit } from "../src/git.ts";
+import { guardianStart } from "../src/start.ts";
+import { createRepo } from "./helpers.ts";
+
+const ownedRoots: string[] = [];
+
+test.after(async () => {
+  const remaining = await Promise.all(ownedRoots.map((root) => fs.access(root).then(() => root, () => null)));
+  assert.deepEqual(remaining.filter((root): root is string => root !== null), []);
+});
+
+async function createHook(repo: string, worktree: string, marker: string): Promise<void> {
+  const hooks = path.join(repo, "reference-transaction-hooks");
+  await fs.mkdir(hooks, { recursive: true });
+  await fs.writeFile(path.join(hooks, "reference-transaction"), `#!/bin/sh\nprintf hook > ${JSON.stringify(marker)}\n`, "utf8");
+  await fs.chmod(path.join(hooks, "reference-transaction"), 0o755);
+  await git(worktree, ["config", "core.hooksPath", hooks]);
+}
 
 test("deleteBranch=true cleans stale branches for finished and preserved terminal sessions", async () => {
   const { base, repo } = await createRepoWithOrigin();
@@ -168,4 +187,56 @@ test("deleteBranch=true blocks terminal stale branch proof when recorded head di
   assert.equal(result.status, "blocked");
   assert.match(result.reason, /branch is not checked out/);
   assert.equal(await branchExists(repo, branch), true);
+});
+
+test("safety refs are create-only and preserve an existing collision", async (t) => {
+  const repo = await createRepo();
+  t.after(() => fs.rm(repo, { recursive: true, force: true }));
+  const head = (await git(repo, ["rev-parse", "HEAD"])).stdout;
+  const timestamp = "20260727T010101";
+  const ref = buildSafetyRef("collision", "guardian/collision", timestamp);
+  await git(repo, ["update-ref", ref, head]);
+
+  await assert.rejects(createSafetyRef(repo, { sessionId: "collision", branch: "guardian/collision", commit: head, timestamp }));
+  assert.equal((await git(repo, ["rev-parse", ref])).stdout, head);
+});
+
+test("reference transaction hook blocks local and remote cleanup ref deletion", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  ownedRoots.push(base);
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const branch = "guardian/hook-cleanup";
+  await git(repo, ["branch", branch]);
+  await git(repo, ["push", "origin", branch]);
+  const head = await getHeadCommit(repo);
+  const marker = path.join(base, "cleanup-hook-ran");
+  await createHook(repo, repo, marker);
+
+  await assert.rejects(deleteBranchAtHead(repo, branch, head), /reference-transaction/i);
+  await assert.rejects(deleteRemoteBranch(repo, "origin", branch, head), /reference-transaction/i);
+
+  await assert.rejects(fs.access(marker));
+  assert.equal((await git(repo, ["rev-parse", branch])).stdout, head);
+  assert.equal((await git(repo, ["rev-parse", `origin/${branch}`])).stdout, head);
+});
+
+test("reference transaction hook blocks public branch-only deletion before its safety ref", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  ownedRoots.push(base);
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "hook-branch-only", taskName: "hook-branch-only", createWorktree: true, config: DEFAULT_CONFIG });
+  assert.equal(started.ok, true, JSON.stringify(started));
+  const removePlan = await guardianDeleteWorktree({ repoRoot: repo, cwd: repo, mode: "plan", sessionId: "hook-branch-only", deleteBranch: false, config: DEFAULT_CONFIG });
+  const removed = await guardianDeleteWorktree({ repoRoot: repo, cwd: repo, mode: "apply", sessionId: "hook-branch-only", deleteBranch: false, confirmToken: removePlan.confirmToken, config: DEFAULT_CONFIG });
+  assert.equal(removed.ok, true, JSON.stringify(removed));
+  const plan = await guardianDeleteWorktree({ repoRoot: repo, cwd: repo, mode: "plan", branch: started.session.branch, deleteBranch: true, config: DEFAULT_CONFIG });
+  assert.equal(plan.ok, true, JSON.stringify(plan));
+  const marker = path.join(base, "branch-only-hook-ran");
+  await createHook(repo, repo, marker);
+
+  const result = await guardianDeleteWorktree({ repoRoot: repo, cwd: repo, mode: "apply", branch: started.session.branch, deleteBranch: true, confirmToken: plan.confirmToken, config: DEFAULT_CONFIG });
+
+  assert.equal(result.ok, false, JSON.stringify(result));
+  await assert.rejects(fs.access(marker));
+  assert.equal((await git(repo, ["rev-parse", started.session.branch])).stdout, started.session.head_commit);
 });

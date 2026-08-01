@@ -92,6 +92,21 @@ async function staleBranchResolution(input: Record<string, unknown>, worktrees: 
   } catch {
     return undefined;
   }
+  const activeMatches = sessions.filter((session) => session.branch === branch && isActiveSession(session));
+  if (activeMatches.length > 1) {
+    return { branch, head, targetKind: "stale-branch", unresolvedReason: "branch matches multiple active guardian sessions" };
+  }
+  if (activeMatches.length === 1) {
+    const activeSession = activeMatches[0];
+    if (activeSession.head_commit !== head) {
+      return { branch, head, targetKind: "stale-branch", unresolvedReason: "active guardian session head does not match branch head" };
+    }
+    const orphanBranch = orphanBranchResolution(activeSession, worktrees, true, repoRoot);
+    if (!orphanBranch) {
+      return { branch, head, targetKind: "stale-branch", unresolvedReason: "active guardian session is not an orphan branch target" };
+    }
+    return { ...orphanBranch, branch, head, ownershipProof: "active-session" };
+  }
   const terminalMatches = requestedSession && isTerminalSession(requestedSession) ? [requestedSession] : sessions.filter((session) => session.branch === branch && isTerminalSession(session));
   if (terminalMatches.length > 1) return { branch, head, targetKind: "stale-branch", unresolvedReason: "branch matches multiple terminal guardian sessions" };
   if (terminalMatches.length === 1 && terminalMatches[0].head_commit === head) {

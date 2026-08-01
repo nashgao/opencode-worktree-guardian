@@ -3,9 +3,14 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { DEFAULT_CONFIG } from "../src/config.ts";
+import { guardianDeleteWorktree } from "../src/delete-worktree.ts";
 import { guardianDeletePaths } from "../src/delete-paths.ts";
 import { guardianHygiene, scanWorkspaceHygiene } from "../src/hygiene.ts";
-import { createRepo, git } from "./helpers.ts";
+import { guardianStart } from "../src/start.ts";
+import type { GuardianConfig } from "../src/types.ts";
+import { isRecordLike } from "../src/types.ts";
+import { createRepo, createRepoWithOrigin, git } from "./helpers.ts";
+import { branchExists, createGuardianWorktree, deleteWorktree, guardianStatus, worktreePaths } from "./delete-fixtures.js";
 
 async function exists(candidate: string) {
   return fs.access(candidate).then(() => true, () => false);
@@ -27,6 +32,10 @@ function records(value: unknown) {
 
 function hasFatalBlocker(recordsValue: unknown, pathValue: string, reasonPattern: RegExp) {
   return records(recordsValue).some((blocker) => blocker.path === pathValue && blocker.fatal === true && reasonPattern.test(String(blocker.reason)));
+}
+
+async function shadowOriginMain(repo: string, commit: string): Promise<void> {
+  await git(repo, ["update-ref", "refs/heads/origin/main", commit]);
 }
 
 test("guardian_delete_paths requires allowTracked before deleting tracked source", async () => {
@@ -151,11 +160,13 @@ test("guardian_delete_paths lets repo config replace template protected paths", 
   await fs.writeFile(path.join(repo, "keep-me", "important.txt"), "important\n");
   await fs.mkdir(path.join(repo, ".codegraph"), { recursive: true });
   await fs.writeFile(path.join(repo, ".codegraph", "index.sqlite"), "cache\n");
+  await fs.mkdir(path.join(repo, ".beads"), { recursive: true });
+  await fs.writeFile(path.join(repo, ".beads", "state.json"), "state\n");
 
   const blocked = await guardianDeletePaths({
     repoRoot: repo,
     mode: "plan",
-    paths: ["keep-me", ".codegraph"],
+    paths: ["keep-me", ".codegraph", ".beads"],
     allowRecursive: true,
   });
 
@@ -163,6 +174,7 @@ test("guardian_delete_paths lets repo config replace template protected paths", 
   assert.deepEqual(records(blocked.targets).map((target) => target.path), [".codegraph"]);
   assert.equal(hasFatalBlocker(blocked.blockers, "keep-me", /configured protected path keep-me/), true);
   assert.equal(hasFatalBlocker(blocked.blockers, ".codegraph", /configured protected path \.codegraph/), false);
+  assert.equal(hasFatalBlocker(blocked.blockers, ".beads", /protected path \.beads/), true);
 });
 
 test("guardian_delete_paths blocks stale tokens after path content changes", async () => {
@@ -207,4 +219,72 @@ test("guardian_delete_paths blocks repo control paths, dependencies, worktree ro
   assert.equal(reasons.some((reason) => /configured Guardian worktree root/.test(reason)), true);
   assert.equal(reasons.some((reason) => /protected node_modules/.test(reason)), true);
   assert.equal(reasons.some((reason) => /symlink delete roots/.test(reason)), true);
+});
+
+test("hygiene cleanup blocks an explicit approved parent containing an excluded category finding", async () => {
+  const repo = await createRepo();
+  const parent = "research-category-parent";
+  await fs.mkdir(path.join(repo, parent, "librarian-child"), { recursive: true });
+  await fs.writeFile(path.join(repo, parent, "marker.txt"), "artifact\n");
+  await fs.writeFile(path.join(repo, parent, "librarian-child", "marker.txt"), "artifact\n");
+
+  const plan = await guardianHygiene({ repoRoot: repo, config: DEFAULT_CONFIG, mode: "plan", cleanupPaths: [parent], allowCategories: ["suspicious"] });
+
+  assert.equal(plan.ok, false);
+  assert.equal(plan.status, "blocked");
+  assert.equal(plan.confirmToken, undefined);
+  assert.deepEqual(records(plan.targets).map((target) => target.path), []);
+  assert.equal(records(plan.blockers).some((blocker) => blocker.path === parent && blocker.category === "known-cleanable" && blocker.fatal === true && /not allowed/.test(String(blocker.reason))), true);
+  assert.equal(await exists(path.join(repo, parent)), true);
+});
+
+test("direct deletion blocks overlapping trusted remote namespaces before ancestry evaluation", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "authority-overlap-delete", taskName: "authority overlap delete", createWorktree: true, config: DEFAULT_CONFIG });
+  assert.equal(started.ok, true, JSON.stringify(started));
+  const config = { ...DEFAULT_CONFIG, trustedUpstreamRemotes: ["origin/main"] } satisfies GuardianConfig;
+
+  const result = await guardianDeleteWorktree({ repoRoot: repo, cwd: repo, mode: "plan", sessionId: "authority-overlap-delete", deleteBranch: true, config });
+  const preflight = isRecordLike(result.preflight) ? result.preflight : {};
+
+  assert.equal(result.ok, false, JSON.stringify(result));
+  assert.match(String(result.error), /remote namespaces overlap/);
+  assert.equal(preflight.ancestryRef, null);
+});
+
+test("direct delete ancestry ignores a local origin/main shadow", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "authority-delete", taskName: "authority delete", createWorktree: true, config: DEFAULT_CONFIG });
+  assert.equal(started.ok, true, JSON.stringify(started));
+  await fs.writeFile(path.join(started.session.worktree_path, "unmerged.txt"), "unmerged\n");
+  await git(started.session.worktree_path, ["add", "unmerged.txt"]);
+  await git(started.session.worktree_path, ["commit", "-m", "unmerged delete authority"]);
+  const head = (await git(started.session.worktree_path, ["rev-parse", "HEAD"])).stdout;
+  await shadowOriginMain(repo, head);
+
+  const result = await guardianDeleteWorktree({ repoRoot: repo, cwd: repo, mode: "plan", sessionId: "authority-delete", deleteBranch: true, config: DEFAULT_CONFIG });
+  const preflight = isRecordLike(result.preflight) ? result.preflight : {};
+
+  assert.equal(result.ok, false, JSON.stringify(result));
+  assert.equal(preflight.ancestryProven, false);
+  assert.match(String(result.reason), /not proven reachable/);
+});
+
+test("deleteBranch=true requires ancestry proof before any removal", async () => {
+  const { base, repo } = await createRepoWithOrigin();
+  test.after(() => fs.rm(base, { recursive: true, force: true }));
+  const start = await createGuardianWorktree(repo, "ses_delete_unmerged", "delete unmerged", "guardian/delete-unmerged");
+  await fs.writeFile(path.join(start.session.worktree_path, "feature.txt"), "unmerged\n");
+  await git(start.session.worktree_path, ["add", "feature.txt"]);
+  await git(start.session.worktree_path, ["commit", "-m", "unmerged feature"]);
+
+  const result = await deleteWorktree({ repoRoot: repo, cwd: repo, mode: "plan", sessionId: "ses_delete_unmerged", deleteBranch: true, config: DEFAULT_CONFIG });
+
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /not proven reachable/);
+  assert.equal((await worktreePaths(repo)).includes(start.session.worktree_path), true);
+  assert.equal(await branchExists(repo, "guardian/delete-unmerged"), true);
+  assert.equal((await guardianStatus({ repoRoot: repo, config: DEFAULT_CONFIG })).safetyRefs.length, 0);
 });

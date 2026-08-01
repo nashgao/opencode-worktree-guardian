@@ -16,6 +16,11 @@ import { guardianDoneAll } from "./done-all.ts";
 import { buildDoneWorkInventory } from "./done-work-inventory.ts";
 import type { DoneDirtyTarget, DoneWorkInventory } from "./done-work-inventory.ts";
 import { resolveDoneTarget, type DoneTargetDecision } from "./done-target-resolver.ts";
+import type { CommitTransactionHooks } from "./done-land-clean-commit.ts";
+
+type GuardianDoneRuntime = {
+  readonly commitTransactionHooks?: CommitTransactionHooks;
+};
 
 function useDirectFinishMode(input: Record<string, unknown>) {
   return typeof input.finishMode === "string" && input.finishMode !== "create-pr";
@@ -103,6 +108,7 @@ async function runSessionTarget(
   mode: "plan" | "apply",
   inventory: DoneWorkInventory,
   config: GuardianConfig,
+  runtime: GuardianDoneRuntime,
 ): Promise<Record<string, unknown>> {
   const sessionBranch = decision.branch ?? inventory.currentBranch;
   if (samePath(decision.worktreePath, inventory.repoRoot) || sessionBranch && inventory.protectedBranches.includes(sessionBranch)) {
@@ -130,6 +136,7 @@ async function runSessionTarget(
     sessionId: decision.sessionId,
     session: decision.session,
     config,
+    commitTransactionHooks: runtime.commitTransactionHooks,
   });
   return withSelectedTarget({ ...result, lane: "session-finish" }, decision.selectedTarget);
 }
@@ -164,7 +171,7 @@ function requestedPoisonedSessionBlocker(inventory: DoneWorkInventory, requested
   });
 }
 
-export async function guardianDone(input: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+export async function guardianDone(input: Record<string, unknown> = {}, runtime: GuardianDoneRuntime = {}): Promise<Record<string, unknown>> {
   const rawCwd = typeof input.cwd === "string" ? input.cwd : typeof input.repoRoot === "string" ? input.repoRoot : process.cwd();
   const cwd = await realPathOrOriginal(rawCwd);
   const rawRepoRoot = typeof input.repoRoot === "string" ? input.repoRoot : await getRepoRoot(cwd);
@@ -174,10 +181,10 @@ export async function guardianDone(input: Record<string, unknown> = {}): Promise
   if (requestedMode !== "plan" && requestedMode !== "apply") return { ok: false, status: "blocked", reason: "mode must be plan or apply", mode: requestedMode };
   const mode = requestedMode;
 
-  const inventory = await buildDoneWorkInventory({ repoRoot, cwd, config });
   if (input.rescue === true) {
-    return rescueDirtyWorktree(inventory.currentWorktree, config, input);
+    return rescueDirtyWorktree({ repoRoot, worktree: await getRepoRoot(cwd), config, input, mode });
   }
+  const inventory = await buildDoneWorkInventory({ repoRoot, cwd, config });
   const requestedSessionId = typeof input.sessionId === "string" && input.sessionId.trim().length > 0 ? input.sessionId : null;
   const poisonBlocker = requestedPoisonedSessionBlocker(inventory, requestedSessionId);
   if (poisonBlocker) return poisonBlocker;
@@ -193,7 +200,7 @@ export async function guardianDone(input: Record<string, unknown> = {}): Promise
   const decision = resolveDoneTarget({ input: { ...input, mode }, inventory });
   switch (decision.kind) {
     case "session-finish":
-      return runSessionTarget(decision, input, mode, inventory, config);
+      return runSessionTarget(decision, input, mode, inventory, config, runtime);
     case "primary-main-publish":
       return withSelectedTarget(await primaryMainDone(repoRoot, repoRoot, config, input), decision.selectedTarget);
     case "done-all":

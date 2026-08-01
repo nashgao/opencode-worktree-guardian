@@ -2,12 +2,15 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
+import { DEFAULT_CONFIG } from "../src/config.ts";
+import { guardianDone } from "../src/done.ts";
 import plugin from "../src/index.ts";
 import { formatGuardianOutput } from "../src/plugin/readable-output.ts";
 import { guardianStart } from "../src/start.ts";
 import { isRecordLike } from "../src/types.ts";
+import { installFakeGh } from "./delete-fixtures.ts";
 import { createToolContext, metadataRecords, runTool } from "./plugin-contract-helpers.ts";
-import { createRepoWithOrigin, git } from "./helpers.ts";
+import { createRepoWithOrigin, git, makeAlreadyLandedDirtySession, rescueMutationSurface } from "./helpers.ts";
 
 function requireRecord(value: unknown, name: string): Record<string, unknown> {
   if (isRecordLike(value)) return value;
@@ -189,4 +192,59 @@ test("guardian_goal readable output warns about completed done-all stash invento
   });
 
   assert.match(output, /\[WARN\] repository stash inventory: 1/);
+});
+
+test("guardian_done remote drift rejects no-message redundant-dirty cleanup after fetch", async (t) => {
+  // Given
+  const fixture = await makeAlreadyLandedDirtySession("ses_done_redundant_dirty_remote_drift");
+  t.after(() => fs.rm(fixture.base, { recursive: true, force: true }));
+  const fakeGh = await installFakeGh(t, { repo: fixture.repo, branch: fixture.branch });
+  const request = { repoRoot: fixture.repo, cwd: fixture.worktree, sessionId: fixture.sessionId, timestamp: "20260731T100100", config: DEFAULT_CONFIG };
+  const plan = requireRecord(await guardianDone({ ...request, mode: "plan" }), "plan");
+  const updater = path.join(fixture.base, "remote-base-updater");
+  await git(fixture.base, ["clone", fixture.remote, updater]);
+  await git(updater, ["config", "user.email", "guardian@example.test"]);
+  await git(updater, ["config", "user.name", "Guardian Test"]);
+  await fs.writeFile(path.join(updater, "remote-base-drift.txt"), "remote advance\n", "utf8");
+  await git(updater, ["add", "remote-base-drift.txt"]);
+  await git(updater, ["commit", "-m", "advance remote base after guardian_done plan"]);
+  await git(updater, ["push", "origin", "main"]);
+  const before = await rescueMutationSurface(fixture.repo);
+
+  // When
+  const result = requireRecord(await guardianDone({ ...request, mode: "apply", confirm: true, confirmToken: requireString(plan.confirmToken, "plan.confirmToken") }), "result");
+
+  // Then
+  assert.equal(result.ok, false, JSON.stringify(result));
+  assert.equal(result.status, "blocked");
+  assert.match(requireString(result.reason, "result.reason"), /plan changed/);
+  const after = await rescueMutationSurface(fixture.repo);
+  assert.notDeepEqual(after.fetchHead, before.fetchHead);
+  assert.deepEqual(
+    {
+      branch: after.branch,
+      files: after.files,
+      head: after.head,
+      index: after.index,
+      indexLock: after.indexLock,
+      state: after.state,
+      status: after.status,
+      unreachable: after.unreachable,
+      worktrees: after.worktrees,
+    },
+    {
+      branch: before.branch,
+      files: before.files,
+      head: before.head,
+      index: before.index,
+      indexLock: before.indexLock,
+      state: before.state,
+      status: before.status,
+      unreachable: before.unreachable,
+      worktrees: before.worktrees,
+    },
+  );
+  assert.equal(await fs.access(fakeGh.logPath).then(() => true, () => false), false);
+  assert.equal(await fs.access(fixture.worktree).then(() => true, () => false), true);
+  await git(fixture.repo, ["rev-parse", "--verify", `refs/heads/${fixture.branch}`]);
 });

@@ -3,7 +3,8 @@ import type { GuardianConfig, GuardianSession } from "./types.ts";
 import { splitPrimaryDirtyFiles } from "./finish-dirty-files.ts";
 import { blocked, errorMessage, withFinishReport } from "./finish-report.ts";
 import type { FinishPreflight, GuardianFinishResult, LooseRecord } from "./finish-report.ts";
-import { createSafetyRef, deleteBranchAtHead, fetchRemote, getCurrentBranch, getDirtyFiles, getHeadCommit, getRepoRoot, isAncestor, listWorktrees, runGit, snapshotWorktreeDirtCommit, tryGit } from "./git.ts";
+import { createSafetyRef, deleteBranchAtHead, fetchRemote, getCurrentBranch, getDirtyFiles, getHeadCommit, getRepoRoot, isAncestor, listWorktrees, runGit, snapshotWorktreeDirtCommit, tryGit, validateConfiguredRemote, validateGitRef } from "./git.ts";
+import { configuredRemoteAuthority } from "./git-authority.ts";
 import { recordSession } from "./state.ts";
 
 type FinishMergeToBaseContext = {
@@ -28,6 +29,9 @@ export async function finishMergeToBase({ input, repoRoot, config, session, sess
   if (input.allowMergeToBase !== true) {
     return blocked("merge-to-base requires explicit allowMergeToBase=true", { safetyRef, branch }, preflight, { action: "requires-explicit-merge-approval" });
   }
+  await validateConfiguredRemote(repoRoot, config.remote);
+  validateGitRef(config.baseBranch);
+  const baseAuthorityRef = configuredRemoteAuthority(config).authorityRef;
   const baseWorktree = await getRepoRoot(repoRoot);
   const baseWorktreeBranch = await getCurrentBranch(baseWorktree);
   const baseWorktreeOriginalHead = await getHeadCommit(baseWorktree);
@@ -73,15 +77,15 @@ export async function finishMergeToBase({ input, repoRoot, config, session, sess
     // Scope the clean to the recomputed blocking paths only: reset --hard touches just tracked files,
     // then a path-scoped clean removes the remaining untracked dirt. A blanket clean would delete the
     // Guardian session worktrees that live under the worktree root.
-      try {
-        await runGit(baseWorktree, ["reset", "--hard", baseWorktreeOriginalHead]);
+    try {
+      await runGit(baseWorktree, ["reset", "--hard", baseWorktreeOriginalHead]);
       const remainingUntracked = splitPrimaryDirtyFiles(await getDirtyFiles(baseWorktree), repoRoot, config).blockingDirtyFiles;
       if (remainingUntracked.length > 0) {
         await runGit(baseWorktree, ["clean", "-f", "-d", "--", ...remainingUntracked]);
-        }
-      } catch (error) {
-        if (!(error instanceof Error)) throw error;
-        return blocked("merge-to-base could not reset the primary worktree clean after preserving its dirt", { safetyRef, branch, baseWorktree, baseWorktreePreservedDirtRef, error: errorMessage(error) }, preflight);
+      }
+    } catch (error) {
+      if (!(error instanceof Error)) throw error;
+      return blocked("merge-to-base could not reset the primary worktree clean after preserving its dirt", { safetyRef, branch, baseWorktree, baseWorktreePreservedDirtRef, error: errorMessage(error) }, preflight);
     }
 
     const stillDirty = splitPrimaryDirtyFiles(await getDirtyFiles(baseWorktree), repoRoot, config).blockingDirtyFiles;
@@ -135,19 +139,21 @@ export async function finishMergeToBase({ input, repoRoot, config, session, sess
   preflight.baseWorktreeSafetyRefs = [...baseWorktreeSafetyRefs];
 
   try {
+    validateGitRef(branch);
     await runGit(repoRoot, ["merge", "--ff-only", branch]);
   } catch (error) {
     if (!(error instanceof Error)) throw error;
     return blocked("merge-to-base fast-forward merge failed", { safetyRef, branch, baseBranch: config.baseBranch, baseBranchHeadSafetyRef, error: errorMessage(error) }, preflight);
   }
   try {
+    validateGitRef(config.baseBranch);
     await runGit(repoRoot, ["push", config.remote, config.baseBranch]);
   } catch (error) {
     if (!(error instanceof Error)) throw error;
     return blocked("merge-to-base push failed after the local fast-forward merge", { safetyRef, branch, baseBranch: config.baseBranch, baseBranchHeadSafetyRef, error: errorMessage(error) }, preflight);
   }
   await fetchRemote(repoRoot, config.remote);
-  const proven = await isAncestor(repoRoot, commit, `${config.remote}/${config.baseBranch}`);
+  const proven = await isAncestor(repoRoot, commit, baseAuthorityRef);
   if (!proven) return blocked("merged commit is not proven reachable from remote base", { safetyRef, commit }, preflight);
 
   const shouldCleanup = config.autoCleanup === true || input.allowCleanup === true;
