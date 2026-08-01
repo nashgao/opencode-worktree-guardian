@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { classifyGuardCommand, classifyNormalAgentGitCommand, classifyReadOnlyInspectionCommand } from "../src/guards.ts";
 import { getHeadCommit, runGit } from "../src/git.ts";
-import { runGit as runGitProcess, runGitNullSeparated, runGitWithInput } from "../src/git-process.ts";
+import { GitReadOnlyPolicyError, runGit as runGitProcess, runGitNullSeparated, runGitReadOnly, runGitWithInput } from "../src/git-process.ts";
 import { createRepoWithOrigin, git } from "./helpers.ts";
 
 const ownedRoots: string[] = [];
@@ -202,4 +202,68 @@ test("ref executors reject policy-routing global options before hooks run", asyn
   }
 
   await assert.rejects(() => fs.readFile(markerPath, "utf8"));
+});
+
+test("structured Git targets reject every writer before executing Git", async (t) => {
+  // Given a real repository exposed through the structured read-only transport.
+  const { base, repo } = await createRepoWithOrigin();
+  ownedRoots.push(base);
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const head = (await runGitProcess(repo, ["rev-parse", "HEAD"])).stdout;
+  const target = { cwd: repo, gitDir: null, workTree: null, configs: [] };
+  const outputPath = path.join(base, "forbidden-output");
+  const writers = [
+    ["add", "README.md"],
+    ["init", "--quiet"],
+    ["commit-tree", `${head}^{tree}`, "-p", head, "-m", "forbidden"],
+    ["read-tree", head],
+    ["restore", "README.md"],
+    ["write-tree"],
+    ["branch", "-D", "forbidden"],
+    ["config", "--unset", "user.name"],
+    ["diff", `--output=${outputPath}`],
+    ["fsck", "--lost-found"],
+    ["log", `--output=${outputPath}`],
+    ["remote", "-v", "add", "forbidden", base],
+    ["rev-parse", "HEAD"],
+    ["show", `--output=${outputPath}`, "HEAD"],
+    ["status", "--short"],
+    ["symbolic-ref", "-d", "HEAD"],
+    ["unknown-external-command"],
+  ] as const;
+
+  // When a valid writer is sent through the structured read-only transport.
+  // Then its typed policy rejection occurs before Git can execute it.
+  for (const args of writers) await assert.rejects(runGitReadOnly(target, args), GitReadOnlyPolicyError);
+  await assert.rejects(fs.access(outputPath));
+
+  const topLevel = await runGitReadOnly(target, ["rev-parse", "--show-toplevel"]);
+  const commonDirectory = await runGitReadOnly(target, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+  const verifiedHead = await runGitReadOnly(target, ["rev-parse", "--verify", "HEAD^{commit}"]);
+  const branch = await runGitReadOnly(target, ["symbolic-ref", "--quiet", "--short", "HEAD"]);
+  assert.equal(topLevel.stdout, repo);
+  assert.equal(path.isAbsolute(commonDirectory.stdout), true);
+  assert.equal(verifiedHead.stdout, head);
+  assert.equal(branch.stdout, "main");
+
+  const aliasMarker = path.join(base, "alias-ran");
+  const configuredTarget = {
+    ...target,
+    configs: [
+      `alias.structured-probe=!touch ${aliasMarker}`,
+      "remote.Origin.PUSH=HEAD:refs/heads/main",
+    ],
+  };
+  const aliases = await runGitReadOnly(configuredTarget, ["config", "--includes", "--null", "--get-regexp", "^alias\\."]);
+  const transports = await runGitReadOnly(configuredTarget, ["config", "--includes", "--null", "--get-regexp", "^remote\\..*\\.(fetch|push|mirror)$"]);
+  assert.match(aliases.stdout, /alias\.structured-probe/);
+  assert.match(transports.stdout, /remote\.Origin\.push/i);
+  await assert.rejects(fs.access(aliasMarker));
+
+  const tracePath = path.join(base, "forbidden-trace");
+  await assert.rejects(
+    runGitReadOnly({ ...target, configs: [`trace2.eventTarget=${tracePath}`] }, ["rev-parse", "--show-toplevel"]),
+    GitReadOnlyPolicyError,
+  );
+  await assert.rejects(fs.access(tracePath));
 });

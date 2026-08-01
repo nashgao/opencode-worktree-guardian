@@ -18,6 +18,30 @@ export type DirtyCommitSafetyRefReservationInput = {
 
 type SafetyRefEvent = { readonly safetyRef: string; readonly expectedHead: string };
 
+function processErrorCode(error: unknown): string | number | undefined {
+  if (typeof error !== "object" || error === null || !("code" in error)) return undefined;
+  const { code } = error;
+  return typeof code === "string" || typeof code === "number" ? code : undefined;
+}
+
+async function isExecutableCommitHook(hookPath: string): Promise<boolean> {
+  try {
+    const stat = await fs.stat(hookPath);
+    if (!stat.isFile()) return false;
+  } catch (error) {
+    if (processErrorCode(error) === "ENOENT") return false;
+    throw error;
+  }
+  try {
+    await fs.access(hookPath, constants.X_OK);
+    return true;
+  } catch (error) {
+    const code = processErrorCode(error);
+    if (code === "EACCES" || code === "ENOENT") return false;
+    throw error;
+  }
+}
+
 export async function dirtyCommitPolicyBlocker(cwd: string, dirtyFiles: readonly string[]): Promise<string | null> {
   const signing = await readEffectiveGitConfig(cwd, "commit.gpgSign", { booleanValue: true });
   if (signing === "true") return "Guardian plumbing commits cannot bypass configured commit signing policy";
@@ -26,8 +50,7 @@ export async function dirtyCommitPolicyBlocker(cwd: string, dirtyFiles: readonly
     ? path.resolve(cwd, configuredHooks)
     : (await runGit(cwd, ["rev-parse", "--path-format=absolute", "--git-path", "hooks"])).stdout;
   for (const hook of ["pre-commit", "prepare-commit-msg", "commit-msg", "post-commit"]) {
-    const executable = await fs.access(path.join(hooksPath, hook), constants.X_OK).then(() => true, () => false);
-    if (executable) return `Guardian plumbing commits cannot bypass executable commit hook ${hook}`;
+    if (await isExecutableCommitHook(path.join(hooksPath, hook))) return `Guardian plumbing commits cannot bypass executable commit hook ${hook}`;
   }
   if (dirtyFiles.length === 0) return null;
   const attributes = await runGitNullSeparated(cwd, ["check-attr", "-z", "filter", "--", ...dirtyFiles]);

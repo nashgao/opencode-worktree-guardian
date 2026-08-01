@@ -7,7 +7,7 @@ import { getRichDirtyStatus } from "../src/delete-worktree-dirty-proof.ts";
 import { guardianDone } from "../src/done.ts";
 import { dirtySnapshot } from "../src/done-primary-snapshot.ts";
 import { getDirtyFiles, getIgnoredFiles, runGit, runGitNullSeparated } from "../src/git.ts";
-import { GUARDIAN_SUBPROCESS_TIMEOUT_MS } from "../src/git-process.ts";
+import { GUARDIAN_SUBPROCESS_TIMEOUT_MS, runGitReadOnly } from "../src/git-process.ts";
 import plugin from "../src/index.ts";
 import { guardianStart } from "../src/start.ts";
 import { getGuardianPaths } from "../src/state.ts";
@@ -138,6 +138,7 @@ test("Git subprocesses ignore inherited Git overrides while honoring trusted tem
     GIT_CONFIG_VALUE_0: "!printf inherited",
     GIT_OBJECT_DIRECTORY: "/unsafe/object-directory",
     GIT_ALTERNATE_OBJECT_DIRECTORIES: "/unsafe/alternate-object-directory",
+    GIT_NO_LAZY_FETCH: "0",
     GIT_OPTIONAL_LOCKS: "1",
     GIT_TERMINAL_PROMPT: "enabled",
     GH_PROMPT_DISABLED: "0",
@@ -165,6 +166,23 @@ test("Git subprocesses ignore inherited Git overrides while honoring trusted tem
     await assert.rejects(runGitNullSeparated(repo, ["trusted-override"], {
       env: { ...inheritedConfig, GIT_CONFIG_KEY_0: "alias.trusted-override", GIT_CONFIG_VALUE_0: "!printf 'trusted\\0'" },
     }));
+
+    const fakeGitDirectory = await createTempDir("guardian-read-only-environment-");
+    const fakeGit = path.join(fakeGitDirectory, "git");
+    await fs.writeFile(fakeGit, '#!/bin/sh\nprintf "%s:%s" "$GIT_OPTIONAL_LOCKS" "$GIT_NO_LAZY_FETCH"\n');
+    await fs.chmod(fakeGit, 0o755);
+    const originalPath = process.env.PATH;
+    process.env.PATH = `${fakeGitDirectory}${path.delimiter}${originalPath ?? ""}`;
+    try {
+      const output = await runGitReadOnly(
+        { cwd: repo, gitDir: null, workTree: null, configs: [] },
+        ["rev-parse", "--show-toplevel"],
+      );
+      assert.equal(output.stdout, "0:1");
+    } finally {
+      if (originalPath === undefined) delete process.env.PATH;
+      else process.env.PATH = originalPath;
+    }
   } finally {
     for (const [key, value] of Object.entries(original)) {
       if (value === undefined) delete process.env[key];
