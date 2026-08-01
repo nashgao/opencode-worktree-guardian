@@ -6,6 +6,7 @@ import { StringDecoder } from "node:string_decoder";
 import { promisify } from "node:util";
 import { assertReferenceTransactionHookSafe, assertSafeGitGlobalOptions, controlledGitEnvironment, runGitNullSeparatedInArtifactSandbox as runGitNullSeparatedInSandbox, runGitWithEnvironment, requiresReferenceTransactionFirewall, withGitArtifactSandbox as withGitArtifactSandboxInClassifier } from "./git-command-classifier.ts";
 import type { GitArtifactSandbox } from "./git-command-classifier.ts";
+import { areStructuredConfigsReadOnly, isStructuredReadOnlyCommand } from "./git-structured-read-policy.ts";
 export { promoteGitArtifactSandboxTree } from "./git-authority.ts";
 export { ReferenceTransactionHookPolicyError, assertReferenceTransactionHookSafe, controlledGitEnvironment, runGitInArtifactSandbox } from "./git-command-classifier.ts";
 export type { GitArtifactSandbox } from "./git-command-classifier.ts";
@@ -45,9 +46,9 @@ function structuredTargetOptions(target: GitReadTarget): string[] {
   ];
 }
 
-function assertReadOnlyStructuredCommand(args: readonly string[]): void {
+function assertReadOnlyStructuredCommand(target: GitReadTarget, args: readonly string[]): void {
   assertSafeGitGlobalOptions(args);
-  if (requiresReferenceTransactionFirewall(args)) throw new GitReadOnlyPolicyError();
+  if (!areStructuredConfigsReadOnly(target.configs) || !isStructuredReadOnlyCommand(args)) throw new GitReadOnlyPolicyError();
 }
 
 export async function runGit(repoPath: string, args: readonly string[], options: GitExecOptions = {}): Promise<GitCommandOutput> {
@@ -55,12 +56,12 @@ export async function runGit(repoPath: string, args: readonly string[], options:
 }
 
 export async function runGitReadOnly(target: GitReadTarget, args: readonly string[]): Promise<GitCommandOutput> {
-  assertReadOnlyStructuredCommand(args);
+  assertReadOnlyStructuredCommand(target, args);
   try {
     const { stdout, stderr } = await execFileAsync("git", ["-C", target.cwd, ...structuredTargetOptions(target), ...args], {
       maxBuffer: 10 * 1024 * 1024,
       encoding: "utf8",
-      env: controlledGitEnvironment(),
+      env: { ...controlledGitEnvironment(), GIT_NO_LAZY_FETCH: "1", GIT_OPTIONAL_LOCKS: "0" },
       timeout: GUARDIAN_SUBPROCESS_TIMEOUT_MS,
       killSignal: "SIGTERM",
     });

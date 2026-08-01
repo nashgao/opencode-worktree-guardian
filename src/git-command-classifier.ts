@@ -114,10 +114,7 @@ function isReadOnlySubcommand(command: GitCommand): boolean {
 }
 
 export function requiresReferenceTransactionFirewall(args: readonly string[]): boolean {
-  const command = normalizedCommand(args);
-  if (!command) return true;
-  if (isReadOnlySubcommand(command)) return false;
-  return true;
+  const command = normalizedCommand(args); return command === null || !isReadOnlySubcommand(command);
 }
 
 export class ReferenceTransactionHookPolicyError extends Error {
