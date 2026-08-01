@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+import { z } from "zod";
 
 const execFileAsync = promisify(execFile);
 export const projectRoot = path.resolve(new URL("..", import.meta.url).pathname);
@@ -120,12 +121,25 @@ export const publicDriftScanEntries = ["README.md", "docs", "commands", "skills"
 export type RunOptions = Omit<ExecFileOptions, "env"> & {
   readonly env?: NodeJS.ProcessEnv;
   readonly coverage?: "inherit" | "suppress";
+  readonly exitMode?: "throw" | "capture";
+};
+
+export type RunResult = {
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly exitCode: number;
 };
 
 const coverageEnvNames = ["NODE_V8_COVERAGE", "OPENCODE_WORKTREE_GUARDIAN_COVERAGE_RUN", "NODE_COMPILE_CACHE"] as const;
 
-export async function run(command: string, args: readonly string[], options: RunOptions = {}) {
-  const { coverage = "inherit", env: optionEnv, ...execOptions } = options;
+function outputText(value: unknown): string {
+  if (typeof value === "string") return value.trim();
+  if (Buffer.isBuffer(value)) return value.toString("utf8").trim();
+  return "";
+}
+
+export async function run(command: string, args: readonly string[], options: RunOptions = {}): Promise<RunResult> {
+  const { coverage = "inherit", env: optionEnv, exitMode = "throw", ...execOptions } = options;
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     CI: "true",
@@ -137,16 +151,64 @@ export async function run(command: string, args: readonly string[], options: Run
   if (coverage === "suppress") {
     for (const name of coverageEnvNames) env[name] = "";
   }
-  const { stdout, stderr } = await execFileAsync(command, args, {
-    maxBuffer: 20 * 1024 * 1024,
-    timeout: defaultRunTimeoutMs,
-    killSignal: "SIGTERM",
-    ...execOptions,
-    env,
-  });
-  const stdoutText = typeof stdout === "string" ? stdout : stdout.toString("utf8");
-  const stderrText = typeof stderr === "string" ? stderr : stderr.toString("utf8");
-  return { stdout: stdoutText.trim(), stderr: stderrText.trim() };
+  try {
+    const { stdout, stderr } = await execFileAsync(command, args, {
+      maxBuffer: 20 * 1024 * 1024,
+      timeout: defaultRunTimeoutMs,
+      killSignal: "SIGTERM",
+      ...execOptions,
+      env,
+    });
+    return { stdout: outputText(stdout), stderr: outputText(stderr), exitCode: 0 };
+  } catch (error) {
+    if (exitMode === "throw" || !(error instanceof Error)) throw error;
+    const exitCode = Reflect.get(error, "code");
+    return {
+      stdout: outputText(Reflect.get(error, "stdout")),
+      stderr: outputText(Reflect.get(error, "stderr")),
+      exitCode: typeof exitCode === "number" ? exitCode : 1,
+    };
+  }
+}
+
+const PackedPackageInfoSchema = z.object({
+  name: z.string(),
+  version: z.string(),
+  filename: z.string(),
+  files: z.array(z.object({ path: z.string() })),
+});
+
+const PackageRuntimeSchema = z.object({ dependencies: z.object({ tsx: z.string() }) });
+
+export type PackedPackageInfo = z.infer<typeof PackedPackageInfoSchema>;
+
+export type PackedConsumer = {
+  readonly base: string;
+  readonly consumer: string;
+  readonly packInfo: PackedPackageInfo;
+  readonly cleanup: () => Promise<void>;
+};
+
+export async function createPackedConsumer(): Promise<PackedConsumer> {
+  const packageRuntime = PackageRuntimeSchema.parse(JSON.parse(await fs.readFile(path.join(projectRoot, "package.json"), "utf8")));
+  const base = await fs.mkdtemp(path.join(os.tmpdir(), "guardian-package-smoke-"));
+  const packDir = path.join(base, "pack");
+  const consumer = path.join(base, "consumer");
+  const npmCache = path.join(base, "npm-cache");
+  try {
+    await fs.mkdir(packDir, { recursive: true });
+    await fs.mkdir(consumer, { recursive: true });
+
+    const packed = await run("npm", ["pack", projectRoot, "--pack-destination", packDir, "--json", "--cache", npmCache], { cwd: base, coverage: "suppress" });
+    const [packInfo] = z.tuple([PackedPackageInfoSchema]).parse(JSON.parse(packed.stdout));
+    await run("npm", ["init", "-y"], { cwd: consumer, coverage: "suppress" });
+    await run("npm", ["install", "--ignore-scripts", "--no-audit", "--no-fund", "--registry=https://registry.npmjs.org", "--cache", npmCache, path.join(packDir, packInfo.filename), `tsx@${packageRuntime.dependencies.tsx}`], { cwd: consumer, coverage: "suppress" });
+
+    return { base, consumer, packInfo, cleanup: () => fs.rm(base, { recursive: true, force: true }) };
+  } catch (error) {
+    await fs.rm(base, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 export function sortedPackPaths(files: readonly { readonly path: string }[], prefix: string): string[] {

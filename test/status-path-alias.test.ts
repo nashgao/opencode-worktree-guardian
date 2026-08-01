@@ -5,7 +5,6 @@ import test from "node:test";
 import { DEFAULT_CONFIG } from "../src/config.ts";
 import { guardianDone } from "../src/done.ts";
 import { guardianFinish } from "../src/finish.ts";
-import { scanWorkspaceHygiene } from "../src/hygiene.ts";
 import { guardianRecover, guardianStatus } from "../src/recover.ts";
 import { updateState } from "../src/state.ts";
 import { guardianStart, runGuardianTool } from "../src/tools.ts";
@@ -97,31 +96,6 @@ test("guardian status and recover classify a primary-worktree alias as poisoned"
   assert.equal(recover.poisonedSessions.some((session) => session.session_id === "ses_primary_alias"), true);
 });
 
-test("hygiene scanner exposes reviewable scan inventory separately from cleanup findings", async () => {
-  const repo = await createRepo();
-  await fs.writeFile(path.join(repo, ".gitignore"), "*.log\nlogs/\nnode_modules/\n");
-  await git(repo, ["add", ".gitignore"]);
-  await git(repo, ["commit", "-m", "add hygiene fixture ignores"]);
-  await writeArtifact(repo, ".omo/run-continuation/session.json");
-  await writeArtifact(repo, "node_modules/pkg/index.js");
-  await writeArtifact(repo, "logs/run.log");
-  await writeArtifact(repo, "plain.log");
-  for (const relative of ["aaa.txt", "bbb.txt", "ccc.txt", "ddd.txt", "eee.txt", "fff.txt", "ggg.txt", "hhh.txt", "iii.txt", "jjj.txt", "yyy.txt", "zzz.txt"]) {
-    await writeArtifact(repo, relative);
-  }
-
-  const result = await scanWorkspaceHygiene({ repoRoot: repo, config: DEFAULT_CONFIG });
-
-  assert.equal(result.ok, true);
-  assert.deepEqual(pathsFromRecords(result.findings), []);
-  assert.deepEqual(pathsFromRecords(result.exclusions), [".omo", "node_modules"]);
-  assert.deepEqual(
-    { summary: { candidateCount: result.summary.candidateCount, findingCount: result.summary.findingCount, exclusionCount: result.summary.exclusionCount, reviewableCandidateCount: recordField(result.summary, "reviewableCandidateCount"), reviewableShownCount: recordField(result.summary, "reviewableShownCount"), reviewableOmittedCount: recordField(result.summary, "reviewableOmittedCount"), reviewableTruncated: recordField(result.summary, "reviewableTruncated") }, reviewableCandidates: recordField(result, "reviewableCandidates") },
-    { summary: { candidateCount: 16, findingCount: 0, exclusionCount: 2, reviewableCandidateCount: 14, reviewableShownCount: 12, reviewableOmittedCount: 2, reviewableTruncated: true }, reviewableCandidates: [
-      { path: "aaa.txt", status: "untracked", fileCount: 1, reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["aaa.txt"]' }, { path: "bbb.txt", status: "untracked", fileCount: 1, reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["bbb.txt"]' }, { path: "ccc.txt", status: "untracked", fileCount: 1, reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["ccc.txt"]' }, { path: "ddd.txt", status: "untracked", fileCount: 1, reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["ddd.txt"]' }, { path: "eee.txt", status: "untracked", fileCount: 1, reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["eee.txt"]' }, { path: "fff.txt", status: "untracked", fileCount: 1, reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["fff.txt"]' }, { path: "ggg.txt", status: "untracked", fileCount: 1, reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["ggg.txt"]' }, { path: "hhh.txt", status: "untracked", fileCount: 1, reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["hhh.txt"]' }, { path: "iii.txt", status: "untracked", fileCount: 1, reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["iii.txt"]' }, { path: "jjj.txt", status: "untracked", fileCount: 1, reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["jjj.txt"]' }, { path: "logs", status: "ignored", fileCount: 1, reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["logs"] allowRecursive=true' }, { path: "plain.log", status: "ignored", fileCount: 1, reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["plain.log"]' },
-    ] },
-  );
-});
 
 test("guardian_status includes hygiene metadata without changing dirty files", async () => {
   const repo = await createRepo();

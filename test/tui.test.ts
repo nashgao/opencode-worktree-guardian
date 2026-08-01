@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import plugin, { id, tui } from "../src/tui.ts";
+import plugin, { id, tui, type GuardianTuiApi } from "../src/tui.ts";
 
 const expectedSlashNames = [
   "guardian-delete-paths",
@@ -37,13 +37,22 @@ type RegisteredLayer = {
   bindings: readonly unknown[];
 };
 
+interface HostTuiApi {
+  readonly state: { readonly path: { readonly directory: string } };
+  readonly keymap: { readonly registerLayer: (input: RegisteredLayer) => unknown };
+  readonly route: { readonly current: { readonly name: string; readonly params?: Record<string, unknown> } };
+  readonly client: { readonly session: { readonly promptAsync: (input: unknown) => Promise<void> } };
+  readonly ui: { readonly toast: (input: unknown) => void; readonly dialog: { readonly setSize: (input: unknown) => void; readonly replace: (input: unknown) => void } };
+  readonly theme: { readonly current: { readonly text: string; readonly textMuted: string; readonly success: string; readonly warning: string; readonly error: string; readonly accent: string; readonly border: string } };
+}
+
 function createApi(routeName = "session") {
   const prompts: unknown[] = [];
   const toasts: unknown[] = [];
   const dialogSetSizes: unknown[] = [];
   const dialogReplacements: unknown[] = [];
   let layer: RegisteredLayer | undefined;
-  const api = {
+  const api: HostTuiApi = {
     keymap: {
       registerLayer(input: RegisteredLayer) {
         layer = input;
@@ -97,6 +106,15 @@ test("tui plugin exports OpenCode TUI module shape", () => {
   assert.equal(plugin.tui, tui);
 });
 
+test("tui accepts an interface-typed host API with unused extensions", async () => {
+  const runtime = createApi();
+  const compatibleApi: GuardianTuiApi = runtime.api;
+
+  await tui(runtime.api);
+
+  assert.equal(compatibleApi.state.path.directory, "/repo");
+});
+
 test("tui plugin registers Guardian slash commands", async () => {
   const runtime = createApi();
 
@@ -108,7 +126,7 @@ test("tui plugin registers Guardian slash commands", async () => {
   assert.equal(runtime.layer?.commands.every((command) => command.category === "Guardian"), true);
 });
 
-test("guardian-hud warns without submitting a prompt or opening a dialog", async () => {
+test("Given a registered guardian-hud command, when invoked, then it warns without a prompt or dialog", async () => {
   const runtime = createApi();
   await tui(runtime.api);
   const command = runtime.layer?.commands.find((candidate) => candidate.slashName === "guardian-hud");
@@ -121,9 +139,9 @@ test("guardian-hud warns without submitting a prompt or opening a dialog", async
     title: "Guardian HUD unavailable",
     message: "The visual Guardian HUD is temporarily unavailable. Use /guardian-status instead.",
   }]);
-  assert.deepEqual(runtime.prompts, []);
-  assert.deepEqual(runtime.dialogSetSizes, []);
-  assert.deepEqual(runtime.dialogReplacements, []);
+  assert.equal(runtime.prompts.length, 0);
+  assert.equal(runtime.dialogSetSizes.length, 0);
+  assert.equal(runtime.dialogReplacements.length, 0);
 });
 
 test("tui slash command dispatches a Guardian prompt in the current session", async () => {

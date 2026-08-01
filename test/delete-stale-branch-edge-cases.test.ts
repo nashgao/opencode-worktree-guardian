@@ -15,48 +15,10 @@ import {
   test,
   worktreePaths,
 } from "./delete-fixtures.js";
-import { guardianHygiene, scanWorkspaceHygiene } from "../src/hygiene.ts";
-import { createRepo } from "./helpers.ts";
-
-function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null; }
-
-function pathsFromRecords(records: unknown) {
-  if (!Array.isArray(records)) {
-    throw new TypeError("expected records array");
-  }
-  return records.map((entry) => {
-    if (!isRecord(entry)) {
-      throw new TypeError("expected record entry");
-    }
-    return entry.path;
-  }).sort();
-}
-
-function hasFatalBlocker(records: unknown, predicate: (entry: Record<string, unknown>) => boolean) {
-  if (!Array.isArray(records)) {
-    throw new TypeError("expected blocker records array");
-  }
-  return records.some((entry) => {
-    if (!isRecord(entry)) {
-      throw new TypeError("expected blocker record entry");
-    }
-    return entry.fatal === true && predicate(entry);
-  });
-}
-
-async function pathExists(candidate: string) { return fs.access(candidate).then(() => true, () => false); }
-
-async function createDirtyNestedRepository(repo: string, relative: string) {
-  const nested = path.join(repo, relative);
-  await fs.mkdir(nested, { recursive: true });
-  await git(nested, ["init", "-b", "main"]);
-  await git(nested, ["config", "user.email", "guardian@example.test"]);
-  await git(nested, ["config", "user.name", "Guardian Test"]);
-  await fs.writeFile(path.join(nested, "README.md"), "nested\n");
-  await git(nested, ["add", "README.md"]);
-  await git(nested, ["commit", "-m", "nested initial"]);
-  await fs.writeFile(path.join(nested, "dirty.txt"), "dirty\n"); return nested;
-}
+import { guardianDeleteWorktree } from "../src/delete-worktree.ts";
+import { guardianStart } from "../src/start.ts";
+import type { GuardianConfig } from "../src/types.ts";
+import { isRecordLike } from "../src/types.ts";
 
 test("abandonUnmerged=true is required for unmerged stale branch deletion", async () => {
   const { base, repo } = await createRepoWithOrigin();
@@ -223,29 +185,6 @@ test("apply blocks when ignored target files change after allowIgnoredFiles plan
   assert.equal(await branchExists(repo, "guardian/delete-ignored-token"), true);
 });
 
-test("hygiene cleanup blocks an allowed same-path finding when its dirty nested Git finding is denied", async () => {
-  const repo = await createRepo();
-  const parent = "guardian-same-path";
-  await fs.mkdir(path.join(repo, parent), { recursive: true });
-  await fs.writeFile(path.join(repo, parent, "marker.txt"), "artifact\n");
-  await createDirtyNestedRepository(repo, `${parent}/checkout`);
-
-  const scan = await scanWorkspaceHygiene({ repoRoot: repo, config: DEFAULT_CONFIG });
-  const categories = (scan.findings as Array<Record<string, unknown>>)
-    .filter((finding) => finding.path === parent)
-    .map((finding) => finding.category)
-    .sort();
-  const plan = await guardianHygiene({ repoRoot: repo, config: DEFAULT_CONFIG, mode: "plan", cleanupPaths: [parent], allowCategories: ["suspicious"] });
-
-  assert.deepEqual(categories, ["nested-git", "suspicious"]);
-  assert.equal(plan.ok, false);
-  assert.equal(plan.status, "blocked");
-  assert.equal(plan.confirmToken, undefined);
-  assert.deepEqual(pathsFromRecords(plan.targets), []);
-  assert.equal(hasFatalBlocker(plan.blockers, (blocker) => blocker.path === parent && blocker.category === "nested-git" && /not allowed/.test(String(blocker.reason))), true);
-  assert.equal(await pathExists(path.join(repo, parent)), true);
-});
-
 test("deleteBranch=true reports partial success when branch deletion fails after worktree removal", async () => {
   const { base, repo } = await createRepoWithOrigin();
   test.after(() => fs.rm(base, { recursive: true, force: true }));
@@ -269,4 +208,38 @@ test("deleteBranch=true reports partial success when branch deletion fails after
   assert.equal(session.status, "deleted");
   assert.equal(session.branch_delete_failed, true);
   assert.equal(session.deleted_branch, null);
+});
+
+test("direct deletion blocks overlapping trusted remote namespaces before ancestry evaluation", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "authority-overlap-delete", taskName: "authority overlap delete", createWorktree: true, config: DEFAULT_CONFIG });
+  assert.equal(started.ok, true, JSON.stringify(started));
+  const config = { ...DEFAULT_CONFIG, trustedUpstreamRemotes: ["origin/main"] } satisfies GuardianConfig;
+
+  const result = await guardianDeleteWorktree({ repoRoot: repo, cwd: repo, mode: "plan", sessionId: "authority-overlap-delete", deleteBranch: true, config });
+  const preflight = isRecordLike(result.preflight) ? result.preflight : {};
+
+  assert.equal(result.ok, false, JSON.stringify(result));
+  assert.match(String(result.error), /remote namespaces overlap/);
+  assert.equal(preflight.ancestryRef, null);
+});
+
+test("direct delete ancestry ignores a local origin/main shadow", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "authority-delete", taskName: "authority delete", createWorktree: true, config: DEFAULT_CONFIG });
+  assert.equal(started.ok, true, JSON.stringify(started));
+  await fs.writeFile(path.join(started.session.worktree_path, "unmerged.txt"), "unmerged\n");
+  await git(started.session.worktree_path, ["add", "unmerged.txt"]);
+  await git(started.session.worktree_path, ["commit", "-m", "unmerged delete authority"]);
+  const head = (await git(started.session.worktree_path, ["rev-parse", "HEAD"])).stdout;
+  await git(repo, ["update-ref", "refs/heads/origin/main", head]);
+
+  const result = await guardianDeleteWorktree({ repoRoot: repo, cwd: repo, mode: "plan", sessionId: "authority-delete", deleteBranch: true, config: DEFAULT_CONFIG });
+  const preflight = isRecordLike(result.preflight) ? result.preflight : {};
+
+  assert.equal(result.ok, false, JSON.stringify(result));
+  assert.equal(preflight.ancestryProven, false);
+  assert.match(String(result.reason), /not proven reachable/);
 });

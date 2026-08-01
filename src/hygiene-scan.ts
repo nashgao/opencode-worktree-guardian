@@ -81,9 +81,8 @@ function knownCleanableMatch(relative: string) {
 }
 
 function suspiciousPath(relative: string) {
-  const parts = relative.split("/").filter(Boolean);
-  if (RESIDUE_ROOT_PATTERN.test(parts[0] ?? "")) return parts[0];
-  const index = parts.findIndex((part) => SUSPICIOUS_NAME_PATTERN.test(part));
+  const parts = relative.split("/").filter(Boolean); if (RESIDUE_ROOT_PATTERN.test(parts[0] ?? "")) return parts[0];
+  const index = parts.slice(0, -1).findIndex((part) => SUSPICIOUS_NAME_PATTERN.test(part));
   return index >= 0 ? parts.slice(0, index + 1).join("/") : relative;
 }
 
@@ -135,7 +134,11 @@ async function buildReviewableCandidates(repoRoot: string, candidates: readonly 
     collapsedByPath.set(collapsedPath, mergeReviewableStatus(collapsedByPath.get(collapsedPath), candidate.status));
     fileCountByPath.set(collapsedPath, (fileCountByPath.get(collapsedPath) ?? 0) + 1);
   }
-  const collapsed = [...collapsedByPath.entries()].map(([candidatePath, status]) => ({ path: candidatePath, status, fileCount: fileCountByPath.get(candidatePath) ?? 1 })).sort((left, right) => right.fileCount - left.fileCount || left.path.localeCompare(right.path));
+  const collapsed = [...collapsedByPath.entries()]
+    .map(([candidatePath, status]) => ({ path: candidatePath, status, fileCount: fileCountByPath.get(candidatePath) ?? 1 }))
+    // Order a truncated slice by consequence, not by name: localeCompare sorted dot-directories
+    // first, so the visible rows were reliably the smallest and the largest fell into the remainder.
+    .sort((left, right) => right.fileCount - left.fileCount || left.path.localeCompare(right.path));
   const visible = visibleLimit === null ? collapsed : collapsed.slice(0, visibleLimit);
   const reviewableCandidates: ReviewableCandidate[] = [];
   for (const candidate of visible) {
@@ -152,7 +155,10 @@ async function buildReviewableCandidates(repoRoot: string, candidates: readonly 
   }
   const reviewableCandidateCount = collapsed.length;
   const reviewableShownCount = reviewableCandidates.length;
-  return { reviewableCandidates, reviewableCandidateCount, reviewableShownCount, reviewableTotalFileCount: collapsed.reduce((total, candidate) => total + candidate.fileCount, 0), reviewableOmittedCount: reviewableCandidateCount - reviewableShownCount, reviewableTruncated: reviewableCandidateCount > reviewableShownCount };
+  // Summed over every collapsed candidate, not the visible slice: a total cannot be truncated,
+  // so it stays correct no matter how few rows the display limit allows through.
+  const reviewableTotalFileCount = collapsed.reduce((total, candidate) => total + candidate.fileCount, 0);
+  return { reviewableCandidates, reviewableCandidateCount, reviewableShownCount, reviewableTotalFileCount, reviewableOmittedCount: reviewableCandidateCount - reviewableShownCount, reviewableTruncated: reviewableCandidateCount > reviewableShownCount };
 }
 
 async function findNestedGitRoot(repoRoot: string, candidatePath: string) {
@@ -235,9 +241,8 @@ export async function scanWorkspaceHygiene(input: Record<string, unknown> = {}) 
         }
         continue;
       }
-      const baseName = path.basename(relative);
-      if (SUSPICIOUS_NAME_PATTERN.test(relative) || SUSPICIOUS_NAME_PATTERN.test(baseName)) {
-        const findingPath = suspiciousPath(relative);
+      const findingPath = suspiciousPath(relative);
+      if (findingPath !== relative) {
         const key = `suspicious:${findingPath}`;
         if (!seenFindings.has(key)) {
           findings.push({ path: findingPath, category: "suspicious" satisfies HygieneCategory, severity: "warn" satisfies HygieneSeverity, reason: "untracked path resembles a clone, research dump, or scratch workspace", source: "git ls-files --others/--ignored" });

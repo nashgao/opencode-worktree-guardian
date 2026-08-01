@@ -93,7 +93,9 @@ function collectSignals(status: LooseRecord): VerdictSignal[] {
   const hygieneSummary = recordValue(hygiene.summary);
   const hygieneFail = numberValue(recordValue(hygieneSummary.bySeverity).fail);
   const hygieneFindings = numberValue(hygieneSummary.findingCount);
+  // Excluded from findingCount by design; omitting it here rendered unreviewed paths as "clean".
   const hygieneReviewable = numberValue(hygieneSummary.reviewableCandidateCount);
+  // A failed scan zeroes every hygiene count, so silence here must read as unknown, not clean.
   const hygieneScanFailed = hygiene.ok === false || hygieneSummary.scanFailed === true;
 
   const dirty = arrayValue(status.dirtyFiles).length;

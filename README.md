@@ -73,7 +73,7 @@ Repo-local config lives at `.opencode/worktree-guardian.json`. The current suppo
     "cleanupBranches": true,
     "cleanupHygiene": true
   },
-  "protectedPaths": [".omo", ".omc", ".omx", ".sisyphus", ".milestones", ".opencode", ".codegraph", ".worktrees"],
+  "protectedPaths": [".beads", ".omo", ".omc", ".omx", ".sisyphus", ".milestones", ".opencode", ".codegraph", ".worktrees"],
   "protectedBranches": ["main", "master", "develop", "production"],
   "trustedUpstreamRemotes": []
 }
@@ -99,6 +99,7 @@ Defaults are delivery-first, lifecycle-managed, and cleanup-conservative. `guard
 - `guardian_recover`: read-only recovery refs, reflog/unreachable candidates, and suggested commands. Its native tool output renders a terminal-readable summary, while `metadata` keeps the full structured result for automation.
 - `guardian_report_html`: write a self-contained offline control-room report to `.git/opencode-guardian/report.html` with sessions, worktrees, branch coverage, risks, recovery commands, and raw status/recover metadata.
 - `guardian_hygiene`: scan, plan, or apply cleanup for workspace hygiene findings. With no `mode`, it classifies known scratch artifacts, nested Git repositories, suspicious research dumps, configured `protectedPaths`, and protected exclusions without deleting or cleaning anything. With `mode: "plan"` or `mode: "apply"`, it uses the token-gated cleanup preflight and removes only internally token-bound approved hygiene findings with internal Node filesystem APIs after explicit confirmation.
+  Omitting `allowCategories`, or passing an empty list, selects every supported cleanup category; dirty nested Git repositories still require `allowDirtyNestedGit: true`.
   Scan output also includes scan-only `reviewableCandidates`; those entries are inventory, not cleanup findings.
 - `guardian_gc`: plan or apply record-only cleanup of stale Guardian session records. Run `mode: "plan"` to inspect candidates (terminal sessions older than the safety-ref retention window, active sessions poisoned onto the primary worktree or a protected branch, active sessions whose worktree is gone, and active sessions whose worktree belongs to a different git repository than the state's `repoRoot` (`foreign-repo`)), then apply with `confirmDelete: true` and the returned `confirmToken`. It removes only JSON state records and never deletes git branches, worktrees, refs, stashes, or files.
 

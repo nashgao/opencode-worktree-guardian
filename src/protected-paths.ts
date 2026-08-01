@@ -3,6 +3,8 @@ type ProtectedPathMatch = {
   readonly reason: string;
 };
 
+const HARD_DENY_PROTECTED_PATHS = [".beads"] as const;
+
 function normalizeProtectedPath(value: string) {
   const trimmed = value.trim().replaceAll("\\", "/");
   if (trimmed.length === 0 || trimmed.startsWith("/") || /^[A-Za-z]:\//.test(trimmed)) return null;
@@ -16,7 +18,7 @@ function pathContains(parent: string, child: string) {
 }
 
 export function normalizeProtectedPaths(values: readonly unknown[] = []) {
-  const paths: string[] = [];
+  const paths: string[] = [...HARD_DENY_PROTECTED_PATHS];
   for (const value of values) {
     if (typeof value !== "string") continue;
     const normalized = normalizeProtectedPath(value);

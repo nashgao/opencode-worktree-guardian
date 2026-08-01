@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { DEFAULT_CONFIG } from "../src/config.ts";
+import { runGitNullSeparated } from "../src/git.ts";
 import { guardianHygiene, scanWorkspaceHygiene } from "../src/hygiene.ts";
-import { createRepo, git } from "./helpers.ts";
+import { createRepo, createRepoWithOrigin, createTempDir, git } from "./helpers.ts";
+import { guardianStart, runGuardianTool } from "../src/tools.ts";
 
 async function writeArtifact(repo: string, relative: string) {
   const target = path.join(repo, relative);
@@ -14,43 +17,6 @@ async function writeArtifact(repo: string, relative: string) {
 
 function findingPaths(result: Record<string, unknown>) {
   return (result.findings as Array<Record<string, unknown>>).map((finding) => finding.path).sort();
-}
-
-function recordField(record: Record<string, unknown>, key: string) {
-  return record[key];
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
-function pathsFromRecords(records: unknown) {
-  if (!Array.isArray(records)) {
-    throw new TypeError("expected records array");
-  }
-  return records.map((entry) => {
-    if (!isRecord(entry)) {
-      throw new TypeError("expected record entry");
-    }
-    return entry.path;
-  }).sort();
-}
-
-async function pathExists(candidate: string) {
-  return fs.access(candidate).then(() => true, () => false);
-}
-
-async function createDirtyNestedRepository(repo: string, relative: string) {
-  const nested = path.join(repo, relative);
-  await fs.mkdir(nested, { recursive: true });
-  await git(nested, ["init", "-b", "main"]);
-  await git(nested, ["config", "user.email", "guardian@example.test"]);
-  await git(nested, ["config", "user.name", "Guardian Test"]);
-  await fs.writeFile(path.join(nested, "README.md"), "nested\n");
-  await git(nested, ["add", "README.md"]);
-  await git(nested, ["commit", "-m", "nested initial"]);
-  await fs.writeFile(path.join(nested, "dirty.txt"), "dirty\n");
-  return nested;
 }
 
 test("hygiene scanner detects known scratch artifact patterns", async () => {
@@ -114,116 +80,34 @@ test("hygiene scanner detects nested git repos and marks dirty nested repos for 
   assert.equal((result.suggestedCommands as string[]).includes("git -C research-clone status --short"), true);
 });
 
-test("hygiene scanner ignores tracked files even when names match known artifact patterns", async () => {
+test("git NUL-separated streaming handles hygiene-sized candidate output without exec maxBuffer", async () => {
   const repo = await createRepo();
-  await writeArtifact(repo, "hyperf-tracked/file.txt");
-  await git(repo, ["add", "hyperf-tracked/file.txt"]);
-  await git(repo, ["commit", "-m", "track matching artifact name"]);
+  const suffix = "x".repeat(90);
+  const emptyBlob = spawnSync("git", ["hash-object", "-w", "--stdin"], { cwd: repo, input: "" }).stdout.toString().trim();
+  const indexInfo = Array.from({ length: 120000 }, (_, index) => `100644 blob ${emptyBlob}\t` + `entry-${String(index).padStart(6, "0")}-${suffix}`).join("\n");
+  const update = spawnSync("git", ["update-index", "--add", "--index-info"], { cwd: repo, input: indexInfo });
+  assert.equal(update.status, 0);
 
-  const result = await scanWorkspaceHygiene({ repoRoot: repo, config: DEFAULT_CONFIG });
-  assert.equal(findingPaths(result).includes("hyperf-tracked"), false);
-  assert.equal(result.summary.findingCount, 0);
+  const entries = await runGitNullSeparated(repo, ["ls-files", "-z"]);
+
+  assert.equal(entries.length >= 120000, true);
+  assert.equal(entries.includes(`entry-000000-${suffix}`), true);
+  assert.equal(entries.includes(`entry-119999-${suffix}`), true);
 });
 
-test("hygiene scanner excludes protected dependency and build directories", async () => {
+
+async function pathExists(candidate: string) {
+  return fs.access(candidate).then(() => true, () => false);
+}
+
+test("hygiene cleanup plans and applies all default hygiene targets", async () => {
   const repo = await createRepo();
-  await writeArtifact(repo, "node_modules/librarian-alpha/file.txt");
-  await writeArtifact(repo, "vendor/hyperf-demo/file.txt");
-  await writeArtifact(repo, "target/test-phpkafka/file.txt");
-
-  const result = await scanWorkspaceHygiene({ repoRoot: repo, config: DEFAULT_CONFIG });
-  assert.equal(result.summary.findingCount, 0);
-  assert.deepEqual((result.exclusions as Array<Record<string, unknown>>).map((entry) => entry.path).sort(), ["node_modules", "target", "vendor"]);
-});
-
-test("hygiene scanner keeps reviewable delete suggestions narrow when siblings include hygiene findings", async () => {
-  const repo = await createRepo();
-  await writeArtifact(repo, "foo/node-compile-cache/cache.blob");
-  await writeArtifact(repo, "foo/ordinary.txt");
-
-  const result = await scanWorkspaceHygiene({ repoRoot: repo, config: DEFAULT_CONFIG });
-
-  assert.equal(result.ok, true);
-  assert.deepEqual(findingPaths(result), ["foo/node-compile-cache"]);
-  assert.deepEqual(recordField(result, "reviewableCandidates"), [
-    { path: "foo/ordinary.txt", status: "untracked", fileCount: 1, reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["foo/ordinary.txt"]' },
-  ]);
-});
-
-test("hygiene scanner keeps reviewable files exact under tracked source directories", async () => {
-  const repo = await createRepo();
-  await fs.writeFile(path.join(repo, ".gitignore"), "*.txt\n");
-  await fs.mkdir(path.join(repo, "src"), { recursive: true });
-  await fs.writeFile(path.join(repo, "src", "index.ts"), "export const tracked = true;\n");
-  await git(repo, ["add", ".gitignore", "src/index.ts"]);
-  await git(repo, ["commit", "-m", "track source directory"]);
-  await fs.writeFile(path.join(repo, "src", "ordinary.txt"), "reviewable\n");
-
-  const result = await scanWorkspaceHygiene({ repoRoot: repo, config: DEFAULT_CONFIG });
-
-  assert.equal(result.ok, true);
-  assert.deepEqual(recordField(result, "reviewableCandidates"), [
-    { path: "src/ordinary.txt", status: "ignored", fileCount: 1, reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["src/ordinary.txt"]' },
-  ]);
-});
-
-test("hygiene scanner keeps nested protected exclusions from suppressing reviewable siblings", async () => {
-  const repo = await createRepo();
-  await writeArtifact(repo, "foo/node_modules/pkg/index.js");
-  await writeArtifact(repo, "foo/ordinary.txt");
-
-  const result = await scanWorkspaceHygiene({ repoRoot: repo, config: DEFAULT_CONFIG });
-
-  assert.equal(result.ok, true);
-  assert.deepEqual(pathsFromRecords(result.exclusions), ["foo/node_modules"]);
-  const protectedExclusion = (result.exclusions as Array<Record<string, unknown>>).find((entry) => entry.path === "foo/node_modules");
-  assert.equal(recordField(protectedExclusion ?? {}, "suggestedDeletePathCommand"), undefined);
-  assert.deepEqual(recordField(result, "reviewableCandidates"), [
-    { path: "foo/ordinary.txt", status: "untracked", fileCount: 1, reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["foo/ordinary.txt"]' },
-  ]);
-});
-
-test("hygiene scanner excludes agent and local tooling state directories from cleanup findings", async () => {
-  const repo = await createRepo();
-  await fs.writeFile(path.join(repo, ".gitignore"), "logs/\n");
-  await writeArtifact(repo, ".milestones/logs/progress-events.jsonl");
-  await writeArtifact(repo, ".omc/session.json");
-  await writeArtifact(repo, ".omo/plan.md");
-  await writeArtifact(repo, ".omx/cache.json");
-  await writeArtifact(repo, ".sisyphus/state.json");
-  await writeArtifact(repo, ".opencode/worktree-guardian.json");
-  await writeArtifact(repo, ".codegraph/index.sqlite");
-  await writeArtifact(repo, ".worktrees/cache.json");
-  await git(repo, ["add", ".gitignore"]);
-  await git(repo, ["commit", "-m", "track ignore rules"]);
-
-  const result = await scanWorkspaceHygiene({ repoRoot: repo, config: DEFAULT_CONFIG });
-
-  assert.equal(result.ok, true);
-  assert.equal(result.summary.findingCount, 0);
-  assert.deepEqual(pathsFromRecords(result.exclusions), [".codegraph", ".milestones", ".omc", ".omo", ".omx", ".opencode", ".sisyphus", ".worktrees"]);
-  assert.deepEqual(recordField(result, "reviewableCandidates"), []);
-});
-
-test("hygiene scanner excludes configured protected paths from cleanup findings", async () => {
-  const repo = await createRepo();
-  const config = { ...DEFAULT_CONFIG, protectedPaths: [...DEFAULT_CONFIG.protectedPaths, ".agent-state"] };
-  await writeArtifact(repo, ".agent-state/node-compile-cache/cache.blob");
-  await writeArtifact(repo, ".agent-state/research-dump/file.txt");
-
-  const result = await scanWorkspaceHygiene({ repoRoot: repo, config });
-
-  assert.equal(result.ok, true);
-  assert.equal(result.summary.findingCount, 0);
-  assert.deepEqual(pathsFromRecords(result.exclusions), [".agent-state"]);
-  assert.deepEqual(recordField(result, "reviewableCandidates"), []);
-});
-
-test("hygiene scanner collapses known residue names to cleanup roots", async () => {
-  const repo = await createRepo();
-  await writeArtifact(repo, "guardian-residue/.opencode/worktree-guardian.json");
-  await writeArtifact(repo, "guardian-origin-abc123/remote.git/hooks/push-to-checkout.sample");
-  const nested = path.join(repo, "opencode-temp-abc123", "checkout");
+  await writeArtifact(repo, "librarian-clean/file.txt");
+  await writeArtifact(repo, "node-compile-cache/cache.blob");
+  await writeArtifact(repo, "node-coverage-456/coverage.json");
+  await writeArtifact(repo, "research-dump/file.txt");
+  await writeArtifact(repo, "tsx-501/runtime-cache.json");
+  const nested = path.join(repo, "research-clone-clean");
   await fs.mkdir(nested, { recursive: true });
   await git(nested, ["init", "-b", "main"]);
   await git(nested, ["config", "user.email", "guardian@example.test"]);
@@ -232,29 +116,144 @@ test("hygiene scanner collapses known residue names to cleanup roots", async () 
   await git(nested, ["add", "README.md"]);
   await git(nested, ["commit", "-m", "nested initial"]);
 
-  const result = await scanWorkspaceHygiene({ repoRoot: repo, config: DEFAULT_CONFIG });
-
-  assert.equal(findingPaths(result).includes("guardian-origin-abc123"), true);
-  assert.equal(findingPaths(result).includes("guardian-origin-abc123/remote.git/hooks/push-to-checkout.sample"), false);
-  assert.equal(findingPaths(result).includes("guardian-residue"), true);
-  assert.equal(findingPaths(result).includes("guardian-residue/.opencode/worktree-guardian.json"), false);
-  assert.equal(findingPaths(result).includes("opencode-temp-abc123"), true);
-  assert.equal(findingPaths(result).includes("opencode-temp-abc123/checkout"), false);
-});
-
-test("hygiene cleanup allows an explicit parent when every descendant authority is granted", async () => {
-  const repo = await createRepo();
-  const parent = "research-authorized-parent";
-  await writeArtifact(repo, `${parent}/marker.txt`);
-  await createDirtyNestedRepository(repo, `${parent}/research-clone`);
-
-  const plan = await guardianHygiene({ repoRoot: repo, config: DEFAULT_CONFIG, mode: "plan", cleanupPaths: [parent], allowCategories: ["nested-git", "suspicious"], allowDirtyNestedGit: true });
-  const apply = await guardianHygiene({ repoRoot: repo, config: DEFAULT_CONFIG, mode: "apply", cleanupPaths: [parent], allowCategories: ["nested-git", "suspicious"], allowDirtyNestedGit: true, confirmToken: plan.confirmToken });
+  const plan = await runGuardianTool("guardian_hygiene", { repoRoot: repo, config: DEFAULT_CONFIG, mode: "plan" });
 
   assert.equal(plan.ok, true);
   assert.equal(plan.status, "planned");
-  assert.deepEqual(pathsFromRecords(plan.targets), [parent]);
+  assert.equal(typeof plan.confirmToken, "string");
+  assert.deepEqual((plan.targets as Array<Record<string, unknown>>).map((target) => target.path), ["librarian-clean", "node-compile-cache", "node-coverage-456", "research-clone-clean", "research-dump", "tsx-501"]);
+  assert.equal(await pathExists(path.join(repo, "librarian-clean")), true);
+  assert.equal(await pathExists(path.join(repo, "node-compile-cache")), true);
+  assert.equal(await pathExists(path.join(repo, "node-coverage-456")), true);
+  assert.equal(await pathExists(path.join(repo, "research-clone-clean")), true);
+  assert.equal(await pathExists(path.join(repo, "research-dump")), true);
+  assert.equal(await pathExists(path.join(repo, "tsx-501")), true);
+
+  const apply = await runGuardianTool("guardian_hygiene", { repoRoot: repo, config: DEFAULT_CONFIG, mode: "apply", confirmToken: plan.confirmToken });
+
   assert.equal(apply.ok, true);
   assert.equal(apply.status, "cleaned");
-  assert.equal(await pathExists(path.join(repo, parent)), false);
+  assert.deepEqual((apply.removedTargets as Array<Record<string, unknown>>).map((target) => target.path), ["librarian-clean", "node-compile-cache", "node-coverage-456", "research-clone-clean", "research-dump", "tsx-501"]);
+  assert.equal(await pathExists(path.join(repo, "librarian-clean")), false);
+  assert.equal(await pathExists(path.join(repo, "node-compile-cache")), false);
+  assert.equal(await pathExists(path.join(repo, "node-coverage-456")), false);
+  assert.equal(await pathExists(path.join(repo, "research-clone-clean")), false);
+  assert.equal(await pathExists(path.join(repo, "research-dump")), false);
+  assert.equal(await pathExists(path.join(repo, "tsx-501")), false);
+});
+
+test("guardian_hygiene plans and applies cleanup for approved target files and directories", async () => {
+  const repo = await createRepo();
+  await fs.writeFile(path.join(repo, "node-compile-cache"), "cache-blob\n");
+  await writeArtifact(repo, "librarian-hygiene/file.txt");
+
+  const plan = await guardianHygiene({ repoRoot: repo, config: DEFAULT_CONFIG, mode: "plan" });
+
+  assert.equal(plan.ok, true);
+  assert.equal(plan.status, "planned");
+  assert.deepEqual((plan.targets as Array<Record<string, unknown>>).map((target) => [target.path, target.kind]), [["librarian-hygiene", "directory"], ["node-compile-cache", "file"]]);
+
+  const apply = await guardianHygiene({ repoRoot: repo, config: DEFAULT_CONFIG, mode: "apply", confirmToken: plan.confirmToken });
+
+  assert.equal(apply.ok, true);
+  assert.equal(apply.status, "cleaned");
+  assert.deepEqual((apply.removedTargets as Array<Record<string, unknown>>).map((target) => target.path), ["librarian-hygiene", "node-compile-cache"]);
+  assert.equal(await pathExists(path.join(repo, "librarian-hygiene")), false);
+  assert.equal(await pathExists(path.join(repo, "node-compile-cache")), false);
+});
+
+test("hygiene cleanup plans residue roots when categories are allowed", async () => {
+  const repo = await createRepo();
+  await writeArtifact(repo, "guardian-clean/.opencode/worktree-guardian.json");
+  await writeArtifact(repo, "guardian-origin-clean/remote.git/hooks/push-to-checkout.sample");
+  const nested = path.join(repo, "opencode-temp-clean", "checkout");
+  await fs.mkdir(nested, { recursive: true });
+  await git(nested, ["init", "-b", "main"]);
+  await git(nested, ["config", "user.email", "guardian@example.test"]);
+  await git(nested, ["config", "user.name", "Guardian Test"]);
+  await fs.writeFile(path.join(nested, "README.md"), "nested\n");
+  await git(nested, ["add", "README.md"]);
+  await git(nested, ["commit", "-m", "nested initial"]);
+
+  const plan = await guardianHygiene({ repoRoot: repo, config: DEFAULT_CONFIG, mode: "plan", allowCategories: ["nested-git", "suspicious"] });
+
+  assert.equal(plan.ok, true);
+  assert.deepEqual((plan.targets as Array<Record<string, unknown>>).map((target) => target.path).sort(), ["guardian-clean", "guardian-origin-clean", "opencode-temp-clean"]);
+
+  const apply = await guardianHygiene({ repoRoot: repo, config: DEFAULT_CONFIG, mode: "apply", allowCategories: ["nested-git", "suspicious"], confirmToken: plan.confirmToken });
+
+  assert.equal(apply.ok, true);
+  assert.equal(apply.status, "cleaned");
+  assert.deepEqual((apply.removedTargets as Array<Record<string, unknown>>).map((target) => target.path).sort(), ["guardian-clean", "guardian-origin-clean", "opencode-temp-clean"]);
+  assert.equal(await pathExists(path.join(repo, "guardian-clean")), false);
+  assert.equal(await pathExists(path.join(repo, "guardian-origin-clean")), false);
+  assert.equal(await pathExists(path.join(repo, "opencode-temp-clean")), false);
+});
+
+test("hygiene cleanup blocks configured and registered Guardian worktree roots", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_hygiene_cleanup_worktree", taskName: "hygiene cleanup worktree", createWorktree: true, config: DEFAULT_CONFIG });
+  const relativeWorktree = path.relative(repo, started.session.worktree_path);
+
+  const plan = await guardianHygiene({ repoRoot: repo, config: DEFAULT_CONFIG, mode: "plan", cleanupPaths: [relativeWorktree] });
+
+  assert.equal(plan.ok, false);
+  assert.equal(plan.status, "blocked");
+  assert.equal((plan.blockers as Array<Record<string, unknown>>).some((blocker) => /Guardian worktree root|registered/.test(String(blocker.reason))), true);
+  assert.equal(await pathExists(started.session.worktree_path), true);
+});
+
+test("hygiene cleanup blocks invalid modes without removing anything", async () => {
+  const repo = await createRepo();
+  await writeArtifact(repo, "librarian-mode/file.txt");
+
+  const result = await guardianHygiene({ repoRoot: repo, config: DEFAULT_CONFIG, mode: "delete" });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, "blocked");
+  assert.match(String(result.reason), /mode must be plan or apply/);
+  assert.equal(result.confirmToken, undefined);
+  assert.equal(await pathExists(path.join(repo, "librarian-mode")), true);
+});
+
+test("hygiene cleanup rejects unsupported allowCategories entries as fatal blockers", async () => {
+  const repo = await createRepo();
+  await writeArtifact(repo, "librarian-categories/file.txt");
+
+  const plan = await guardianHygiene({ repoRoot: repo, config: DEFAULT_CONFIG, mode: "plan", allowCategories: ["known-cleanable", "everything"] });
+
+  assert.equal(plan.ok, false);
+  assert.equal(plan.status, "blocked");
+  assert.equal(plan.confirmToken, undefined);
+  assert.equal((plan.blockers as Array<Record<string, unknown>>).some((blocker) => blocker.fatal === true && /unsupported allowCategories entry: everything/.test(String(blocker.reason))), true);
+  assert.equal(await pathExists(path.join(repo, "librarian-categories")), true);
+});
+
+test("hygiene cleanup blocks overlapping cleanup targets", async () => {
+  const repo = await createRepo();
+  await writeArtifact(repo, "guardian-overlap/root-file.txt");
+  await writeArtifact(repo, "guardian-overlap/librarian-x/file.txt");
+
+  const plan = await guardianHygiene({ repoRoot: repo, config: DEFAULT_CONFIG, mode: "plan", allowCategories: ["known-cleanable", "suspicious"] });
+
+  assert.equal(plan.ok, false);
+  assert.equal(plan.status, "blocked");
+  assert.equal(plan.confirmToken, undefined);
+  assert.equal((plan.blockers as Array<Record<string, unknown>>).some((blocker) => blocker.fatal === true && /cleanup paths overlap/.test(String(blocker.reason))), true);
+  assert.equal(await pathExists(path.join(repo, "guardian-overlap")), true);
+});
+
+test("hygiene scan reports failure metadata when the repo is unavailable", async () => {
+  const dir = await createTempDir("guardian-hygiene-no-repo-");
+  const result = await scanWorkspaceHygiene({ repoRoot: dir, config: DEFAULT_CONFIG });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, "failed");
+  assert.equal(typeof (result as Record<string, unknown>).reason, "string");
+  assert.equal(result.failureReason, result.reason);
+  assert.equal((result.summary as Record<string, unknown>).scanFailed, true);
+  assert.deepEqual(result.findings, []);
+  assert.equal(result.summary.findingCount, 0);
+  assert.deepEqual(result.suggestedCommands, ["guardian_hygiene", "guardian_status"]);
 });

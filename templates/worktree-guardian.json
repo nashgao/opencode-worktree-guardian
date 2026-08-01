@@ -22,6 +22,7 @@
     "cleanupHygiene": true
   },
   "protectedPaths": [
+    ".beads",
     ".omo",
     ".omc",
     ".omx",

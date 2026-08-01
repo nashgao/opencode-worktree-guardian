@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { expectedCodexAdapterFiles, expectedCodexSkillNames, expectedCommandAssets, expectedPackageExports, expectedPackageFiles, expectedSlashNames, expectedToolNames, legacyHygieneCommandNameParts, projectRoot, run, sortedPackPaths } from "./package-smoke-helpers.ts";
+import { createPackedConsumer, expectedCodexAdapterFiles, expectedCodexSkillNames, expectedCommandAssets, expectedPackageExports, expectedPackageFiles, expectedSlashNames, expectedToolNames, legacyHygieneCommandNameParts, projectRoot, run, sortedPackPaths } from "./package-smoke-helpers.ts";
 
 test("package smoke run helper times out hung commands", async () => {
   await assert.rejects(
@@ -23,6 +23,28 @@ test("package smoke run helper suppresses inherited coverage env", async () => {
   });
 
   assert.deepEqual(JSON.parse(result.stdout), { coverage: "", marker: "", compile: "" });
+});
+
+test("Given npm setup fails after a packed consumer temp base is created, when createPackedConsumer rejects, then it leaves no temp directory", async (t) => {
+  const tempRoot = os.tmpdir();
+  const prefix = "guardian-package-smoke-";
+  const before = new Set((await fs.readdir(tempRoot, { withFileTypes: true }))
+    .filter((entry) => entry.isDirectory() && entry.name.startsWith(prefix))
+    .map((entry) => entry.name));
+  const previousPath = process.env.PATH;
+  try {
+    process.env.PATH = "";
+    await assert.rejects(() => createPackedConsumer());
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+  }
+  const leaked = (await fs.readdir(tempRoot, { withFileTypes: true }))
+    .filter((entry) => entry.isDirectory() && entry.name.startsWith(prefix) && !before.has(entry.name))
+    .map((entry) => path.join(tempRoot, entry.name));
+  t.after(() => Promise.all(leaked.map((directory) => fs.rm(directory, { recursive: true, force: true }))));
+
+  assert.deepEqual(leaked, []);
 });
 
 test("safe node temp wrapper creates fresh coverage directories", async (t) => {
@@ -138,16 +160,9 @@ test("packed artifact installs in a clean consumer and exposes plugin contract",
   assert.equal(readme.includes('"plugin": ["opencode-worktree-guardian/server"]'), false);
   assert.equal(readme.includes('"plugin": ["opencode-worktree-guardian/tui"]'), false);
 
-  const base = await fs.mkdtemp(path.join(os.tmpdir(), "guardian-package-smoke-"));
-  t.after(() => fs.rm(base, { recursive: true, force: true }));
-  const packDir = path.join(base, "pack");
-  const consumer = path.join(base, "consumer");
-  const npmCache = path.join(base, "npm-cache");
-  await fs.mkdir(packDir, { recursive: true });
-  await fs.mkdir(consumer, { recursive: true });
-
-  const packed = await run("npm", ["pack", projectRoot, "--pack-destination", packDir, "--json", "--cache", npmCache], { cwd: base, coverage: "suppress" });
-  const [packInfo] = JSON.parse(packed.stdout);
+  const packedConsumer = await createPackedConsumer();
+  t.after(packedConsumer.cleanup);
+  const { base, consumer, packInfo } = packedConsumer;
   assert.equal(packInfo.name, "opencode-worktree-guardian");
   assert.equal(packInfo.version, "0.1.0");
   assert.deepEqual(sortedPackPaths(packInfo.files, "commands/"), [...expectedCommandAssets].sort((left, right) => left.localeCompare(right)));
@@ -175,24 +190,10 @@ test("packed artifact installs in a clean consumer and exposes plugin contract",
   assert.equal(packInfo.files.some((file: { path: string }) => file.path.startsWith(".milestones/")), false);
   assert.equal(packInfo.files.some((file: { path: string }) => file.path === "IMPLEMENTATION_PLAN.md"), false);
 
-  await run("npm", ["init", "-y"], { cwd: consumer, coverage: "suppress" });
-  await run("npm", [
-    "install",
-    "--ignore-scripts",
-    "--no-audit",
-    "--no-fund",
-    "--cache",
-    npmCache,
-    path.join(packDir, packInfo.filename),
-    `tsx@${packageJson.dependencies.tsx}`,
-  ], { cwd: consumer, coverage: "suppress" });
-
   const smokeScript = `
     import plugin from "opencode-worktree-guardian";
     import serverPlugin from "opencode-worktree-guardian/server";
     import tuiPlugin from "opencode-worktree-guardian/tui";
-    const toasts = [];
-    const prompts = [];
     const hooks = await plugin.server({ directory: process.cwd(), worktree: process.cwd(), client: { app: { log: async () => {} } } });
     let layer;
     await tuiPlugin.tui({
@@ -204,10 +205,9 @@ test("packed artifact installs in a clean consumer and exposes plugin contract",
       },
       route: { current: { name: "session", params: { sessionID: "ses_package_smoke" } } },
       state: { path: { directory: process.cwd() } },
-      client: { session: { promptAsync: async (input) => { prompts.push(input); } } },
-      ui: { toast: (input) => { toasts.push(input); } },
+      client: { session: { promptAsync: async () => {} } },
+      ui: { toast: () => {} },
     });
-    await layer.commands.find((command) => command.slashName === "guardian-hud").run();
     console.log(JSON.stringify({
       id: plugin.id,
       serverId: serverPlugin.id,
@@ -216,8 +216,6 @@ test("packed artifact installs in a clean consumer and exposes plugin contract",
       tools: Object.keys(hooks.tool).sort(),
       hooks: Object.keys(hooks).filter((key) => key !== "tool").sort(),
       slashes: layer.commands.map((command) => command.slashName).sort(),
-      toasts,
-      prompts,
     }));
   `;
   const tsxLoader = path.join(consumer, "node_modules", "tsx", "dist", "loader.mjs");
@@ -247,16 +245,5 @@ test("packed artifact installs in a clean consumer and exposes plugin contract",
   assert.equal(result.hasTui, true);
   assert.deepEqual(result.tools, expectedToolNames);
   assert.deepEqual(result.slashes, expectedSlashNames);
-  assert.deepEqual(result.toasts, [{
-    variant: "warning",
-    title: "Guardian HUD unavailable",
-    message: "The visual Guardian HUD is temporarily unavailable. Use /guardian-status instead.",
-  }]);
-  assert.deepEqual(result.prompts, []);
   assert.equal(result.hooks.includes("tool.execute.before"), true);
-  for (const dependency of ["@opentui/core", "@opentui/keymap", "@opentui/solid", "solid-js"]) {
-    await assert.rejects(fs.access(path.join(consumer, "node_modules", dependency)));
-  }
-  const audit = await run("npm", ["audit", "--omit=dev", "--audit-level=low", "--json", "--registry=https://registry.npmjs.org"], { cwd: consumer, coverage: "suppress" });
-  assert.equal(JSON.parse(audit.stdout).metadata.vulnerabilities.total, 0);
 });

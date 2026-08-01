@@ -160,11 +160,13 @@ test("guardian_delete_paths lets repo config replace template protected paths", 
   await fs.writeFile(path.join(repo, "keep-me", "important.txt"), "important\n");
   await fs.mkdir(path.join(repo, ".codegraph"), { recursive: true });
   await fs.writeFile(path.join(repo, ".codegraph", "index.sqlite"), "cache\n");
+  await fs.mkdir(path.join(repo, ".beads"), { recursive: true });
+  await fs.writeFile(path.join(repo, ".beads", "state.json"), "state\n");
 
   const blocked = await guardianDeletePaths({
     repoRoot: repo,
     mode: "plan",
-    paths: ["keep-me", ".codegraph"],
+    paths: ["keep-me", ".codegraph", ".beads"],
     allowRecursive: true,
   });
 
@@ -172,6 +174,7 @@ test("guardian_delete_paths lets repo config replace template protected paths", 
   assert.deepEqual(records(blocked.targets).map((target) => target.path), [".codegraph"]);
   assert.equal(hasFatalBlocker(blocked.blockers, "keep-me", /configured protected path keep-me/), true);
   assert.equal(hasFatalBlocker(blocked.blockers, ".codegraph", /configured protected path \.codegraph/), false);
+  assert.equal(hasFatalBlocker(blocked.blockers, ".beads", /protected path \.beads/), true);
 });
 
 test("guardian_delete_paths blocks stale tokens after path content changes", async () => {

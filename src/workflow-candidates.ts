@@ -5,7 +5,16 @@ import { guardianDeleteWorktree } from "./delete.ts";
 import { buildSafetyRef, getDirtyFiles, getRepoRoot, isAncestor, listBranches, listRemoteBranches, listWorktrees } from "./git.ts";
 import { configuredRemoteAuthority } from "./git-authority.ts";
 
-export const MAX_WORKFLOW_CLEANUP_CANDIDATES = 25;
+const DEFAULT_MAX_WORKFLOW_CLEANUP_CANDIDATES = 25;
+
+// Caps candidates per run only; per-target gates in guardianDeleteWorktree
+// (dirty proof, ancestry, safety refs) still apply to every candidate.
+function resolveMaxWorkflowCleanupCandidates(): number {
+  const raw = Number(process.env.GUARDIAN_MAX_CLEANUP_CANDIDATES);
+  return Number.isInteger(raw) && raw > 0 ? raw : DEFAULT_MAX_WORKFLOW_CLEANUP_CANDIDATES;
+}
+
+export const MAX_WORKFLOW_CLEANUP_CANDIDATES = resolveMaxWorkflowCleanupCandidates();
 
 const RESERVED_CLEANUP_BRANCH_PREFIXES = ["rescue/"] as const;
 

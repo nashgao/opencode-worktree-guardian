@@ -133,3 +133,10 @@ test("a failed hygiene scan reports unknown cleanliness rather than a clean verd
   assert.match(verdict.headline, /cleanliness unknown/);
   assert.match(verdict.nextAction ?? "", /guardian_hygiene/);
 });
+
+test("the zero-signal headline scopes itself and never asserts repo cleanliness", () => {
+  const verdict = computeGuardianVerdict({ ok: true, repoRoot: "/repo", activeSessions: [] });
+  assert.equal(verdict.tone, "good");
+  assert.doesNotMatch(verdict.headline, /clean, no risks detected/);
+  assert.match(verdict.headline, /not a repo-cleanliness claim/);
+});
