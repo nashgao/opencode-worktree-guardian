@@ -54,6 +54,50 @@ test("hygiene scanner detects known scratch artifact patterns", async () => {
   assert.equal(reasons.get("tsx-501"), "generated tsx runtime cache");
 });
 
+test("hygiene scanner degrades one unenumerable ignored directory without losing precision elsewhere", async () => {
+  const repo = await createRepo();
+  await fs.writeFile(path.join(repo, ".gitignore"), "data/\nhuge/\n");
+  await writeArtifact(repo, "data/test-wal-001/segment");
+  await writeArtifact(repo, "huge/node-compile-cache/cache.blob");
+
+  const budgetExhausted = (relative: string) => {
+    const error: NodeJS.ErrnoException & { signal?: string } = new Error(
+      `git ls-files ${relative} failed with signal SIGTERM`,
+    );
+    error.signal = "SIGTERM";
+    return error;
+  };
+
+  const result = await scanWorkspaceHygiene({
+    repoRoot: repo,
+    config: DEFAULT_CONFIG,
+    runGitNullSeparated: async (repoPath: string, args: readonly string[]) => {
+      const separator = args.indexOf("--");
+      const pathspec = separator >= 0 ? args[separator + 1] : undefined;
+      const unscopedIgnored = separator < 0 && args.includes("--ignored") && !args.includes("--directory");
+      if (unscopedIgnored) throw budgetExhausted("(repository)");
+      if (pathspec?.startsWith("huge")) throw budgetExhausted(pathspec);
+      return runGitNullSeparated(repoPath, args);
+    },
+  });
+
+  assert.equal(result.ok, true, "a single unenumerable directory must not fail the whole scan");
+  assert.ok(
+    findingPaths(result).includes("data/test-wal-001"),
+    "directories that can be enumerated must keep nested known-cleanable precision",
+  );
+  const candidatePaths = (result.reviewableCandidates as Array<Record<string, unknown>>).map((entry) => String(entry.path));
+  assert.ok(
+    candidatePaths.some((entry) => entry.replace(/\/$/, "") === "huge"),
+    "an unenumerable directory must surface as a collapsed reviewable candidate",
+  );
+  assert.equal(
+    findingPaths(result).includes("huge/node-compile-cache"),
+    false,
+    "the scan must not claim findings inside a directory it could not enumerate",
+  );
+});
+
 test("hygiene scanner detects nested git repos and marks dirty nested repos for manual hard deny", async () => {
   const repo = await createRepo();
   const nested = path.join(repo, "research-clone");

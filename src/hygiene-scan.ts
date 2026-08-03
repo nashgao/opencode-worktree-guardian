@@ -29,9 +29,33 @@ const SUSPICIOUS_NAME_PATTERN = /(^|[-_.])(clone|clones|research|dump|dumps|scra
 const RESIDUE_ROOT_PATTERN = /^(guardian-[^/]+|guardian-origin-[^/]+|opencode-temp-[^/]+|omo-research-[^/]+|opencode-research-[^/]+|git-docs-research)$/;
 const DEFAULT_REVIEWABLE_CANDIDATE_LIMIT = 12;
 
-async function listCandidatePaths(repoRoot: string) {
-  const untracked = await runGitNullSeparated(repoRoot, ["ls-files", "--others", "--exclude-standard", "-z"]);
-  const ignored = await runGitNullSeparated(repoRoot, ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"]);
+type NullSeparatedRunner = (repoPath: string, args: readonly string[]) => Promise<string[]>;
+
+const IGNORED_ENUMERATION_ARGS = ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"] as const;
+
+async function listIgnoredPaths(repoRoot: string, runNullSeparated: NullSeparatedRunner): Promise<string[]> {
+  try {
+    return await runNullSeparated(repoRoot, [...IGNORED_ENUMERATION_ARGS]);
+  } catch (error) {
+    void error;
+    const collapsed = await runNullSeparated(repoRoot, [...IGNORED_ENUMERATION_ARGS, "--directory"]);
+    const expanded: string[] = [];
+    for (const entry of collapsed) {
+      try {
+        const scoped = await runNullSeparated(repoRoot, [...IGNORED_ENUMERATION_ARGS, "--", entry]);
+        expanded.push(...(scoped.length > 0 ? scoped : [entry]));
+      } catch (scopedError) {
+        void scopedError;
+        expanded.push(entry);
+      }
+    }
+    return expanded;
+  }
+}
+
+async function listCandidatePaths(repoRoot: string, runNullSeparated: NullSeparatedRunner = runGitNullSeparated) {
+  const untracked = await runNullSeparated(repoRoot, ["ls-files", "--others", "--exclude-standard", "-z"]);
+  const ignored = await listIgnoredPaths(repoRoot, runNullSeparated);
   const candidatesByPath = new Map<string, HygieneCandidateStatus>();
   for (const entry of untracked) {
     candidatesByPath.set(normalizeRelativePath(entry), "untracked");
@@ -201,7 +225,10 @@ export async function scanWorkspaceHygiene(input: Record<string, unknown> = {}) 
     const exclusionsByPath = new Map<string, Record<string, unknown>>();
     const reviewableCandidateInputs: ReviewableCandidateInput[] = [];
     const seenFindings = new Set<string>();
-    const candidates = await listCandidatePaths(repoRoot);
+    const candidates = await listCandidatePaths(
+      repoRoot,
+      typeof input.runGitNullSeparated === "function" ? input.runGitNullSeparated as NullSeparatedRunner : runGitNullSeparated,
+    );
     for (const candidate of candidates) {
       const absolutePath = path.resolve(repoRoot, candidate.path);
       const relative = relativePath(repoRoot, absolutePath);
