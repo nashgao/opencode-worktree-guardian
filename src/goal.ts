@@ -6,12 +6,15 @@ import { getRepoRoot } from "./git.ts";
 import { guardianHygiene } from "./hygiene.ts";
 import type { GuardianConfig, GuardianGoalConfig, GuardianToolInput, GuardianToolResult, RecordLike } from "./types.ts";
 import { isRecordLike } from "./types.ts";
+import { guardianFinishWorkflow } from "./workflow.ts";
 
 const DONE_GOAL_KEYS = ["commitDirty", "landToBase", "pushBase", "cleanupWorktrees", "cleanupBranches"] as const;
+const WRITE_GOAL_KEYS = ["commitDirty", "landToBase", "pushBase"] as const;
+const CLEANUP_GOAL_KEYS = ["cleanupWorktrees", "cleanupBranches"] as const;
 const GOAL_HYGIENE_CATEGORIES = ["known-cleanable"] as const;
 const NO_HYGIENE_TARGETS_REASON = "no approved hygiene cleanup targets";
 
-type GoalTool = "guardian_hygiene" | "guardian_done";
+type GoalTool = "guardian_hygiene" | "guardian_done" | "guardian_finish_workflow";
 
 type GoalBlocker = {
   readonly tool: GoalTool | "guardian_goal";
@@ -48,6 +51,10 @@ function wantsDone(goal: GuardianGoalConfig): boolean {
 
 function canUseDone(goal: GuardianGoalConfig): boolean {
   return DONE_GOAL_KEYS.every((key) => goal[key]);
+}
+
+function isCleanupOnlyGoal(goal: GuardianGoalConfig): boolean {
+  return WRITE_GOAL_KEYS.every((key) => !goal[key]) && CLEANUP_GOAL_KEYS.some((key) => goal[key]);
 }
 
 function textValue(value: unknown, fallback = ""): string {
@@ -148,6 +155,12 @@ async function buildGoalPlan(input: GuardianToolInput): Promise<GoalPlan> {
 
   if (!wantsDone(goal)) {
     steps.push({ tool: "guardian_done", ok: true, status: "skipped", reason: "done goal flags are disabled" });
+  } else if (!canUseDone(goal) && isCleanupOnlyGoal(goal)) {
+    const cleanup = await guardianFinishWorkflow({ ...input, repoRoot, cwd, config, mode: "plan" });
+    const step = stepFromResult("guardian_finish_workflow", cleanup);
+    steps.push(step);
+    const blocker = blockerFromStep(step);
+    if (blocker) blockers.push(blocker);
   } else if (!canUseDone(goal)) {
     const reason = "guardian_goal can only delegate to guardian_done when commitDirty, landToBase, pushBase, cleanupWorktrees, and cleanupBranches are all true";
     const step = blockedStep("guardian_done", reason);
@@ -220,6 +233,23 @@ async function applyDoneStep(input: GuardianToolInput, plan: GoalPlan, config: G
   return appliedStep.ok ? { ...appliedStep, status: "applied" } : appliedStep;
 }
 
+async function applyCleanupWorkflowStep(input: GuardianToolInput, plan: GoalPlan, config: GuardianConfig): Promise<GoalStep> {
+  const plannedStep = findStep(plan, "guardian_finish_workflow");
+  if (!plannedStep || plannedStep.status === "skipped") return plannedStep ?? { tool: "guardian_finish_workflow", ok: true, status: "skipped" };
+  const freshPlan = await guardianFinishWorkflow({ ...input, repoRoot: plan.repoRoot, cwd: plan.cwd, config, mode: "plan" });
+  if (freshPlan.ok !== true) return stepFromResult("guardian_finish_workflow", freshPlan);
+  const applied = await guardianFinishWorkflow({
+    ...input,
+    repoRoot: plan.repoRoot,
+    cwd: plan.cwd,
+    config,
+    mode: "apply",
+    ...(typeof freshPlan.confirmToken === "string" ? { confirmToken: freshPlan.confirmToken } : {}),
+  });
+  const appliedStep = stepFromResult("guardian_finish_workflow", applied);
+  return appliedStep.ok ? { ...appliedStep, status: "applied" } : appliedStep;
+}
+
 function topLevelCommit(steps: readonly GoalStep[]): Record<string, unknown> {
   const done = steps.find((step) => step.tool === "guardian_done");
   const result = done?.result;
@@ -259,7 +289,9 @@ export async function guardianGoal(input: GuardianToolInput = {}): Promise<Guard
   const { config } = await resolveGoalContext(input);
   const appliedSteps = [
     await applyHygieneStep(input, plan, config),
-    await applyDoneStep(input, plan, config),
+    findStep(plan, "guardian_finish_workflow")
+      ? await applyCleanupWorkflowStep(input, plan, config)
+      : await applyDoneStep(input, plan, config),
   ];
   const blockers = appliedSteps.map(blockerFromStep).filter((blocker): blocker is GoalBlocker => blocker !== null);
   const complete = blockers.length === 0;

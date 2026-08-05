@@ -47,7 +47,7 @@ export function formatGuardianGoalOutput(rawResult: unknown): string {
     `[INFO] desired: ${formatGoalFlags(goal)}`,
     `[INFO] steps: ${steps.length} | blockers: ${blockers.length}`,
   ];
-  const doneStep = steps.map(recordValue).find((step) => step.tool === "guardian_done");
+  const doneStep = steps.map(recordValue).find((step) => step.tool === "guardian_done" || step.tool === "guardian_finish_workflow");
   const doneResult = recordValue(doneStep?.result);
   const donePreflight = recordValue(doneResult.preflight);
   const doneCleanupPlan = recordValue(doneResult.cleanupPlan);

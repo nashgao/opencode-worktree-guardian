@@ -4,6 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { DEFAULT_CONFIG } from "../src/config.ts";
 import { guardianDone } from "../src/done.ts";
+import { guardianGoal } from "../src/goal.ts";
 import plugin from "../src/index.ts";
 import { formatGuardianOutput } from "../src/plugin/readable-output.ts";
 import { guardianStart } from "../src/start.ts";
@@ -11,6 +12,7 @@ import { isRecordLike } from "../src/types.ts";
 import { installFakeGh } from "./delete-fixtures.ts";
 import { createToolContext, metadataRecords, runTool } from "./plugin-contract-helpers.ts";
 import { createRepoWithOrigin, git, makeAlreadyLandedDirtySession, rescueMutationSurface } from "./helpers.ts";
+import { branchExists, createMergedBranch } from "./workflow-test-support.js";
 
 function requireRecord(value: unknown, name: string): Record<string, unknown> {
   if (isRecordLike(value)) return value;
@@ -247,4 +249,125 @@ test("guardian_done remote drift rejects no-message redundant-dirty cleanup afte
   assert.equal(await fs.access(fakeGh.logPath).then(() => true, () => false), false);
   assert.equal(await fs.access(fixture.worktree).then(() => true, () => false), true);
   await git(fixture.repo, ["rev-parse", "--verify", `refs/heads/${fixture.branch}`]);
+});
+
+function goalRecords(value: unknown, key: string): Array<Record<string, unknown>> {
+  const record = requireRecord(value, "guardian_goal result");
+  const entries = record[key];
+  return Array.isArray(entries) ? entries.filter(isRecordLike) : [];
+}
+
+test("guardian_goal delegates a cleanup-only goal to the finish-workflow lane", async () => {
+  const { base, repo } = await createRepoWithOrigin();
+  test.after(() => fs.rm(base, { recursive: true, force: true }));
+
+  const result = await guardianGoal({
+    repoRoot: repo,
+    cwd: repo,
+    mode: "plan",
+    config: {
+      ...DEFAULT_CONFIG,
+      goal: {
+        commitDirty: false,
+        landToBase: false,
+        pushBase: false,
+        cleanupWorktrees: true,
+        cleanupBranches: true,
+        cleanupHygiene: false,
+      },
+    },
+  });
+
+  const blockers = goalRecords(result, "blockers");
+  assert.equal(
+    blockers.some((blocker) => String(blocker.reason ?? "").includes("can only delegate to guardian_done")),
+    false,
+    "a cleanup-only goal must not be blocked by the done delegation gate",
+  );
+  assert.ok(
+    goalRecords(result, "steps").some((step) => step.tool === "guardian_finish_workflow"),
+    "a cleanup-only goal must route through the finish-workflow lane",
+  );
+  assert.equal(requireRecord(result, "guardian_goal result").ok, true);
+});
+
+test("guardian_goal still blocks a partial write goal set", async () => {
+  const { base, repo } = await createRepoWithOrigin();
+  test.after(() => fs.rm(base, { recursive: true, force: true }));
+
+  const result = await guardianGoal({
+    repoRoot: repo,
+    cwd: repo,
+    mode: "plan",
+    config: {
+      ...DEFAULT_CONFIG,
+      goal: {
+        commitDirty: true,
+        landToBase: false,
+        pushBase: false,
+        cleanupWorktrees: true,
+        cleanupBranches: true,
+        cleanupHygiene: false,
+      },
+    },
+  });
+
+  assert.equal(requireRecord(result, "guardian_goal result").ok, false);
+  assert.ok(
+    goalRecords(result, "blockers").some((blocker) =>
+      String(blocker.reason ?? "").includes("can only delegate to guardian_done"),
+    ),
+    "a partial write goal set must still block",
+  );
+});
+
+test("guardian_goal applies a cleanup-only goal through the finish-workflow lane", async () => {
+  const { base, repo } = await createRepoWithOrigin();
+  test.after(() => fs.rm(base, { recursive: true, force: true }));
+  const branch = "feat/goal-cleanup-only-apply";
+  await createMergedBranch(repo, branch, "goal-cleanup-only.txt");
+  await git(repo, ["fetch", "origin"]);
+
+  const cleanupOnlyConfig = {
+    ...DEFAULT_CONFIG,
+    goal: {
+      commitDirty: false,
+      landToBase: false,
+      pushBase: false,
+      cleanupWorktrees: true,
+      cleanupBranches: true,
+      cleanupHygiene: false,
+    },
+  };
+
+  const plan = requireRecord(
+    await guardianGoal({ repoRoot: repo, cwd: repo, mode: "plan", config: cleanupOnlyConfig }),
+    "guardian_goal plan",
+  );
+  assert.equal(plan.ok, true, JSON.stringify(plan));
+  assert.equal(await branchExists(repo, branch), true, "the merged branch must exist before apply");
+
+  const applied = requireRecord(
+    await guardianGoal({
+      repoRoot: repo,
+      cwd: repo,
+      mode: "apply",
+      confirm: true,
+      confirmToken: requireString(plan.confirmToken, "confirmToken"),
+      config: cleanupOnlyConfig,
+    }),
+    "guardian_goal apply",
+  );
+
+  assert.equal(applied.ok, true, JSON.stringify(applied));
+  assert.equal(
+    goalRecords(applied, "steps").find((step) => step.tool === "guardian_finish_workflow")?.status,
+    "applied",
+    "the cleanup-only apply must run the finish-workflow lane",
+  );
+  assert.equal(
+    await branchExists(repo, branch),
+    false,
+    "the cleanup-only goal must actually delete the merged branch",
+  );
 });
