@@ -1,3 +1,5 @@
+import type { ProvenanceStatus } from "./session-provenance.ts";
+
 export type RecordLike = Record<string, unknown>;
 
 export type MutableRecord = {
@@ -15,6 +17,7 @@ export type GuardianGoalConfig = {
   readonly cleanupWorktrees: boolean;
   readonly cleanupBranches: boolean;
   readonly cleanupHygiene: boolean;
+  readonly quarantineSessionResidue: boolean;
 };
 
 export type GuardianConfig = {
@@ -56,11 +59,19 @@ export type LoadedGuardianConfig = {
 };
 
 export type GuardianPaths = {
+  readonly repoRoot: string;
+  readonly gitDir: string;
   readonly dir: string;
   readonly statePath: string;
   readonly eventsPath: string;
   readonly reportPath: string;
   readonly lockPath: string;
+  readonly lockRef: string;
+  readonly lockTmpDir: string;
+  readonly lockTombstonesDir: string;
+  readonly provenanceDir: string;
+  readonly quarantineDir: string;
+  readonly journalDir: string;
 };
 
 export type GuardianSessionStatus =
@@ -101,6 +112,10 @@ export type GuardianSession = {
   readonly created_at?: string;
   readonly updated_at?: string;
   readonly state_version?: number;
+  readonly provenance?: GuardianSessionProvenanceReferences;
+  readonly lineage_id?: string;
+  readonly provenance_status?: ProvenanceStatus;
+  readonly quarantine_eligible?: boolean;
   readonly [key: string]: unknown;
 };
 
@@ -139,6 +154,8 @@ export type {
   GuardDecision,
   GuardianNativeToolReturn,
   GuardianPluginMetadata,
+  GuardianQuarantineInput,
+  GuardianQuarantineResult,
   GuardianToolInput,
   GuardianToolName,
   GuardianToolResult,
@@ -152,6 +169,23 @@ export type {
   ToolExecutionPayload,
 } from "./tool-types.ts";
 export { GUARDIAN_TOOL_NAMES, isGuardianToolName } from "./tool-types.ts";
+export { COMPLETION_STATUSES, isGuardianCompletionStatus, parseProvenanceRecord, parseQuarantineJournalRecord } from "./quarantine-types.ts";
+export type {
+  ExternalRecordReference,
+  GuardianCompletionStatus,
+  GuardianQuarantineAction,
+  GuardianSessionProvenanceReferences,
+  ProvenanceInventoryEntry,
+  ProvenanceRecordV1,
+  QuarantineDisposition,
+  QuarantineItemRecordV1,
+  QuarantineItemState,
+  QuarantineJournalRecordV1,
+  QuarantineMoveOperationPhase,
+  QuarantineOperationRecordV1,
+  QuarantinePurgeOperationPhase,
+} from "./quarantine-types.ts";
+export type { ProvenanceStatus } from "./session-provenance.ts";
 
 export function isRecordLike(value: unknown): value is RecordLike {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -217,3 +251,4 @@ export function gitMetadataFromError(args: readonly string[], error: unknown, fa
 export function withGitMetadata(error: unknown, metadata: GitCommandMetadata): GitCommandFailure {
   return Object.assign(toError(error), metadata);
 }
+import type { GuardianSessionProvenanceReferences } from "./quarantine-types.ts";

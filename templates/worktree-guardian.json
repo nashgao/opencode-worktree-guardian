@@ -19,7 +19,8 @@
     "pushBase": true,
     "cleanupWorktrees": true,
     "cleanupBranches": true,
-    "cleanupHygiene": true
+    "cleanupHygiene": true,
+    "quarantineSessionResidue": false
   },
   "protectedPaths": [
     ".beads",
@@ -39,5 +40,5 @@
     "production"
   ],
   "trustedUpstreamRemotes": [],
-  "lockTimeoutMs": 5000
+  "lockTimeoutMs": 30000
 }

@@ -1,3 +1,4 @@
+import type { GuardianQuarantineAction } from "./quarantine-types.ts";
 import type { GuardianSession, MutableRecord, RecordLike, WorktreeEntry } from "./types.ts";
 
 export type GuardianToolInput = MutableRecord;
@@ -22,6 +23,23 @@ export type GuardianToolResult = MutableRecord & {
   repoRoot?: string;
   safetyRefs?: readonly unknown[];
 };
+
+export type GuardianQuarantineInput = {
+  readonly action: GuardianQuarantineAction;
+  readonly quarantineId: string;
+  readonly targetWorktreePath?: string;
+  readonly mode?: "plan" | "apply";
+  readonly confirm?: boolean;
+  readonly confirmDelete?: boolean;
+  readonly confirmToken?: string;
+};
+
+export type GuardianQuarantineResult =
+  | { readonly ok: true; readonly status: "planned"; readonly action: GuardianQuarantineAction; readonly quarantineId: string; readonly selectedTargetWorktreePath?: string; readonly confirmToken?: string }
+  | { readonly ok: true; readonly status: "needs-selection"; readonly action: "restore"; readonly quarantineId: string; readonly eligibleTargetWorktreePaths: readonly string[] }
+  | { readonly ok: true; readonly status: "restored"; readonly action: "restore"; readonly quarantineId: string; readonly selectedTargetWorktreePath: string }
+  | { readonly ok: true; readonly status: "purged"; readonly action: "purge"; readonly quarantineId: string }
+  | { readonly ok: false; readonly status: "blocked"; readonly action: GuardianQuarantineAction; readonly quarantineId: string; readonly reason: string; readonly selectedTargetWorktreePath?: string };
 
 export type SessionWorktreeResult = {
   readonly ok: boolean;

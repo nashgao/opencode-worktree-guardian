@@ -4,7 +4,8 @@ import test from "node:test";
 import plugin from "../src/index.ts";
 import { maybeInjectPlanConfirmToken, rememberPlanConfirmToken } from "../src/plugin/plan-token-cache.ts";
 import { createToolContext, runTool } from "./plugin-contract-helpers.ts";
-import type { GuardianToolName, PlanCacheToolArgs, PlanTokenCache } from "../src/types.ts";
+import { COMPLETION_STATUSES, isGuardianCompletionStatus, parseProvenanceRecord, parseQuarantineJournalRecord } from "../src/types.ts";
+import type { GuardianQuarantineInput, GuardianQuarantineResult, GuardianToolName, PlanCacheToolArgs, PlanTokenCache, ProvenanceRecordV1, QuarantineDisposition, QuarantineItemRecordV1, QuarantineOperationRecordV1 } from "../src/types.ts";
 
 const expectedToolNames = [
   "guardian_delete_paths",
@@ -53,6 +54,88 @@ const expectedPackagedCommands = new Map([
 ]);
 
 const removedLegacyRootExportName = ["guardian", "Hygiene", "Cleanup"].join("");
+
+test("quarantine and provenance records are versioned, serializable, and fail closed", () => {
+  const provenance = {
+    version: 1,
+    kind: "provenance",
+    sessionId: "ses_quarantine",
+    lineageId: "lineage_quarantine",
+    repoRoot: "/repo",
+    worktreePath: "/repo/.worktrees/session",
+    commonGitDir: "/repo/.git",
+    deviceId: 1,
+    headCommit: "abc123",
+    createdAt: "2026-08-05T00:00:00.000Z",
+    inventory: [],
+  } satisfies ProvenanceRecordV1;
+  const item = {
+    version: 1,
+    kind: "quarantine-item",
+    quarantineId: "item_1",
+    sessionId: "ses_quarantine",
+    lineageId: "lineage_quarantine",
+    state: "available",
+    originalRelativePath: "residue.txt",
+    originalWorktreePath: "/repo/.worktrees/session",
+    artifactPath: "/repo/.git/opencode-guardian/quarantine/ses_quarantine/item_1",
+    fingerprint: [{ path: "residue.txt", kind: "file", size: 9, sha256: "a".repeat(64) }],
+    fingerprintDigest: "b".repeat(64),
+    manifestDigest: "c".repeat(64),
+    doneIntentDigest: "d".repeat(64),
+    guardianStateRevision: 3,
+    sessionRevision: 2,
+    deviceId: 1,
+    nonce: "123e4567-e89b-12d3-a456-426614174000",
+    createdAt: "2026-08-05T00:00:00.000Z",
+  } satisfies QuarantineItemRecordV1;
+  const operation = {
+    version: 1,
+    kind: "quarantine-operation",
+    operationId: "operation_1",
+    quarantineId: "item_1",
+    sessionId: "ses_quarantine",
+    lineageId: "lineage_quarantine",
+    originalRelativePath: "residue.txt",
+    originalWorktreePath: "/repo/.worktrees/session",
+    artifactPath: "/repo/.git/opencode-guardian/quarantine/ses_quarantine/item_1",
+    fingerprint: [{ path: "residue.txt", kind: "file", size: 9, sha256: "a".repeat(64) }],
+    fingerprintDigest: "b".repeat(64),
+    manifestDigest: "c".repeat(64),
+    doneIntentDigest: "d".repeat(64),
+    guardianStateRevision: 3,
+    sessionRevision: 2,
+    deviceId: 1,
+    nonce: "123e4567-e89b-12d3-a456-426614174000",
+    action: "restore",
+    phase: "prepared",
+    targetWorktreePath: "/repo",
+    createdAt: "2026-08-05T00:00:00.000Z",
+  } satisfies QuarantineOperationRecordV1;
+  const dispositions = [
+    { disposition: "commit", relativePath: "src/index.ts" },
+    { disposition: "delete-known", relativePath: ".cache" },
+    { disposition: "quarantine", relativePath: "residue.txt" },
+    { disposition: "block", relativePath: "unknown.bin", reason: "not eligible" },
+  ] satisfies readonly QuarantineDisposition[];
+  const input = { action: "restore", quarantineId: "item_1", targetWorktreePath: "/repo", mode: "plan" } satisfies GuardianQuarantineInput;
+  const result = { ok: true, status: "planned", action: "restore", quarantineId: "item_1", selectedTargetWorktreePath: "/repo" } satisfies GuardianQuarantineResult;
+
+  assert.deepEqual(parseProvenanceRecord(JSON.parse(JSON.stringify(provenance))), provenance);
+  assert.deepEqual(parseQuarantineJournalRecord(JSON.parse(JSON.stringify(item))), item);
+  assert.deepEqual(parseQuarantineJournalRecord(JSON.parse(JSON.stringify(operation))), operation);
+  assert.equal(JSON.stringify([provenance, item, operation, dispositions, input, result]).length > 0, true);
+  assert.throws(() => parseProvenanceRecord({ ...provenance, version: 2 }));
+  assert.throws(() => parseQuarantineJournalRecord({ ...item, version: 2 }));
+  assert.throws(() => parseQuarantineJournalRecord({ ...item, unexpected: true }));
+  assert.throws(() => parseQuarantineJournalRecord({ ...operation, fingerprintDigest: "not-a-digest" }));
+});
+
+test("completion status remains closed to complete, partial, and blocked", () => {
+  assert.deepEqual(COMPLETION_STATUSES, ["complete", "partial", "blocked"]);
+  for (const status of COMPLETION_STATUSES) assert.equal(isGuardianCompletionStatus(status), true);
+  assert.equal(isGuardianCompletionStatus("quarantined"), false);
+});
 
 test("public plugin export matches OpenCode PluginModule contract", async () => {
   const module = await import("../src/index.ts");

@@ -1,9 +1,12 @@
 import crypto from "node:crypto";
 import path from "node:path";
+import type { CleanCompletionPlan } from "./clean-completion.ts";
+import { planCleanCompletion } from "./clean-completion.ts";
 import { loadConfig, normalizeConfig } from "./config.ts";
 import { guardianDone } from "./done.ts";
 import { getRepoRoot } from "./git.ts";
 import { guardianHygiene } from "./hygiene.ts";
+import { getGuardianPaths, readState } from "./state.ts";
 import type { GuardianConfig, GuardianGoalConfig, GuardianToolInput, GuardianToolResult, RecordLike } from "./types.ts";
 import { isRecordLike } from "./types.ts";
 import { guardianFinishWorkflow } from "./workflow.ts";
@@ -38,6 +41,7 @@ type GoalPlan = {
   readonly goal: GuardianGoalConfig;
   readonly steps: readonly GoalStep[];
   readonly blockers: readonly GoalBlocker[];
+  readonly cleanCompletion?: CleanCompletionPlan;
   readonly confirmToken?: string;
   readonly nextAction?: string;
   readonly reason?: string;
@@ -137,11 +141,26 @@ async function resolveGoalContext(input: GuardianToolInput): Promise<{ readonly 
   return { repoRoot, cwd, config };
 }
 
+async function resolveCleanCompletionSession(repoRoot: string, config: GuardianConfig, sessionId: unknown) {
+  if (typeof sessionId !== "string" || sessionId.length === 0) return null;
+  const paths = await getGuardianPaths(repoRoot);
+  const state = await readState(paths, { repoRoot, config });
+  return state.sessions[sessionId] ?? null;
+}
+
+async function buildCleanCompletionStep(input: GuardianToolInput, repoRoot: string, cwd: string, config: GuardianConfig): Promise<CleanCompletionPlan | undefined> {
+  if (!config.goal.quarantineSessionResidue) return undefined;
+  const session = await resolveCleanCompletionSession(repoRoot, config, input.sessionId);
+  if (!session) return { applicable: false, finalProof: { status: "not-applicable", reason: "no session resolved for quarantine session residue check", candidates: [] }, incompleteOperationCount: 0 };
+  return planCleanCompletion({ repoRoot, cwd, config, session });
+}
+
 async function buildGoalPlan(input: GuardianToolInput): Promise<GoalPlan> {
   const { repoRoot, cwd, config } = await resolveGoalContext(input);
   const goal = config.goal;
   const steps: GoalStep[] = [];
   const blockers: GoalBlocker[] = [];
+  const cleanCompletion = await buildCleanCompletionStep(input, repoRoot, cwd, config);
 
   if (goal.cleanupHygiene) {
     const hygiene = await guardianHygiene({ ...input, repoRoot, cwd, config, mode: "plan", allowCategories: [...GOAL_HYGIENE_CATEGORIES] });
@@ -184,6 +203,7 @@ async function buildGoalPlan(input: GuardianToolInput): Promise<GoalPlan> {
     goal,
     steps,
     blockers,
+    ...(cleanCompletion ? { cleanCompletion } : {}),
     ...(blockers.length > 0 ? { reason: "guardian_goal plan has blockers" } : {}),
   } satisfies Omit<GoalPlan, "confirmToken" | "nextAction">;
   if (basePlan.ok !== true) return basePlan;

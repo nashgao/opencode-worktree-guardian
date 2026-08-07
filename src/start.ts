@@ -6,6 +6,7 @@ import { getCommonGitDir, getCurrentBranch, getHeadCommit, getRepoRoot, runGit, 
 import { configuredRemoteAuthority, isTrustedRemoteNamespaceOverlapError } from "./git-authority.ts";
 import { isTerminalSession } from "./lifecycle.ts";
 import { getGuardianPaths, readState, recordSession } from "./state.ts";
+import { captureStartProvenance, ineligibleSessionProvenance, isProvenanceEnabled, verifyStartProvenance } from "./session-provenance.ts";
 import type { GuardianSession, GuardianToolInput, GuardianToolResult, MutableRecord } from "./types.ts";
 import { errorCode, isRecordLike } from "./types.ts";
 import { configFromInput, sessionIdFromInput } from "./session/context.ts";
@@ -110,7 +111,13 @@ export async function guardianStart(input: GuardianToolInput = {}): Promise<Guar
   }
   if (existing?.status === "active" && typeof existing.worktree_path === "string") {
     const binding = await validateOwnedSession(repoRoot, config, existing);
-    if (binding.ok) return { ok: true, session: existing, stateVersion: state.state_version, existing: true };
+    if (binding.ok) {
+      if (isProvenanceEnabled(config)) {
+        const verificationReason = await verifyStartProvenance({ repoRoot, worktreePath: existing.worktree_path, sessionId, session: existing });
+        if (verificationReason) return { ok: false, status: "blocked", reason: verificationReason, session: existing, stateVersion: state.state_version };
+      }
+      return { ok: true, session: existing, stateVersion: state.state_version, existing: true };
+    }
     if (input.createWorktree !== true) {
       return {
         ok: false,
@@ -133,6 +140,7 @@ export async function guardianStart(input: GuardianToolInput = {}): Promise<Guar
       base_ref: `${config.remote}/${config.baseBranch}`,
       head_commit: headCommit,
       safety_refs: Array.isArray(existing.safety_refs) ? existing.safety_refs.filter((value): value is string => typeof value === "string") : [],
+      ...ineligibleSessionProvenance(config),
     };
     const repairedState = await recordSession(repoRoot, config, repairedSession, { event: { type: "guardian_start_repair", session_id: sessionId, reason: binding.reason } });
     const recordedSession = repairedState.sessions[sessionId];
@@ -178,6 +186,11 @@ export async function guardianStart(input: GuardianToolInput = {}): Promise<Guar
   const unsafeReason = input.createWorktree === true ? null : protectedBranchReason(config, branch);
   if (unsafeReason) return { ok: false, status: "blocked", reason: unsafeReason, branch, worktreePath };
   const headCommit = await getHeadCommit(worktreePath);
+  const provenance = isProvenanceEnabled(config)
+    ? input.createWorktree === true
+      ? await captureStartProvenance({ repoRoot, worktreePath, sessionId })
+      : { ok: true as const, fields: ineligibleSessionProvenance(config) }
+    : { ok: true as const, fields: {} };
   const session = {
     session_id: sessionId,
     status: "active",
@@ -186,8 +199,18 @@ export async function guardianStart(input: GuardianToolInput = {}): Promise<Guar
     base_ref: `${config.remote}/${config.baseBranch}`,
     head_commit: headCommit,
     safety_refs: [],
+    ...provenance.fields,
   };
 
   const recordedState = await recordSession(repoRoot, config, session, { event: { type: "guardian_start", session_id: sessionId } });
+  if (!provenance.ok) {
+    return {
+      ok: false,
+      status: "blocked",
+      reason: `provenance capture failed after worktree creation: ${provenance.reason}`,
+      session: recordedState.sessions[sessionId],
+      stateVersion: recordedState.state_version,
+    };
+  }
   return { ok: true, session: recordedState.sessions[sessionId], stateVersion: recordedState.state_version };
 }

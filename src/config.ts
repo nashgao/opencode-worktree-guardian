@@ -13,7 +13,7 @@ export const FINISH_MODES = new Set(["preserve-only", "push-branch", "create-pr"
 export const AUTO_START_MODES = new Set(["eager", "lazy"]);
 export const COMMAND_INTERCEPTION_MODES = new Set(["audit", "strict"]);
 
-export type ConfigErrorKind = "invalid_config_root" | "unsupported_finish_mode" | "unsupported_auto_start_mode" | "unsupported_command_interception_mode";
+export type ConfigErrorKind = "invalid_config_root" | "unsupported_finish_mode" | "unsupported_auto_start_mode" | "unsupported_command_interception_mode" | "invalid_quarantine_session_residue";
 export type ConfigBoundaryError = Error & { readonly configErrorKind: ConfigErrorKind };
 
 function configError(kind: ConfigErrorKind, message: string): ConfigBoundaryError {
@@ -74,6 +74,7 @@ function goalField(record: RecordLike, key: string): GuardianGoalConfig {
     cleanupWorktrees: booleanField(value, "cleanupWorktrees"),
     cleanupBranches: booleanField(value, "cleanupBranches"),
     cleanupHygiene: booleanField(value, "cleanupHygiene"),
+    quarantineSessionResidue: booleanField(value, "quarantineSessionResidue"),
   };
 }
 
@@ -113,6 +114,10 @@ export const DEFAULT_CONFIG: GuardianConfig = Object.freeze(parseDefaultConfigTe
 
 export function normalizeGoalConfig(input: unknown): GuardianGoalConfig {
   if (!isRecordLike(input)) return DEFAULT_CONFIG.goal;
+  const quarantineSessionResidue = input.quarantineSessionResidue;
+  if (quarantineSessionResidue !== undefined && typeof quarantineSessionResidue !== "boolean") {
+    throw configError("invalid_quarantine_session_residue", "goal.quarantineSessionResidue must be a boolean");
+  }
   return {
     commitDirty: typeof input.commitDirty === "boolean" ? input.commitDirty : DEFAULT_CONFIG.goal.commitDirty,
     landToBase: typeof input.landToBase === "boolean" ? input.landToBase : DEFAULT_CONFIG.goal.landToBase,
@@ -120,6 +125,7 @@ export function normalizeGoalConfig(input: unknown): GuardianGoalConfig {
     cleanupWorktrees: typeof input.cleanupWorktrees === "boolean" ? input.cleanupWorktrees : DEFAULT_CONFIG.goal.cleanupWorktrees,
     cleanupBranches: typeof input.cleanupBranches === "boolean" ? input.cleanupBranches : DEFAULT_CONFIG.goal.cleanupBranches,
     cleanupHygiene: typeof input.cleanupHygiene === "boolean" ? input.cleanupHygiene : DEFAULT_CONFIG.goal.cleanupHygiene,
+    quarantineSessionResidue: quarantineSessionResidue ?? DEFAULT_CONFIG.goal.quarantineSessionResidue,
   };
 }
 

@@ -9,6 +9,7 @@ import { configuredRemoteAuthority, isTrustedRemoteNamespaceOverlapError } from 
 import { isActiveSession, isTerminalSession } from "./lifecycle.ts";
 import { hasBlockingStashInventory } from "./stash-policy.ts";
 import { getGuardianPaths, readState, recordSession } from "./state.ts";
+import { ineligibleSessionProvenance } from "./session-provenance.ts";
 import type { GuardianSession } from "./types.ts";
 import { isRecordLike } from "./types.ts";
 import { recoverableGuardianWorktreeBlocker, recoverySessionId } from "./worktree-recovery.ts";
@@ -102,6 +103,7 @@ export async function guardianFinish(input: LooseRecord = {}): Promise<GuardianF
       base_ref: `${config.remote}/${config.baseBranch}`,
       head_commit: headCommit,
       safety_refs: [],
+      ...ineligibleSessionProvenance(config),
     };
     if (planMode) {
       session = recoveredSession;

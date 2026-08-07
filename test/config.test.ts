@@ -4,7 +4,8 @@ import path from "node:path";
 import test from "node:test";
 import { CONFIG_PATH, DEFAULT_CONFIG, initializeConfig, loadConfig, normalizeConfig } from "../src/config.ts";
 import { scanWorkspaceHygiene } from "../src/hygiene.ts";
-import { isRecordLike } from "../src/types.ts";
+import { readState, STATE_SCHEMA_VERSION } from "../src/state.ts";
+import { isRecordLike, type GuardianPaths } from "../src/types.ts";
 import { createRepo, createTempDir, git } from "./helpers.ts";
 
 const TEMPLATE_PROTECTED_PATHS = [".beads", ".omo", ".omc", ".omx", ".sisyphus", ".milestones", ".opencode", ".codegraph", ".worktrees"];
@@ -32,6 +33,44 @@ test("config defaults are delivery-first and cleanup-conservative", () => {
   assert.deepEqual(config.allowDirtyPaths, []);
   assert.deepEqual(config.protectedPaths, TEMPLATE_PROTECTED_PATHS);
   assert.deepEqual(config.protectedBranches, DEFAULT_CONFIG.protectedBranches);
+});
+
+test("quarantine session residue requires an explicit boolean opt-in", () => {
+  assert.equal(normalizeConfig().goal.quarantineSessionResidue, false);
+  assert.equal(normalizeConfig({ goal: { quarantineSessionResidue: true } }).goal.quarantineSessionResidue, true);
+  assert.throws(
+    () => normalizeConfig({ goal: { quarantineSessionResidue: "yes" } }),
+    (error: unknown) => isRecordLike(error) && error.configErrorKind === "invalid_quarantine_session_residue",
+  );
+});
+
+test("legacy state schema loads without optional provenance references", async () => {
+  const repo = await createTempDir();
+  const paths: GuardianPaths = {
+    repoRoot: repo,
+    gitDir: repo,
+    dir: repo,
+    statePath: path.join(repo, "state.json"),
+    eventsPath: path.join(repo, "events.jsonl"),
+    reportPath: path.join(repo, "report.html"),
+    lockPath: path.join(repo, "state.lock"),
+    lockRef: "refs/opencode-guardian/locks/state",
+    lockTmpDir: path.join(repo, "lock-tmp"),
+    lockTombstonesDir: path.join(repo, "lock-tombstones"),
+    provenanceDir: path.join(repo, "provenance"),
+    quarantineDir: path.join(repo, "quarantine"),
+    journalDir: path.join(repo, "journal"),
+  };
+  await fs.writeFile(paths.statePath, JSON.stringify({
+    schema_version: STATE_SCHEMA_VERSION,
+    state_version: 1,
+    sessions: { ses_legacy: { session_id: "ses_legacy", status: "active" } },
+  }));
+
+  const state = await readState(paths, { repoRoot: repo, config: DEFAULT_CONFIG });
+
+  assert.equal(state.schema_version, STATE_SCHEMA_VERSION);
+  assert.equal(state.sessions.ses_legacy?.provenance, undefined);
 });
 
 test("config defaults protect Beads state from cleanup", () => {

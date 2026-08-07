@@ -4,6 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { DEFAULT_CONFIG } from "../src/config.ts";
 import { guardianDone } from "../src/done.ts";
+import { buildDirtySessionDoneIntent } from "../src/done-intent.ts";
 import { guardianStart } from "../src/start.ts";
 import { isRecordLike } from "../src/types.ts";
 import { createRepoWithOrigin, git, rescueMutationSurface } from "./helpers.ts";
@@ -69,6 +70,35 @@ test("guardian_done active-session plan is read-only and previews land-and-clean
   await assertWorktreePresent(repo, worktree);
   await git(repo, ["rev-parse", "--verify", `refs/heads/${branch}`]);
   await assert.rejects(git(repo, ["merge-base", "--is-ancestor", head, "origin/main"]));
+});
+
+test("dirty-session intent captures commit facts despite ignored residue without mutating Git", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  await fs.writeFile(path.join(repo, ".gitignore"), ".intent-state/\n", "utf8");
+  await git(repo, ["add", ".gitignore"]);
+  await git(repo, ["commit", "-m", "ignore intent state"]);
+  await git(repo, ["push", "origin", "main"]);
+  const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "done-intent-ignored", taskName: "done intent ignored", createWorktree: true, config: DEFAULT_CONFIG });
+  const worktree = started.session.worktree_path;
+  await fs.writeFile(path.join(worktree, "intent.txt"), "commit me\n", "utf8");
+  await fs.mkdir(path.join(worktree, ".intent-state"));
+  await fs.writeFile(path.join(worktree, ".intent-state", "state.json"), "{}\n", "utf8");
+
+  const before = await rescueMutationSurface(repo, worktree);
+  const first = await buildDirtySessionDoneIntent({ cwd: worktree, worktreePath: worktree });
+  const second = await buildDirtySessionDoneIntent({ cwd: worktree, worktreePath: worktree });
+
+  assert.deepEqual(first.snapshot.paths, ["intent.txt"]);
+  assert.deepEqual(first.commitPaths, ["intent.txt"]);
+  assert.deepEqual(first.ignoredFiles, [".intent-state/state.json"]);
+  assert.equal(typeof first.sourceIndexTree, "string");
+  assert.equal(typeof first.candidateTree, "string");
+  assert.equal(first.digest, second.digest);
+  assert.deepEqual(await rescueMutationSurface(repo, worktree), before);
+  const normalDone = await guardianDone({ repoRoot: repo, cwd: worktree, sessionId: "done-intent-ignored", mode: "plan", config: DEFAULT_CONFIG });
+  assert.equal(normalDone.ok, false, JSON.stringify(normalDone));
+  assert.match(String(normalDone.reason), /ignored files/);
 });
 
 test("guardian_done apply without confirm stops before land-clean preflight work", async (t) => {

@@ -1,15 +1,19 @@
 import fs from "node:fs/promises";
-import type { FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { samePathOnDisk } from "./done-shared.ts";
 import { getCommonGitDir, getHeadCommit } from "./git.ts";
 import { clearTerminalLifecycleFields } from "./lifecycle.ts";
+import { getGuardianPaths } from "./guardian-paths.ts";
+import { appendDurable, writeDurableAtomic } from "./state-durable-file.ts";
+import { DEFAULT_STATE_LOCK_TIMEOUT_MS, withStateLock } from "./state-lock.ts";
+import { ineligibleSessionProvenance, isProvenanceEnabled } from "./session-provenance.ts";
+import type { StateLockOptions } from "./state-lock.ts";
 import type { GuardianConfig, GuardianPaths, GuardianSession, GuardianState, GuardianStateRecord, RecordLike } from "./types.ts";
 import { errorCode, isRecordLike } from "./types.ts";
 
 export const STATE_SCHEMA_VERSION = "1.0.0";
 
-export type StateErrorKind = "invalid_shape" | "unsupported_schema" | "symlink" | "lock_timeout" | "illegal_active_binding";
+export type StateErrorKind = "invalid_shape" | "unsupported_schema" | "symlink" | "lock_blocked" | "lock_ownership_lost" | "lock_reentrant" | "lock_timeout" | "illegal_active_binding";
 export type StateBoundaryError = Error & { readonly stateErrorKind: StateErrorKind; readonly guardianPath?: string };
 type GuardianConfigInput = GuardianConfig | RecordLike;
 
@@ -20,17 +24,10 @@ function stateError(kind: StateErrorKind, message: string, guardianPath?: string
   });
 }
 
-export async function getGuardianPaths(repoRoot: string): Promise<GuardianPaths> {
-  const gitDir = await getCommonGitDir(repoRoot);
-  const dir = path.join(gitDir, "opencode-guardian");
-  return {
-    dir,
-    statePath: path.join(dir, "state.json"),
-    eventsPath: path.join(dir, "events.jsonl"),
-    reportPath: path.join(dir, "report.html"),
-    lockPath: path.join(dir, "state.lock"),
-  };
-}
+// Path computation lives in guardian-paths.ts to avoid a cycle through provenance.ts
+// (state.ts -> session-provenance.ts -> provenance.ts -> state.ts). Re-exported here
+// so existing `import { getGuardianPaths } from "./state.ts"` call sites are unaffected.
+export { getGuardianPaths };
 
 export function createEmptyState({ repoRoot, config }: { readonly repoRoot: string; readonly config: GuardianConfigInput }): GuardianState {
   return {
@@ -87,82 +84,56 @@ export async function readState(paths: GuardianPaths, context: { readonly repoRo
   }
 }
 
-async function sleep(ms: number) {
-  await new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-export async function acquireStateLock(paths: GuardianPaths, options: { readonly timeoutMs?: number } = {}) {
-  const timeoutMs = options.timeoutMs ?? 5_000;
-  const started = Date.now();
-  await fs.mkdir(paths.dir, { recursive: true });
-
-  while (true) {
-    let handle: FileHandle | undefined;
-    try {
-      await assertNotSymlink(paths.lockPath, "lock");
-      handle = await fs.open(paths.lockPath, "wx");
-      await handle.writeFile(JSON.stringify({ pid: process.pid, acquired_at: new Date().toISOString() }));
-      const acquiredHandle = handle;
-      return async () => {
-        await acquiredHandle.close();
-        await fs.unlink(paths.lockPath).catch((error) => {
-          if (errorCode(error) !== "ENOENT") throw error;
-        });
-      };
-    } catch (error) {
-      if (handle) await handle.close().catch(() => {});
-      if (errorCode(error) !== "EEXIST") throw error;
-      if (Date.now() - started >= timeoutMs) {
-        throw stateError("lock_timeout", `Timed out acquiring guardian state lock at ${paths.lockPath}`, paths.lockPath);
-      }
-      await sleep(25);
-    }
-  }
-}
-
 export async function writeStateAtomic(paths: GuardianPaths, state: GuardianState | GuardianStateRecord) {
-  await fs.mkdir(paths.dir, { recursive: true });
   await assertNotSymlink(paths.statePath, "state");
-  const tmpPath = `${paths.statePath}.${process.pid}.${Date.now()}.tmp`;
-  await fs.writeFile(tmpPath, `${JSON.stringify(state, null, 2)}\n`);
-  await fs.rename(tmpPath, paths.statePath);
+  await writeDurableAtomic(paths.statePath, paths.lockTmpDir, `${JSON.stringify(state, null, 2)}\n`);
 }
 
 export async function writeReportAtomic(paths: GuardianPaths, html: string) {
-  await fs.mkdir(paths.dir, { recursive: true });
   await assertNotSymlink(paths.reportPath, "report");
-  const tmpPath = `${paths.reportPath}.${process.pid}.${Date.now()}.tmp`;
-  await fs.writeFile(tmpPath, html);
-  await fs.rename(tmpPath, paths.reportPath);
+  await writeDurableAtomic(paths.reportPath, paths.lockTmpDir, html);
 }
 
 export async function appendEvent(paths: GuardianPaths, event: RecordLike) {
-  await fs.mkdir(paths.dir, { recursive: true });
   await assertNotSymlink(paths.eventsPath, "events");
-  await fs.appendFile(paths.eventsPath, `${JSON.stringify({ ...event, at: event.at ?? new Date().toISOString() })}\n`);
+  await appendDurable(paths.eventsPath, `${JSON.stringify({ ...event, at: event.at ?? new Date().toISOString() })}\n`);
+}
+
+export async function withStateTransaction<T>(paths: GuardianPaths, operation: () => Promise<T>, options: StateLockOptions = {}): Promise<T> {
+  return withStateLock(paths, options, operation);
+}
+
+type UpdateStateLockedInput = {
+  readonly repoRoot: string;
+  readonly config: GuardianConfigInput;
+  readonly paths: GuardianPaths;
+  readonly updater: (state: GuardianStateRecord) => GuardianStateRecord | Promise<GuardianStateRecord>;
+  readonly event?: RecordLike;
+};
+
+async function updateStateLocked(input: UpdateStateLockedInput): Promise<GuardianStateRecord> {
+  const { repoRoot, config, paths, updater } = input;
+  const previous = await readState(paths, { repoRoot, config });
+  const next = await updater(structuredClone(previous));
+  next.state_version = (previous.state_version ?? 0) + 1;
+  next.updated_at = new Date().toISOString();
+  const event = input.event ? { ...input.event, state_version: next.state_version } : null;
+  if (event) await assertNotSymlink(paths.eventsPath, "events");
+  await writeStateAtomic(paths, next);
+  try {
+    if (event) await appendEvent(paths, event);
+  } catch (error) {
+    await writeStateAtomic(paths, previous);
+    throw error;
+  }
+  return next;
 }
 
 export async function updateState(repoRoot: string, config: GuardianConfigInput, updater: (state: GuardianStateRecord) => GuardianStateRecord | Promise<GuardianStateRecord>, options: { readonly paths?: GuardianPaths; readonly event?: RecordLike } = {}) {
   const paths = options.paths ?? await getGuardianPaths(repoRoot);
-  const release = await acquireStateLock(paths, { timeoutMs: typeof config.lockTimeoutMs === "number" ? config.lockTimeoutMs : 5_000 });
-  try {
-    const previous = await readState(paths, { repoRoot, config });
-    const next = await updater(structuredClone(previous));
-    next.state_version = (previous.state_version ?? 0) + 1;
-    next.updated_at = new Date().toISOString();
-    const event = options.event ? { ...options.event, state_version: next.state_version } : null;
-    if (event) await assertNotSymlink(paths.eventsPath, "events");
-    await writeStateAtomic(paths, next);
-    try {
-      if (event) await appendEvent(paths, event);
-    } catch (error) {
-      await writeStateAtomic(paths, previous);
-      throw error;
-    }
-    return next;
-  } finally {
-    await release();
-  }
+  return withStateTransaction(paths, () => updateStateLocked({ repoRoot, config, paths, updater, ...(options.event === undefined ? {} : { event: options.event }) }), {
+    timeoutMs: typeof config.lockTimeoutMs === "number" ? config.lockTimeoutMs : DEFAULT_STATE_LOCK_TIMEOUT_MS,
+  });
 }
 
 type SessionBindingFields = { readonly status?: unknown; readonly worktree_path?: unknown; readonly branch?: unknown; readonly session_id?: unknown };
@@ -220,16 +191,26 @@ export async function recordSession(repoRoot: string, config: GuardianConfigInpu
     if (!sessionId) throw new Error("session.session_id is required");
     const previous = isRecordLike(state.sessions[sessionId]) ? state.sessions[sessionId] : undefined;
     const now = new Date().toISOString();
+    let supersededBinding = false;
     if (session.status === "active" && typeof session.worktree_path === "string") {
       for (const [candidateSessionId, candidate] of Object.entries(state.sessions)) {
         if (candidateSessionId !== sessionId && isRecordLike(candidate) && candidate.status === "active" && typeof candidate.worktree_path === "string" && await samePathOnDisk(candidate.worktree_path, session.worktree_path)) {
-          state.sessions[candidateSessionId] = {
+          supersededBinding = true;
+          const superseded = {
             ...candidate,
             status: "superseded",
             superseded_by: sessionId,
             superseded_at: now,
             updated_at: now,
+            ...ineligibleSessionProvenance(config),
           };
+          delete superseded.provenance;
+          delete superseded.lineage_id;
+          if (!isProvenanceEnabled(config)) {
+            delete superseded.provenance_status;
+            delete superseded.quarantine_eligible;
+          }
+          state.sessions[candidateSessionId] = superseded;
         }
       }
     }
@@ -241,6 +222,29 @@ export async function recordSession(repoRoot: string, config: GuardianConfigInpu
       created_at: previous?.created_at ?? now,
       updated_at: now,
     });
+    const bindingChanged = previous?.status === "active"
+      && merged.status === "active"
+      && typeof previous.worktree_path === "string"
+      && typeof merged.worktree_path === "string"
+      && (!await samePathOnDisk(previous.worktree_path, merged.worktree_path) || previous.branch !== merged.branch);
+    if (supersededBinding || bindingChanged) {
+      delete merged.provenance;
+      delete merged.lineage_id;
+      if (isProvenanceEnabled(config)) {
+        merged.provenance_status = "ineligible";
+        merged.quarantine_eligible = false;
+      } else {
+        delete merged.provenance_status;
+        delete merged.quarantine_eligible;
+      }
+    } else if (!previous && merged.status !== "active" && isProvenanceEnabled(config)) {
+      merged.provenance_status = "ineligible";
+      merged.quarantine_eligible = false;
+    }
+    if (isProvenanceEnabled(config) && merged.quarantine_eligible === false) {
+      delete merged.provenance;
+      delete merged.lineage_id;
+    }
     await assertActiveSessionBoundary(repoRoot, config, previous, merged);
     await assertSameRepoBinding(repoRoot, previous, merged);
     state.sessions[sessionId] = merged;

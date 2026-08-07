@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { DEFAULT_CONFIG } from "../src/config.ts";
-import { acquireStateLock, checkpointSession, getGuardianPaths, readState, recordSession, updateState, writeReportAtomic } from "../src/state.ts";
+import { checkpointSession, getGuardianPaths, readState, recordSession, updateState, withStateTransaction, writeReportAtomic } from "../src/state.ts";
 import { guardianStart } from "../src/start.ts";
 import { createRepo, createRepoWithOrigin, git } from "./helpers.ts";
 
@@ -19,6 +19,9 @@ test("state is repo-local under .git/opencode-guardian and records events", asyn
   assert.match(paths.eventsPath, /\.git\/opencode-guardian\/events\.jsonl$/);
   assert.match(paths.reportPath, /\.git\/opencode-guardian\/report\.html$/);
   assert.match(paths.lockPath, /\.git\/opencode-guardian\/state\.lock$/);
+  assert.equal(paths.lockRef, "refs/opencode-guardian/locks/state");
+  assert.match(paths.lockTmpDir, /\.git\/opencode-guardian\/lock-tmp$/);
+  assert.match(paths.lockTombstonesDir, /\.git\/opencode-guardian\/lock-tombstones$/);
 
   const state = await recordSession(repo, DEFAULT_CONFIG, {
     session_id: "ses_state",
@@ -40,9 +43,34 @@ test("state is repo-local under .git/opencode-guardian and records events", asyn
 test("state lock times out instead of guessing", async () => {
   const repo = await createRepo();
   const paths = await getGuardianPaths(repo);
-  const release = await acquireStateLock(paths, { timeoutMs: 100 });
-  await assert.rejects(() => acquireStateLock(paths, { timeoutMs: 50 }), /Timed out acquiring/);
-  await release();
+  let releaseOwner: (() => void) | undefined;
+  const ownerReady = new Promise<void>((resolve) => { releaseOwner = resolve; });
+  let ownerAcquired: (() => void) | undefined;
+  const acquired = new Promise<void>((resolve) => { ownerAcquired = resolve; });
+  const owner = withStateTransaction(paths, async () => {
+    ownerAcquired?.();
+    await ownerReady;
+  });
+  await acquired;
+  await assert.rejects(() => withStateTransaction(paths, async () => {}, { timeoutMs: 50 }), /Timed out acquiring/);
+  releaseOwner?.();
+  await owner;
+});
+
+test("state transactions reject nested acquisition instead of waiting", async () => {
+  const repo = await createRepo();
+  const paths = await getGuardianPaths(repo);
+  await withStateTransaction(paths, async () => {
+    await assert.rejects(() => withStateTransaction(paths, async () => {}), /non-reentrant/);
+  });
+});
+
+test("updateState cannot reacquire the lock from inside a public state transaction", async () => {
+  const repo = await createRepo();
+  const paths = await getGuardianPaths(repo);
+  await withStateTransaction(paths, async () => {
+    await assert.rejects(() => updateState(repo, DEFAULT_CONFIG, (state) => state, { paths }), /non-reentrant/);
+  });
 });
 
 test("malformed state fails closed", async () => {

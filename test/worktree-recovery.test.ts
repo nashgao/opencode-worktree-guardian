@@ -10,7 +10,13 @@ import { buildPreservedRef, buildSafetyRef } from "../src/git.ts";
 import { getGuardianPaths, readState, recordSession, writeStateAtomic } from "../src/state.ts";
 import { guardianUnblockFinish } from "../src/unblock-finish.ts";
 import { guardianPreserve, guardianStart } from "../src/tools.ts";
+import type { GuardianConfig } from "../src/types.ts";
 import { createRepoWithOrigin, git } from "./helpers.ts";
+
+const quarantineConfig = {
+  ...DEFAULT_CONFIG,
+  goal: { ...DEFAULT_CONFIG.goal, quarantineSessionResidue: true },
+} satisfies GuardianConfig;
 
 async function forgetRecordedSession(repo: string, sessionId: string) {
   const paths = await getGuardianPaths(repo);
@@ -30,11 +36,11 @@ async function addReviewArtifact(worktreePath: string) {
 test("guardian_finish recovers a Guardian worktree without caller-supplied session id", async (t) => {
   const { base, repo, remote } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
-  const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_recover_finish", taskName: "recover finish", createWorktree: true, config: DEFAULT_CONFIG });
+  const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_recover_finish", taskName: "recover finish", createWorktree: true, config: quarantineConfig });
   await forgetRecordedSession(repo, started.session.session_id);
   const commit = (await git(started.session.worktree_path, ["rev-parse", "HEAD"])).stdout;
 
-  const result = await guardianFinish({ repoRoot: repo, cwd: started.session.worktree_path, timestamp: "20260613T120000" });
+  const result = await guardianFinish({ repoRoot: repo, cwd: started.session.worktree_path, timestamp: "20260613T120000", config: quarantineConfig });
 
   assert.equal(result.ok, true);
   assert.equal(result.status, "pr-suggested");
@@ -43,6 +49,11 @@ test("guardian_finish recovers a Guardian worktree without caller-supplied sessi
   assert.match(String(result.preflight.sessionId), /^ses_recovered_guardian-recover-finish/);
   assert.equal((await git(remote, ["rev-parse", `refs/heads/${started.session.branch}`])).stdout, commit);
   assert.equal((await git(started.session.worktree_path, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"])).stdout, `origin/${started.session.branch}`);
+  const recoveredId = String(result.preflight.sessionId);
+  const state = await readState(await getGuardianPaths(repo), { repoRoot: repo, config: quarantineConfig });
+  assert.equal(state.sessions[recoveredId]?.provenance_status, "ineligible");
+  assert.equal(state.sessions[recoveredId]?.quarantine_eligible, false);
+  assert.equal(state.sessions[recoveredId]?.provenance, undefined);
 });
 
 test("guardian_done all=true blocks cleanup-only blockers without an apply token", async (t) => {
