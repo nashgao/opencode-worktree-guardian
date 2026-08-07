@@ -47,3 +47,15 @@ export async function lstatOrMissing(candidate: string) {
     throw error;
   }
 }
+
+export async function assertNoSymlinkAncestors(candidate: string, label: string): Promise<void> {
+  const resolved = path.resolve(candidate);
+  const parts = path.relative(path.parse(resolved).root, resolved).split(path.sep).filter(Boolean);
+  let current = path.parse(resolved).root;
+  for (const part of parts) {
+    current = path.join(current, part);
+    const stat = await lstatOrMissing(current);
+    if (!stat) return;
+    if (stat.isSymbolicLink()) throw new Error(`${label} has a symlink ancestor: ${current}`);
+  }
+}

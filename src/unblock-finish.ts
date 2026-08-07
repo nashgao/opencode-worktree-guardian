@@ -5,6 +5,7 @@ import { loadConfig, normalizeConfig } from "./config.ts";
 import { createSafetyRef, getCurrentBranch, getHeadCommit, getRepoRoot, listStashes, runGit } from "./git.ts";
 import { hasBlockingStashInventory } from "./stash-policy.ts";
 import { getGuardianPaths, readState, recordSession } from "./state.ts";
+import { ineligibleSessionProvenance } from "./session-provenance.ts";
 import type { GuardianSession, MutableRecord } from "./types.ts";
 import { isRecordLike } from "./types.ts";
 import { resolveCurrentUnblockTarget, resolveExplicitUnblockTarget, resolveStateUnblockTarget, validateUnblockTarget } from "./unblock-finish-target.ts";
@@ -240,6 +241,7 @@ export async function guardianUnblockFinish(input: LooseRecord = {}): Promise<Gu
     base_ref: session?.base_ref ?? `${config.remote}/${config.baseBranch}`,
     head_commit: newHead,
     safety_refs: [...(session?.safety_refs ?? []), safetyRef],
+    ...(session ? {} : ineligibleSessionProvenance(config)),
   }, { event: { type: "guardian_unblock_finish", session_id: sessionId, ref: safetyRef, action, paths } });
   return {
     ok: true,

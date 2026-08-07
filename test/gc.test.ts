@@ -5,6 +5,7 @@ import test from "node:test";
 import { DEFAULT_CONFIG } from "../src/config.ts";
 import { guardianGc } from "../src/gc.ts";
 import { guardianStatus } from "../src/recover.ts";
+import { getGuardianPaths } from "../src/state.ts";
 import { guardianStart } from "../src/tools.ts";
 import { isRecordLike } from "../src/types.ts";
 import { createRepo, createRepoWithOrigin, git, seedSession } from "./helpers.ts";
@@ -98,4 +99,38 @@ test("guardian_gc detects and prunes a mis-homed active session whose worktree b
   assert.equal(Array.isArray(apply.prunedSessionIds) && apply.prunedSessionIds.includes("ses_foreign"), true);
 
   assert.equal((await git(foreign, ["rev-parse", "--verify", "main"])).stdout.length > 0, true);
+});
+
+test("guardian_gc leaves provenance quarantine and journal metadata byte-identical", async () => {
+  const repo = await createRepo();
+  const paths = await getGuardianPaths(repo);
+  const records = [
+    [path.join(paths.provenanceDir, "manifest.json"), "provenance\n"],
+    [path.join(paths.quarantineDir, "item.json"), "quarantine\n"],
+    [path.join(paths.journalDir, "operation.json"), "journal\n"],
+  ] as const;
+  for (const [recordPath, content] of records) {
+    await fs.mkdir(path.dirname(recordPath), { recursive: true });
+    await fs.writeFile(recordPath, content);
+  }
+  await seedSession(repo, {
+    session_id: "ses_gc_external_metadata",
+    status: "deleted",
+    branch: "guardian/gc-external-metadata",
+    worktree_path: path.join(repo, ".worktrees", "gone"),
+    updated_at: "2000-01-01T00:00:00.000Z",
+    provenance: {
+      manifest: { relativePath: "provenance/manifest.json", digest: "manifest-digest" },
+      journals: [
+        { relativePath: "quarantine/item.json", digest: "item-digest" },
+        { relativePath: "journal/operation.json", digest: "operation-digest" },
+      ],
+    },
+  });
+
+  const plan = await guardianGc({ repoRoot: repo, mode: "plan", config: DEFAULT_CONFIG });
+  const apply = await guardianGc({ repoRoot: repo, mode: "apply", confirmDelete: true, confirmToken: plan.confirmToken, config: DEFAULT_CONFIG });
+
+  assert.equal(apply.status, "pruned");
+  for (const [recordPath, content] of records) assert.equal(await fs.readFile(recordPath, "utf8"), content);
 });

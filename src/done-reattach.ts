@@ -1,6 +1,7 @@
 import { guardianFinish } from "./finish.ts";
 import { getHeadCommit } from "./git.ts";
 import { recordSession } from "./state.ts";
+import { ineligibleSessionProvenance } from "./session-provenance.ts";
 import type { GuardianConfig, MutableRecord } from "./types.ts";
 import { blocked } from "./done-shared.ts";
 import { recoverableGuardianWorktreeBlocker, recoverySessionId } from "./worktree-recovery.ts";
@@ -41,6 +42,7 @@ export async function reattachCurrentGuardianWorktree(repoRoot: string, currentW
     base_ref: `${String(config.remote)}/${String(config.baseBranch)}`,
     head_commit: headCommit,
     safety_refs: [],
+    ...ineligibleSessionProvenance(config),
   }, { event: { type: "guardian_done_reattach", session_id: sessionId } });
   const result = await guardianFinish({ ...input, mode, repoRoot, cwd: currentWorktree, sessionId, config });
   return { ...result, lane: "session-finish", reattached: true };

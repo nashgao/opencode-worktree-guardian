@@ -8,7 +8,7 @@ export { guardianDone } from "./done.ts";
 export { guardianGc } from "./gc.ts";
 export { buildPreservedRef, buildSafetyRef, createSafetyRef, deleteBranch, getRepoRoot, listWorktrees, removeWorktree, runGit } from "./git.ts";
 export { scanWorkspaceHygiene } from "./hygiene.ts";
-export { acquireStateLock, appendEvent, getGuardianPaths, readState, recordSession, updateState, writeReportAtomic, writeStateAtomic } from "./state.ts";
+export { appendEvent, getGuardianPaths, readState, recordSession, updateState, withStateTransaction, writeReportAtomic, writeStateAtomic } from "./state.ts";
 export { guardianFinish } from "./finish.ts";
 export { guardianRecover, guardianStatus } from "./recover.ts";
 export { guardianReportHtml, renderGuardianReportHtml } from "./report.ts";

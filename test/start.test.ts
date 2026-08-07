@@ -4,12 +4,39 @@ import path from "node:path";
 import test from "node:test";
 import { DEFAULT_CONFIG } from "../src/config.ts";
 import { guardianDone } from "../src/done.ts";
+import { readProvenanceManifest } from "../src/provenance.ts";
 import { guardianStatus } from "../src/recover.ts";
+import { getGuardianPaths, readState } from "../src/state.ts";
 import { guardianStart as startGuardianSession } from "../src/start.ts";
 import { guardianStart } from "../src/tools.ts";
+import type { ExternalRecordReference, GuardianConfig } from "../src/types.ts";
+import { isRecordLike } from "../src/types.ts";
 import { createRepo, createRepoWithOrigin, createTempDir, git, makeBranchCommit, seedSession } from "./helpers.ts";
 
 const ownedRoots: string[] = [];
+const quarantineConfig = {
+  ...DEFAULT_CONFIG,
+  goal: { ...DEFAULT_CONFIG.goal, quarantineSessionResidue: true },
+} satisfies GuardianConfig;
+
+function requireRecord(value: unknown, name: string): Record<string, unknown> {
+  if (isRecordLike(value)) return value;
+  throw new TypeError(`${name} must be an object`);
+}
+
+function requireString(value: unknown, name: string): string {
+  if (typeof value === "string" && value.length > 0) return value;
+  throw new TypeError(`${name} must be a non-empty string`);
+}
+
+function requireManifest(session: Record<string, unknown>): ExternalRecordReference {
+  const provenance = requireRecord(session.provenance, "session.provenance");
+  const manifest = requireRecord(provenance.manifest, "session.provenance.manifest");
+  return {
+    relativePath: requireString(manifest.relativePath, "manifest.relativePath"),
+    digest: requireString(manifest.digest, "manifest.digest"),
+  };
+}
 
 type DoneResult = Record<string, unknown> & {
   readonly action?: string;
@@ -71,6 +98,166 @@ test("guardian_start records a session on a real worktree of repoRoot", async ()
 
   const status = await guardianStatus({ repoRoot: repo, config: DEFAULT_CONFIG });
   assert.equal(status.sessions.some((session) => session.session_id === "ses_same"), true);
+});
+
+test("guardian_start keeps disabled session output and metadata shape unchanged", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+
+  const result = await startGuardianSession({ repoRoot: repo, cwd: repo, sessionId: "ses_disabled_provenance", taskName: "disabled provenance", createWorktree: true, config: DEFAULT_CONFIG });
+  const paths = await getGuardianPaths(repo);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.session.provenance, undefined);
+  assert.equal(result.session.lineage_id, undefined);
+  assert.equal(result.session.provenance_status, undefined);
+  assert.equal(result.session.quarantine_eligible, undefined);
+  await assert.rejects(() => fs.access(paths.provenanceDir), { code: "ENOENT" });
+  await assert.rejects(() => fs.access(paths.quarantineDir), { code: "ENOENT" });
+  await assert.rejects(() => fs.access(paths.journalDir), { code: "ENOENT" });
+});
+
+test("guardian_start captures one immutable provenance manifest and verifies it on re-entry", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+
+  const first = await startGuardianSession({ repoRoot: repo, cwd: repo, sessionId: "ses_captured_provenance", taskName: "captured provenance", createWorktree: true, config: quarantineConfig });
+  const session = requireRecord(first.session, "first.session");
+  const lineageId = requireString(session.lineage_id, "session.lineage_id");
+  const reference = requireManifest(session);
+  const paths = await getGuardianPaths(repo);
+  const manifestPath = path.join(paths.dir, reference.relativePath);
+  const before = await fs.readFile(manifestPath, "utf8");
+
+  const reentered = await startGuardianSession({ repoRoot: repo, cwd: first.session.worktree_path, sessionId: "ses_captured_provenance", taskName: "captured provenance", config: quarantineConfig });
+  const record = await readProvenanceManifest({ repoRoot: repo, worktreePath: first.session.worktree_path, sessionId: "ses_captured_provenance", lineageId, reference });
+
+  assert.equal(first.ok, true);
+  assert.equal(session.provenance_status, "captured");
+  assert.equal(session.quarantine_eligible, true);
+  assert.equal(reentered.ok, true);
+  assert.equal(reentered.existing, true);
+  assert.deepEqual(requireManifest(requireRecord(reentered.session, "reentered.session")), reference);
+  assert.equal(await fs.readFile(manifestPath, "utf8"), before);
+  assert.equal(record.worktreePath, await fs.realpath(first.session.worktree_path));
+  assert.equal(record.lineageId, lineageId);
+});
+
+test("guardian_start blocks re-entry when an eligible manifest no longer verifies", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const started = await startGuardianSession({ repoRoot: repo, cwd: repo, sessionId: "ses_manifest_drift", taskName: "manifest drift", createWorktree: true, config: quarantineConfig });
+  const reference = requireManifest(requireRecord(started.session, "started.session"));
+  const paths = await getGuardianPaths(repo);
+  await fs.appendFile(path.join(paths.dir, reference.relativePath), "changed\n");
+
+  const result = await startGuardianSession({ repoRoot: repo, cwd: started.session.worktree_path, sessionId: "ses_manifest_drift", config: quarantineConfig });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, "blocked");
+  assert.match(String(result.reason), /provenance|manifest|digest/i);
+});
+
+test("guardian_start loads a legacy active session without retroactive provenance", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const legacy = await startGuardianSession({ repoRoot: repo, cwd: repo, sessionId: "ses_legacy_lineage", taskName: "legacy lineage", createWorktree: true, config: DEFAULT_CONFIG });
+
+  const result = await startGuardianSession({ repoRoot: repo, cwd: legacy.session.worktree_path, sessionId: "ses_legacy_lineage", config: quarantineConfig });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.existing, true);
+  assert.equal(result.session.provenance, undefined);
+  assert.equal(result.session.provenance_status, undefined);
+  assert.equal(result.session.quarantine_eligible, undefined);
+});
+
+test("guardian_start records recoverable ownership when provenance capture fails after worktree creation", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const paths = await getGuardianPaths(repo);
+  const external = path.join(base, "external-provenance");
+  await fs.mkdir(paths.dir, { recursive: true });
+  await fs.mkdir(external, { recursive: true });
+  await fs.symlink(external, paths.provenanceDir, "dir");
+
+  const result = await startGuardianSession({ repoRoot: repo, cwd: repo, sessionId: "ses_capture_failed", taskName: "capture failed", createWorktree: true, config: quarantineConfig });
+  const state = await readState(paths, { repoRoot: repo, config: quarantineConfig });
+  const session = requireRecord(state.sessions.ses_capture_failed, "capture-failed session");
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, "blocked");
+  assert.match(String(result.reason), /provenance/i);
+  assert.equal(session.status, "active");
+  assert.equal(session.provenance_status, "capture-failed");
+  assert.equal(session.quarantine_eligible, false);
+  assert.equal(session.provenance, undefined);
+  await fs.access(requireString(session.worktree_path, "session.worktree_path"));
+
+  const reentered = await startGuardianSession({ repoRoot: repo, cwd: requireString(session.worktree_path, "session.worktree_path"), sessionId: "ses_capture_failed", config: quarantineConfig });
+  assert.equal(reentered.ok, false);
+  assert.equal(reentered.status, "blocked");
+  assert.equal(reentered.session.provenance_status, "capture-failed");
+  assert.equal(reentered.session.provenance, undefined);
+});
+
+test("guardian_start makes repair and supersession bindings ineligible without reusing a baseline", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const first = await startGuardianSession({ repoRoot: repo, cwd: repo, sessionId: "ses_lineage_original", taskName: "lineage original", createWorktree: true, config: quarantineConfig });
+  const originalReference = requireManifest(requireRecord(first.session, "first.session"));
+  const superseding = await startGuardianSession({ repoRoot: repo, cwd: first.session.worktree_path, sessionId: "ses_lineage_superseding", taskName: "lineage superseding", config: quarantineConfig });
+  const afterSupersession = await readState(await getGuardianPaths(repo), { repoRoot: repo, config: quarantineConfig });
+
+  assert.equal(superseding.ok, true);
+  assert.equal(superseding.session.provenance_status, "ineligible");
+  assert.equal(superseding.session.quarantine_eligible, false);
+  assert.equal(superseding.session.provenance, undefined);
+  assert.equal(afterSupersession.sessions.ses_lineage_original?.status, "superseded");
+  assert.equal(afterSupersession.sessions.ses_lineage_original?.quarantine_eligible, false);
+
+  await git(repo, ["worktree", "remove", first.session.worktree_path]);
+  const repaired = await startGuardianSession({ repoRoot: repo, cwd: repo, sessionId: "ses_lineage_superseding", taskName: "lineage repaired", branch: "guardian/lineage-repaired", createWorktree: true, config: quarantineConfig });
+
+  assert.equal(repaired.ok, true);
+  assert.equal(repaired.repaired, true);
+  assert.equal(repaired.session.provenance_status, "ineligible");
+  assert.equal(repaired.session.quarantine_eligible, false);
+  assert.equal(repaired.session.provenance, undefined);
+  assert.notDeepEqual(repaired.session.provenance, { manifest: originalReference });
+});
+
+test("guardian_start clears captured eligibility when repair or supersession runs with opt-in disabled", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const repairedOriginal = await startGuardianSession({ repoRoot: repo, cwd: repo, sessionId: "ses_disabled_repair_original", taskName: "disabled repair original", createWorktree: true, config: quarantineConfig });
+  const repairedReference = requireManifest(requireRecord(repairedOriginal.session, "repairedOriginal.session"));
+  const paths = await getGuardianPaths(repo);
+  const repairedManifestPath = path.join(paths.dir, repairedReference.relativePath);
+  const repairedManifest = await fs.readFile(repairedManifestPath, "utf8");
+  await git(repo, ["worktree", "remove", repairedOriginal.session.worktree_path]);
+
+  const repaired = await startGuardianSession({ repoRoot: repo, cwd: repo, sessionId: "ses_disabled_repair_original", taskName: "disabled repair", branch: "guardian/disabled-repair", createWorktree: true, config: DEFAULT_CONFIG });
+
+  assert.equal(repaired.ok, true);
+  assert.equal(repaired.session.provenance, undefined);
+  assert.equal(repaired.session.lineage_id, undefined);
+  assert.equal(repaired.session.provenance_status, undefined);
+  assert.equal(repaired.session.quarantine_eligible, undefined);
+  assert.equal(await fs.readFile(repairedManifestPath, "utf8"), repairedManifest);
+
+  const supersededOriginal = await startGuardianSession({ repoRoot: repo, cwd: repo, sessionId: "ses_disabled_superseded_original", taskName: "disabled superseded original", branch: "guardian/disabled-superseded-original", createWorktree: true, config: quarantineConfig });
+  const superseding = await startGuardianSession({ repoRoot: repo, cwd: supersededOriginal.session.worktree_path, sessionId: "ses_disabled_superseding", config: DEFAULT_CONFIG });
+  const state = await readState(paths, { repoRoot: repo, config: DEFAULT_CONFIG });
+
+  assert.equal(superseding.ok, true);
+  assert.equal(superseding.session.provenance, undefined);
+  assert.equal(superseding.session.provenance_status, undefined);
+  assert.equal(state.sessions.ses_disabled_superseded_original?.status, "superseded");
+  assert.equal(state.sessions.ses_disabled_superseded_original?.provenance, undefined);
+  assert.equal(state.sessions.ses_disabled_superseded_original?.lineage_id, undefined);
+  assert.equal(state.sessions.ses_disabled_superseded_original?.provenance_status, undefined);
+  assert.equal(state.sessions.ses_disabled_superseded_original?.quarantine_eligible, undefined);
 });
 
 test("guardian_start rejects a symlink spelling of the primary worktree", { skip: process.platform === "win32" }, async () => {
@@ -229,12 +416,12 @@ test("guardian_done reattach apply requires confirmation", async (t) => {
 test("guardian_done reattach apply records and finishes after confirmation", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
-  const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_done_reattach_apply_original", taskName: "reattach apply", createWorktree: true, config: DEFAULT_CONFIG });
+  const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_done_reattach_apply_original", taskName: "reattach apply", createWorktree: true, config: quarantineConfig });
   await fs.writeFile(path.join(started.session.worktree_path, "reattach-apply.txt"), "reattach apply\n");
   await git(started.session.worktree_path, ["add", "reattach-apply.txt"]);
   await git(started.session.worktree_path, ["commit", "-m", "add reattach apply work"]);
 
-  const result = asDone(await guardianDone({ repoRoot: repo, cwd: started.session.worktree_path, sessionId: "ses_done_reattach_apply_new", mode: "apply", confirm: true, timestamp: "20260609T032323" }));
+  const result = asDone(await guardianDone({ repoRoot: repo, cwd: started.session.worktree_path, sessionId: "ses_done_reattach_apply_new", mode: "apply", confirm: true, timestamp: "20260609T032323", config: quarantineConfig }));
 
   assert.equal(result.ok, true);
   assert.equal(result.lane, "session-finish");
@@ -242,9 +429,13 @@ test("guardian_done reattach apply records and finishes after confirmation", asy
   assert.equal(result.reattached, true);
   assert.equal(result.preflight?.sessionId, "ses_done_reattach_apply_new");
   assert.equal(result.preflight?.currentWorktree, started.session.worktree_path);
-  const status = await guardianStatus({ repoRoot: repo, config: DEFAULT_CONFIG });
+  const status = await guardianStatus({ repoRoot: repo, config: quarantineConfig });
   assert.equal(status.terminalSessions.some((session: Record<string, unknown>) => session.session_id === "ses_done_reattach_apply_new" && session.status === "preserved"), true);
   assert.equal(status.terminalSessions.some((session: Record<string, unknown>) => session.session_id === "ses_done_reattach_apply_original" && session.status === "superseded"), true);
+  const reattached = status.terminalSessions.find((session: Record<string, unknown>) => session.session_id === "ses_done_reattach_apply_new");
+  assert.equal(reattached?.provenance_status, "ineligible");
+  assert.equal(reattached?.quarantine_eligible, false);
+  assert.equal(reattached?.provenance, undefined);
   assert.equal(status.safetyRefs.length, 1);
 });
 

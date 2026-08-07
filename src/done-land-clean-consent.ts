@@ -1,11 +1,8 @@
 import crypto from "node:crypto";
-import { collectIgnoredFileFingerprint } from "./deletion-fingerprint.ts";
 import type { DeletionFingerprintEntry } from "./deletion-fingerprint.ts";
-import { buildDirtySessionCommitCandidate } from "./done-land-clean-commit.ts";
-import type { DirtySessionCommitCandidate } from "./done-land-clean-commit.ts";
-import { dirtySnapshot } from "./done-primary-snapshot.ts";
+import { buildDirtySessionDoneIntentFromInspection, DoneIntentBuildError, inspectDirtySessionDoneIntent } from "./done-intent.ts";
 import type { DirtySnapshot } from "./done-primary-snapshot.ts";
-import { buildSafetyRef, fetchRemote, getCurrentBranch, getHeadCommit, getIgnoredFiles, getRefCommit, getSymbolicRefTarget, listStashes, remoteTrackingRef, runGit, tryGit, withGitArtifactSandbox } from "./git.ts";
+import { buildSafetyRef, fetchRemote, getCurrentBranch, getHeadCommit, getRefCommit, getSymbolicRefTarget, listStashes, remoteTrackingRef, runGit, tryGit } from "./git.ts";
 import type { GitStashEntry } from "./git.ts";
 import { configuredRemoteAuthority } from "./git-authority.ts";
 import { dirtyCommitPolicyBlocker } from "./state-dirty-commit-reservation.ts";
@@ -126,8 +123,17 @@ export async function sessionLandCleanPreflight(context: SessionLandCleanPreflig
   if (liveBranch !== branch) return { ok: false, status: "blocked", reason: "live worktree branch mismatch", sessionId: context.sessionId, branch, liveBranch };
   const worktreePath = typeof context.session.worktree_path === "string" ? context.session.worktree_path : context.cwd;
   const head = await getHeadCommit(context.cwd);
-  const snapshot = await dirtySnapshot(context.cwd, undefined, { optionalLocksDisabled: true });
-  const dirtyFiles = snapshot.paths;
+  let inspection;
+  try {
+    inspection = await inspectDirtySessionDoneIntent({ cwd: context.cwd, worktreePath });
+  } catch (error) {
+    if (error instanceof DoneIntentBuildError) {
+      return { ok: false, status: "blocked", reason: "remote base ref could not be fetched or resolved", sessionId: context.sessionId, remote, baseBranch, baseRef, error: error.message };
+    }
+    throw error;
+  }
+  const snapshot = inspection.snapshot;
+  const dirtyFiles = inspection.commitPaths;
   if (dirtyFiles.length > 0) {
     let policyBlocker: string | null;
     try {
@@ -137,24 +143,27 @@ export async function sessionLandCleanPreflight(context: SessionLandCleanPreflig
     }
     if (policyBlocker) return { ok: false, status: "blocked", reason: policyBlocker, sessionId: context.sessionId, branch };
   }
+  // Only build the candidate tree (which stages and hashes dirty file content, invoking any
+  // configured clean filter) after the commit-policy check above has already approved proceeding.
+  let intent;
+  try {
+    intent = await buildDirtySessionDoneIntentFromInspection({ cwd: context.cwd, inspection });
+  } catch (error) {
+    if (error instanceof DoneIntentBuildError) {
+      return { ok: false, status: "blocked", reason: "commit candidate tree could not be resolved", sessionId: context.sessionId, error: error.message };
+    }
+    throw error;
+  }
   const stashes = await listStashes(context.repoRoot);
   try {
-    const ignoredFiles = await getIgnoredFiles(worktreePath, { optionalLocksDisabled: true });
-    const ignoredFingerprint = await collectIgnoredFileFingerprint(worktreePath, ignoredFiles);
-    if (ignoredFiles.length > 0 && context.input.allowIgnoredFiles !== true) {
-      return { ok: false, status: "blocked", reason: "worktree has ignored files", sessionId: context.sessionId, branch, ignoredFiles, ignoredFileFingerprint: ignoredFingerprint };
-    }
-    let commitCandidate: DirtySessionCommitCandidate;
-    try {
-      commitCandidate = await withGitArtifactSandbox(context.cwd, async (artifactSandbox) => buildDirtySessionCommitCandidate(context.cwd, dirtyFiles, { artifactSandbox }));
-    } catch (error) {
-      return { ok: false, status: "blocked", reason: "commit candidate tree could not be resolved", sessionId: context.sessionId, error: error instanceof Error ? error.message : String(error) };
+    if (intent.ignoredFiles.length > 0 && context.input.allowIgnoredFiles !== true) {
+      return { ok: false, status: "blocked", reason: "worktree has ignored files", sessionId: context.sessionId, branch, ignoredFiles: intent.ignoredFiles, ignoredFileFingerprint: intent.ignoredFileFingerprint };
     }
     if (options.refreshRemote !== false) await fetchRemote(context.repoRoot, remote);
     const baseRefOid = await getRefCommit(context.repoRoot, baseAuthorityRef);
     const remoteBranch = await tryGit(context.repoRoot, ["rev-parse", "--verify", `${remoteBranchRef}^{commit}`]);
     const stamp = context.input.timestamp ?? context.session.created_at ?? context.sessionId;
-    return { ok: true, branch, worktreePath, head, dirtyFiles, snapshot, stashCount: stashes.length, stashes, remote, baseBranch, baseRef, baseRefOid, remoteBranchOid: remoteBranch.ok ? remoteBranch.stdout : null, safetyRef: buildSafetyRef(context.sessionId, `commit/${branch}`, stamp), ignoredFiles, ignoredFileFingerprint: ignoredFingerprint, ...commitCandidate };
+    return { ok: true, branch, worktreePath, head, dirtyFiles, snapshot, stashCount: stashes.length, stashes, remote, baseBranch, baseRef, baseRefOid, remoteBranchOid: remoteBranch.ok ? remoteBranch.stdout : null, safetyRef: buildSafetyRef(context.sessionId, `commit/${branch}`, stamp), ignoredFiles: intent.ignoredFiles, ignoredFileFingerprint: intent.ignoredFileFingerprint, sourceIndexTree: intent.sourceIndexTree, candidateTree: intent.candidateTree };
   } catch (error) {
     return { ok: false, status: "blocked", reason: "remote base ref could not be fetched or resolved", sessionId: context.sessionId, remote, baseBranch, baseRef, error: error instanceof Error ? error.message : String(error) };
   }

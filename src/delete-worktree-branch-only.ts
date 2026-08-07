@@ -126,7 +126,13 @@ async function applyBranchOnlyDeletion(config: Record<string, unknown>, prefligh
 async function recordBranchOnlyDeletionFailure(repoRoot: string, config: Record<string, unknown>, preflight: Record<string, unknown>, session: GuardianSession | undefined, targetKind: BranchOnlyTargetKind, branch: string, head: string, safetyRef: string, abandonUnmerged: boolean, error: unknown) {
   const branchDeleteError = errorMessage(error);
   if (session?.session_id) {
-    await recordSession(repoRoot, config, { ...session, session_id: session.session_id, head_commit: head, safety_refs: sessionSafetyRefs(session, safetyRef), branch_delete_failed: true, branch_delete_error: branchDeleteError, abandon_unmerged: preflight.ancestryProven === false && abandonUnmerged, unmerged_commits: preflight.ancestryProven === false && abandonUnmerged ? preflight.unmergedCommits : undefined }, { event: { type: "guardian_delete_branch_only_failed", session_id: session.session_id, ref: safetyRef } });
+    try {
+      await recordSession(repoRoot, config, { ...session, session_id: session.session_id, head_commit: head, safety_refs: sessionSafetyRefs(session, safetyRef), branch_delete_failed: true, branch_delete_error: branchDeleteError, abandon_unmerged: preflight.ancestryProven === false && abandonUnmerged, unmerged_commits: preflight.ancestryProven === false && abandonUnmerged ? preflight.unmergedCommits : undefined }, { event: { type: "guardian_delete_branch_only_failed", session_id: session.session_id, ref: safetyRef } });
+    } catch (recordError) {
+      // The branch deletion itself already failed for the caller-visible reason returned below;
+      // failing to persist that as session audit state must not mask it behind an uncaught crash.
+      if (!(recordError instanceof Error)) throw recordError;
+    }
   }
   const actionPrefix = targetKind === "stale-branch" ? "stale-branch" : targetKind === "merged-branch" ? "merged-branch" : "orphan-branch";
   return withDeleteReport({ ok: false, status: "blocked", reason: "branch deletion failed", targetPath: session?.worktree_path ?? null, branch, head, safetyRef, branchDeleted: false, worktreeRemoved: false, error: branchDeleteError }, preflight, { action: `${actionPrefix}-delete-failed`, worktreeRemoved: false, branchDeleteError });

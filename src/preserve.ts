@@ -1,5 +1,6 @@
 import { buildPreservedRef, createRef, getCurrentBranch, getHeadCommit, getRepoRoot } from "./git.ts";
 import { recordSession } from "./state.ts";
+import { ineligibleSessionProvenance } from "./session-provenance.ts";
 import type { GuardianToolInput, GuardianToolResult } from "./types.ts";
 import { configFromInput, sessionIdFromInput } from "./session/context.ts";
 import { protectedBranchReason } from "./session/worktree-binding.ts";
@@ -10,6 +11,7 @@ export async function guardianPreserve(input: GuardianToolInput = {}): Promise<G
   const repoRoot = typeof input.repoRoot === "string" ? input.repoRoot : await getRepoRoot(cwd);
   const config = await configFromInput(input, repoRoot);
   let sessionId = sessionIdFromInput(input);
+  const recovered = !sessionId;
 
   const worktreePath = await getRepoRoot(cwd);
   const branch = await getCurrentBranch(worktreePath);
@@ -36,6 +38,7 @@ export async function guardianPreserve(input: GuardianToolInput = {}): Promise<G
     base_ref: `${config.remote}/${config.baseBranch}`,
     head_commit: headCommit,
     safety_refs: [preservedRef],
+    ...(recovered ? ineligibleSessionProvenance(config) : {}),
   }, { event: { type: "guardian_preserve", session_id: sessionId, ref: preservedRef } });
   return { ok: true, status: "preserved", session: recordedState.sessions[sessionId], preservedRef };
 }
