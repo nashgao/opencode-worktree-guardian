@@ -26,13 +26,18 @@ export async function planAlreadyLandedCleanup(context: LandCleanContext, prefli
     config: context.config,
   });
   if (cleanup.ok !== true || typeof cleanup.confirmToken !== "string") {
-    return blocked("already-landed dirty session work could not be proven redundant; commitMessage is required to preserve it", {
+    const childCleanupReason = typeof cleanup.reason === "string" ? cleanup.reason : undefined;
+    const reason = preflight.dirtyFiles.length > 0
+      ? "already-landed dirty session work could not be proven redundant; commitMessage is required to preserve it"
+      : childCleanupReason ?? "already-landed session cleanup could not be planned";
+    return blocked(reason, {
       branch: preflight.branch,
       worktreePath: preflight.worktreePath,
       dirtyFiles: preflight.dirtyFiles,
       ...stashInventory(preflight),
       baseRef,
       cleanup,
+      ...(childCleanupReason ? { childCleanupReason } : {}),
     });
   }
   const confirmToken = createSessionLandCleanConfirmToken({ action: "already-landed-clean", context, preflight, commitMessage: "" });

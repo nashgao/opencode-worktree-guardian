@@ -150,6 +150,17 @@ export async function finishMergeToBase({ input, repoRoot, config, session, sess
   preflight.baseWorktreeSafetyRefs = [...baseWorktreeSafetyRefs];
 
   try {
+    const baseLineage = await observeFreshFinishBaseLineage(repoRoot, config, commit);
+    recordFinishBaseLineage(preflight, baseLineage);
+    if (!baseLineage.baseIsAncestorOfHead) {
+      return blocked("fresh remote base is not an ancestor of the session commit", { safetyRef, commit, baseRefOid: baseLineage.baseRefOid, baseAuthorityRef: baseLineage.baseAuthorityRef }, preflight);
+    }
+  } catch (error) {
+    if (!(error instanceof Error)) throw error;
+    return blocked("remote base ref could not be fetched or resolved", { safetyRef, commit, error: errorMessage(error) }, preflight);
+  }
+
+  try {
     validateGitRef(branch);
     await runGit(repoRoot, ["merge", "--ff-only", branch]);
   } catch (error) {

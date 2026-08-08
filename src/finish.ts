@@ -222,6 +222,11 @@ export async function guardianFinish(input: LooseRecord = {}): Promise<GuardianF
       if (!baseLineage.baseIsAncestorOfHead) {
         return blocked("fresh remote base is not an ancestor of the session commit", { safetyRef, commit, baseRefOid: baseLineage.baseRefOid, baseAuthorityRef: baseLineage.baseAuthorityRef }, preflight);
       }
+    } catch (error) {
+      if (!(error instanceof Error)) throw error;
+      return blocked("remote base ref could not be fetched or resolved", { safetyRef, commit, error: errorMessage(error) }, preflight);
+    }
+    try {
       await pushBranchNormally(currentWorktree, config.remote, branch, commit);
     } catch (error) {
       if (!(error instanceof Error)) throw error;
