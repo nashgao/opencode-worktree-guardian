@@ -4,6 +4,8 @@ All notable public-surface changes are tracked here.
 
 ## Unreleased
 
+## 1.0.0 - 2026-08-08
+
 ### Added
 
 - `guardian_status` now reports proactive distance from the locally cached base ref, making stale-base risk visible before a finish workflow begins.
