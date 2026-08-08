@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import type { DeletionFingerprintEntry } from "./deletion-fingerprint.ts";
 import { buildDirtySessionDoneIntentFromInspection, DoneIntentBuildError, inspectDirtySessionDoneIntent } from "./done-intent.ts";
 import type { DirtySnapshot } from "./done-primary-snapshot.ts";
+import { observeBaseLineage } from "./base-lineage.ts";
 import { buildSafetyRef, fetchRemote, getCurrentBranch, getHeadCommit, getRefCommit, getSymbolicRefTarget, listStashes, remoteTrackingRef, runGit, tryGit } from "./git.ts";
 import type { GitStashEntry } from "./git.ts";
 import { configuredRemoteAuthority } from "./git-authority.ts";
@@ -24,6 +25,8 @@ type SessionLandCleanTokenPreflight = {
   readonly baseBranch: string;
   readonly baseRef: string;
   readonly baseRefOid: string;
+  readonly baseIsAncestorOfHead: boolean;
+  readonly headIsAncestorOfBase: boolean;
   readonly remoteBranchOid: string | null;
   readonly safetyRef: string;
   readonly ignoredFiles: readonly string[];
@@ -54,6 +57,8 @@ export type LandCleanPreflight =
        readonly baseBranch: string;
        readonly baseRef: string;
        readonly baseRefOid: string;
+       readonly baseIsAncestorOfHead: boolean;
+       readonly headIsAncestorOfBase: boolean;
        readonly remoteBranchOid: string | null;
        readonly safetyRef: string;
        readonly ignoredFiles: readonly string[];
@@ -161,9 +166,10 @@ export async function sessionLandCleanPreflight(context: SessionLandCleanPreflig
     }
     if (options.refreshRemote !== false) await fetchRemote(context.repoRoot, remote);
     const baseRefOid = await getRefCommit(context.repoRoot, baseAuthorityRef);
+    const baseLineage = await observeBaseLineage(context.repoRoot, baseRefOid, head);
     const remoteBranch = await tryGit(context.repoRoot, ["rev-parse", "--verify", `${remoteBranchRef}^{commit}`]);
     const stamp = context.input.timestamp ?? context.session.created_at ?? context.sessionId;
-    return { ok: true, branch, worktreePath, head, dirtyFiles, snapshot, stashCount: stashes.length, stashes, remote, baseBranch, baseRef, baseRefOid, remoteBranchOid: remoteBranch.ok ? remoteBranch.stdout : null, safetyRef: buildSafetyRef(context.sessionId, `commit/${branch}`, stamp), ignoredFiles: intent.ignoredFiles, ignoredFileFingerprint: intent.ignoredFileFingerprint, sourceIndexTree: intent.sourceIndexTree, candidateTree: intent.candidateTree };
+    return { ok: true, branch, worktreePath, head, dirtyFiles, snapshot, stashCount: stashes.length, stashes, remote, baseBranch, baseRef, baseRefOid, baseIsAncestorOfHead: baseLineage.baseIsAncestorOfHead, headIsAncestorOfBase: baseLineage.headIsAncestorOfBase, remoteBranchOid: remoteBranch.ok ? remoteBranch.stdout : null, safetyRef: buildSafetyRef(context.sessionId, `commit/${branch}`, stamp), ignoredFiles: intent.ignoredFiles, ignoredFileFingerprint: intent.ignoredFileFingerprint, sourceIndexTree: intent.sourceIndexTree, candidateTree: intent.candidateTree };
   } catch (error) {
     return { ok: false, status: "blocked", reason: "remote base ref could not be fetched or resolved", sessionId: context.sessionId, remote, baseBranch, baseRef, error: error instanceof Error ? error.message : String(error) };
   }

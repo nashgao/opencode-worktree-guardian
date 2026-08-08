@@ -1,4 +1,4 @@
-import { getBranchUpstream } from "./git.ts";
+import { getBranchUpstream, tryGitReadOnly, validateGitRef } from "./git.ts";
 import { configuredRemoteAuthority, resolveRemoteAuthority } from "./git-authority.ts";
 
 export type BaseRefResolution = {
@@ -11,11 +11,10 @@ export type BaseRefResolution = {
   readonly source: "upstream" | "config";
 };
 
-export async function resolveBaseRef(repoRoot: string, config: Record<string, unknown>): Promise<BaseRefResolution> {
+function resolveBaseRefFromUpstream(config: Record<string, unknown>, upstream: string | null): BaseRefResolution {
   const localBaseBranch = String(config.baseBranch);
   const configured = configuredRemoteAuthority(config);
   const configuredBaseRef = configured.displayRef;
-  const upstream = await getBranchUpstream(repoRoot, localBaseBranch);
   if (upstream) {
     const authority = resolveRemoteAuthority(upstream, config);
     return {
@@ -37,6 +36,23 @@ export async function resolveBaseRef(repoRoot: string, config: Record<string, un
     configuredBaseRef,
     source: "config",
   };
+}
+
+export async function resolveBaseRef(repoRoot: string, config: Record<string, unknown>): Promise<BaseRefResolution> {
+  configuredRemoteAuthority(config);
+  return resolveBaseRefFromUpstream(config, await getBranchUpstream(repoRoot, String(config.baseBranch)));
+}
+
+export async function resolveBaseRefReadOnly(repoRoot: string, config: Record<string, unknown>): Promise<BaseRefResolution> {
+  const localBaseBranch = String(config.baseBranch);
+  configuredRemoteAuthority(config);
+  validateGitRef(localBaseBranch);
+  const upstreamResult = await tryGitReadOnly(
+    { cwd: repoRoot, gitDir: null, workTree: null, configs: [] },
+    ["rev-parse", "--abbrev-ref", "--symbolic-full-name", `${localBaseBranch}@{upstream}`],
+  );
+  const upstream = upstreamResult.ok && upstreamResult.stdout ? upstreamResult.stdout : null;
+  return resolveBaseRefFromUpstream(config, upstream);
 }
 
 export function configForResolvedBase<T extends Record<string, unknown>>(config: T, resolved: BaseRefResolution): T {

@@ -100,6 +100,19 @@ Protected branches include the configured `protectedBranches`, with defaults inc
 
 When config context is available, Guardian classifies manual bypasses such as pushing `HEAD` or `guardian/*` directly to a protected branch, and merging `guardian/*` while already on a protected branch. These classifications are audited by default and block only when `commandInterceptionMode` is `strict`. Normal Guardian work must finish through `guardian_done` or the lower-level finish tools. A command wrapper must not ask the agent to bypass this policy with raw push, merge, switch, or branch commands.
 
+## Base Freshness And Git Host Protection
+
+Guardian has a mandatory local freshness invariant for every transition that relies on a base-branch proof. Immediately before its own handoff, Guardian fetches and resolves the authoritative effective base for that operation, then revalidates the feature branch against it. The effective authority is normally the configured remote/base, but cleanup-only flows may use a trusted tracked upstream that supplies the base ref. Guardian blocks stale, divergent, or unverifiable state at that final observation. A locally observed base, a cached remote-tracking ref, or a prior plan is not enough to authorize the transition.
+
+`guardian_status` is different: it is a read-only inventory surface that reports drift from locally cached Git information and does not fetch. Its drift report is useful evidence, but it is not current remote-base proof and cannot authorize finish, land, or cleanup.
+
+Guardian's local revalidation is within the cooperative boundary and cannot atomically prevent a base advance after its final observation. Git-host branch protection is therefore the necessary concurrent-writer backstop, complementary to rather than a replacement for Guardian's local gate. Administrators should independently configure the repository's host controls:
+
+- On GitHub, protect the base branch and require status checks configured as strict or up to date before merge, or use a merge queue. See [Require status checks before merging](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches#require-status-checks-before-merging), [Update branch protection](https://docs.github.com/rest/branches/branch-protection#update-branch-protection), and [Managing a merge queue](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/managing-a-merge-queue).
+- On GitLab, choose fast-forward or semi-linear merge behavior and use merged results pipelines or merge trains as appropriate. GitLab has no identical strict-status-check switch. See [Merge methods](https://docs.gitlab.com/user/project/merge_requests/methods/), [Merged results pipelines](https://docs.gitlab.com/ci/pipelines/merged_results_pipelines/), and [Enforce merge trains](https://docs.gitlab.com/ci/pipelines/merge_trains/#enforce-merge-trains).
+
+Guardian does not enable or alter these host settings generically. The correct action depends on the provider, repository identity, available credentials and permissions, subscription tier, and the need to preserve existing repository rules. Host configuration remains an administrator decision.
+
 ## Protected Repo Paths
 
 Repo-local config may declare `protectedPaths`, a hard-deny list of repo-relative file or directory roots. When the field is omitted, Guardian uses its default local agent-state roots. When it is present, the configured list replaces those defaults so the repo has one explicit cleanup authority.

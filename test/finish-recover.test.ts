@@ -480,7 +480,7 @@ test("merge-to-base skips cleanup when allowed dirty files are present", async (
   await git(repo, ["merge-base", "--is-ancestor", requireString(result.commit), "origin/main"]);
 });
 
-test("push-branch finish reports push failures without cleanup", async () => {
+test("push-branch finish blocks when the authoritative base cannot be verified", async () => {
   const repo = await createRepo();
   const config = { ...DEFAULT_CONFIG, finishMode: "push-branch" };
   const { branch } = await makeBranchCommit(repo, "guardian/push-failure");
@@ -489,17 +489,17 @@ test("push-branch finish reports push failures without cleanup", async () => {
   const result = await guardianFinish({ repoRoot: repo, cwd: repo, sessionId: "ses_push_failure", config, timestamp: "20260513T130000" });
   assert.equal(result.ok, false);
   assert.equal(result.status, "blocked");
-  assert.match(requireString(result.reason), /push failed/i);
-  assert.match(requireString(result.safetyRef), /^refs\/opencode-guardian\/ses_push_failure\/guardian\/push-failure\//);
-  assert.equal(result.preflight.safetyRef, result.safetyRef);
-  assert.equal(result.report.safetyRef, result.safetyRef);
+  assert.match(requireString(result.reason), /base ref could not be fetched or resolved/i);
+  assert.equal(result.safetyRef, undefined);
+  assert.equal(result.preflight.safetyRef, null);
+  assert.equal(result.report.safetyRef, null);
   assert.equal(result.report.action, "blocked");
 
   const status = await guardianStatus({ repoRoot: repo, config });
   const session = findSession(status.sessions, "ses_push_failure");
   assert.equal(session.status, "active");
-  assert.deepEqual(session.safety_refs, [result.safetyRef]);
-  assert.equal(status.safetyRefs.length, 1);
+  assert.deepEqual(session.safety_refs, []);
+  assert.equal(status.safetyRefs.length, 0);
   assert.equal(status.worktrees.some((worktree: LooseRecord) => worktree.path === repo), true);
 });
 
