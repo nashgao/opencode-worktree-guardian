@@ -83,6 +83,18 @@ function externalWorktreeFailCount(status: LooseRecord): number {
     }).length;
 }
 
+function baseDistanceCount(status: LooseRecord, relation: string): number {
+  return arrayValue(status.activeSessionBaseDistances)
+    .map(recordValue)
+    .filter((distance) => textValue(distance.status) === "available" && textValue(distance.relation) === relation).length;
+}
+
+function unavailableBaseDistanceCount(status: LooseRecord): number {
+  return arrayValue(status.activeSessionBaseDistances)
+    .map(recordValue)
+    .filter((distance) => textValue(distance.status) === "unavailable").length;
+}
+
 function collectSignals(status: LooseRecord): VerdictSignal[] {
   const signals: VerdictSignal[] = [];
 
@@ -101,6 +113,9 @@ function collectSignals(status: LooseRecord): VerdictSignal[] {
   const dirty = arrayValue(status.dirtyFiles).length;
   const stashes = arrayValue(status.stashes).length;
   const strandedBranches = arrayValue(status.stateBranchesWithoutWorktrees).length;
+  const behind = baseDistanceCount(status, "behind");
+  const diverged = baseDistanceCount(status, "diverged");
+  const unavailableBaseDistance = unavailableBaseDistanceCount(status);
 
   if (orphaned > 0) {
     signals.push({ tone: "bad", fragment: `${orphaned} orphaned session${plural(orphaned)} (worktree missing)`, nextAction: "guardian_recover, then guardian_delete_worktree" });
@@ -110,6 +125,15 @@ function collectSignals(status: LooseRecord): VerdictSignal[] {
   }
   if (externalFail > 0) {
     signals.push({ tone: "bad", fragment: `${externalFail} worktree${plural(externalFail)} outside Guardian ownership`, nextAction: "guardian_status for paths, then guardian_delete_worktree if intended" });
+  }
+  if (diverged > 0) {
+    signals.push({ tone: "bad", fragment: `${diverged} active session${plural(diverged)} diverged from the cached base`, nextAction: "rebase or merge the cached base before guardian_finish" });
+  }
+  if (behind > 0) {
+    signals.push({ tone: "warn", fragment: `${behind} active session${plural(behind)} stale behind the cached base`, nextAction: "update the session from the cached base before guardian_finish" });
+  }
+  if (unavailableBaseDistance > 0) {
+    signals.push({ tone: "warn", fragment: `${unavailableBaseDistance} active session base distance${plural(unavailableBaseDistance)} unavailable`, nextAction: "guardian_status after restoring the local base authority" });
   }
   if (hygieneScanFailed) {
     signals.push({ tone: "warn", fragment: "workspace hygiene scan failed — cleanliness unknown", nextAction: "guardian_hygiene to re-run the scan" });

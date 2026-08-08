@@ -6,6 +6,8 @@ import { getCommonGitDir, getDirtyFiles, getRepoRoot, listBranches, listRecovery
 import type { GitBranchEntry, GitRefEntry, GitStashEntry } from "./git.ts";
 import { scanWorkspaceHygiene } from "./hygiene.ts";
 import { isActiveSession, isTerminalSession } from "./lifecycle.ts";
+import { collectActiveSessionBaseDistances } from "./status-base-distance.ts";
+import type { ActiveSessionBaseDistance, CachedBaseAuthority } from "./status-base-distance.ts";
 import { getGuardianPaths, readState } from "./state.ts";
 import type { GuardianConfig, GuardianSession, GuardianToolInput, GuardianToolResult, LoadedGuardianConfig, WorktreeEntry } from "./types.ts";
 import { errorMessage, isRecordLike } from "./types.ts";
@@ -63,6 +65,8 @@ type GuardianStatusResult = Omit<GuardianToolResult, "activeSessions" | "termina
   readonly stateVersion: number | undefined;
   readonly sessions: readonly GuardianSession[];
   readonly activeSessions: readonly GuardianSession[];
+  readonly baseAuthority: CachedBaseAuthority;
+  readonly activeSessionBaseDistances: readonly ActiveSessionBaseDistance[];
   readonly terminalSessions: readonly GuardianSession[];
   readonly orphanedSessions: readonly GuardianSession[];
   readonly poisonedSessions: readonly PoisonedSession[];
@@ -212,6 +216,7 @@ export async function guardianStatus(input: GuardianToolInput = {}): Promise<Gua
     .filter((worktree) => !sessionWorktreePaths.has(worktree.canonicalPath))
     .map((worktree) => annotateWorktreeWithoutState(worktree.entry, repoRoot, config)));
   const stateBranchesWithoutWorktrees = [...sessionBranches].filter((branch) => !worktrees.some((worktree) => worktree.branch === branch));
+  const baseDistance = await collectActiveSessionBaseDistances(repoRoot, config, activeSessions, worktrees);
 
   return {
     repoRoot,
@@ -222,6 +227,7 @@ export async function guardianStatus(input: GuardianToolInput = {}): Promise<Gua
     stateVersion: state.state_version,
     sessions,
     activeSessions,
+    ...baseDistance,
     terminalSessions,
     orphanedSessions,
     poisonedSessions,

@@ -84,6 +84,16 @@ function configLines(result: Record<string, unknown>) {
   return [];
 }
 
+function baseDistanceLine(result: Record<string, unknown>, session: Record<string, unknown>) {
+  const sessionId = textValue(session.session_id ?? session.sessionId, "(unknown)");
+  const distance = arrayValue(result.activeSessionBaseDistances)
+    .map(recordValue)
+    .find((entry) => textValue(entry.sessionId, "(unknown)") === sessionId);
+  if (!distance) return "Base distance: unavailable (not reported)";
+  if (textValue(distance.status) !== "available") return `Base distance: unavailable (${textValue(distance.reason)})`;
+  return `Base distance: ${textValue(distance.baseRef)} ${shortCommit(distance.baseRefOid)} ahead=${numberValue(distance.ahead)} behind=${numberValue(distance.behind)} relation=${textValue(distance.relation)}`;
+}
+
 export function formatGuardianInitOutput(rawResult: unknown) {
   const result = recordValue(rawResult);
   const status = textValue(result.status, result.ok === false ? "blocked" : "completed");
@@ -131,6 +141,7 @@ export function formatGuardianStatusOutput(name: string, rawResult: unknown) {
     const session = recordValue(entry);
     lines.push(`  ${textValue(session.session_id ?? session.sessionId)} ${textValue(session.status)} ${textValue(session.branch)} ${shortCommit(session.head_commit ?? session.headCommit)}`);
     lines.push(`    ${textValue(session.worktree_path ?? session.worktreePath)}`);
+    lines.push(`    ${baseDistanceLine(result, session)}`);
   }
   const worktrees = arrayValue(result.worktrees);
   lines.push("", "Current Worktrees");

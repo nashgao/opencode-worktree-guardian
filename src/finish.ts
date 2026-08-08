@@ -2,6 +2,7 @@ import path from "node:path";
 import { loadConfig, normalizeConfig } from "./config.ts";
 import { classifyDirtyFiles } from "./finish-dirty-files.ts";
 import { finishMergeToBase } from "./finish-merge-to-base.ts";
+import { observeFreshFinishBaseLineage, recordFinishBaseLineage } from "./finish-base-lineage.ts";
 import { blocked, errorMessage, isFinishStateInput, withFinishReport } from "./finish-report.ts";
 import type { FinishPreflight, GuardianFinishResult, LooseRecord } from "./finish-report.ts";
 import { buildSafetyRef, createOrReuseSafetyRef, createSafetyRef, getCurrentBranch, getDirtyFiles, getHeadCommit, getRepoRoot, listStashes, pushBranchNormally } from "./git.ts";
@@ -59,6 +60,10 @@ export async function guardianFinish(input: LooseRecord = {}): Promise<GuardianF
     safetyRef: null,
     remote: config.remote,
     baseBranch: config.baseBranch,
+    baseAuthorityRef: null,
+    baseRefOid: null,
+    baseIsAncestorOfHead: null,
+    headIsAncestorOfBase: null,
     mode,
     blockers: [],
   };
@@ -161,6 +166,19 @@ export async function guardianFinish(input: LooseRecord = {}): Promise<GuardianF
 
   const commit = await getHeadCommit(currentWorktree);
   preflight.commit = commit;
+  const requiresBaseFreshness = mode === "push-branch" || mode === "create-pr" || mode === "merge-to-base";
+  if (requiresBaseFreshness) {
+    try {
+      const baseLineage = await observeFreshFinishBaseLineage(repoRoot, config, commit);
+      recordFinishBaseLineage(preflight, baseLineage);
+      if (!baseLineage.baseIsAncestorOfHead) {
+        return blocked("fresh remote base is not an ancestor of the session commit", { commit, baseRefOid: baseLineage.baseRefOid, baseAuthorityRef: baseLineage.baseAuthorityRef }, preflight);
+      }
+    } catch (error) {
+      if (!(error instanceof Error)) throw error;
+      return blocked("remote base ref could not be fetched or resolved", { commit, error: errorMessage(error) }, preflight);
+    }
+  }
   const existingSafetyRefs = Array.isArray(session.safety_refs) ? session.safety_refs.filter((ref: unknown) => typeof ref === "string") : [];
   const existingSafetyRef = existingSafetyRefs[existingSafetyRefs.length - 1];
   const plannedSafetyRef = buildSafetyRef(sessionId, branch, input.timestamp);
@@ -198,6 +216,16 @@ export async function guardianFinish(input: LooseRecord = {}): Promise<GuardianF
   }
 
   if (mode === "push-branch" || mode === "create-pr") {
+    try {
+      const baseLineage = await observeFreshFinishBaseLineage(repoRoot, config, commit);
+      recordFinishBaseLineage(preflight, baseLineage);
+      if (!baseLineage.baseIsAncestorOfHead) {
+        return blocked("fresh remote base is not an ancestor of the session commit", { safetyRef, commit, baseRefOid: baseLineage.baseRefOid, baseAuthorityRef: baseLineage.baseAuthorityRef }, preflight);
+      }
+    } catch (error) {
+      if (!(error instanceof Error)) throw error;
+      return blocked("remote base ref could not be fetched or resolved", { safetyRef, commit, error: errorMessage(error) }, preflight);
+    }
     try {
       await pushBranchNormally(currentWorktree, config.remote, branch, commit);
     } catch (error) {

@@ -20,7 +20,7 @@ import { buildSafetyRef, createOrReuseSafetyRef, pushBranchWithLease } from "../
 import { guardianStart } from "../src/start.ts";
 
 test("batch token replaces only the authorized base and rejects plan drift", () => {
-  const input = { action: "land-and-clean", context: { input: {}, repoRoot: "/repo", sessionId: "session" }, preflight: { branch: "guardian/session", worktreePath: "/repo/.worktrees/session", head: "head", dirtyFiles: [], snapshot: { entries: [], paths: [], fingerprints: [] }, remote: "origin", baseBranch: "main", baseRef: "origin/main", baseRefOid: "next-base", remoteBranchOid: null, safetyRef: "refs/guardian/session", ignoredFiles: [], ignoredFileFingerprint: [], sourceIndexTree: "index", candidateTree: "candidate" }, commitMessage: "" } as const;
+  const input = { action: "land-and-clean", context: { input: {}, repoRoot: "/repo", sessionId: "session" }, preflight: { branch: "guardian/session", worktreePath: "/repo/.worktrees/session", head: "head", dirtyFiles: [], snapshot: { entries: [], paths: [], fingerprints: [] }, remote: "origin", baseBranch: "main", baseRef: "origin/main", baseRefOid: "next-base", baseIsAncestorOfHead: true, headIsAncestorOfBase: false, remoteBranchOid: null, safetyRef: "refs/guardian/session", ignoredFiles: [], ignoredFileFingerprint: [], sourceIndexTree: "index", candidateTree: "candidate" }, commitMessage: "" } as const;
   const authorization = { kind: "done-all" as const, originalConfirmToken: createSessionLandCleanConfirmToken({ ...input, preflight: { ...input.preflight, baseRefOid: "original-base" } }), originalBaseRefOid: "original-base", authorizedBaseRefOid: "next-base" };
   assert.deepEqual(deriveBatchExecutionToken(input, authorization), { ok: true, token: createSessionLandCleanConfirmToken(input) });
   assert.deepEqual(deriveBatchExecutionToken({ ...input, preflight: { ...input.preflight, head: "drift" } }, authorization), { ok: false, code: "original-token-mismatch" });
@@ -237,14 +237,22 @@ test("guardian_finish rejects an owned retry when its same-OID safety ref is sym
   await git(worktree, ["commit", "-m", "symbolic safety ref retry"]);
   const commit = (await git(worktree, ["rev-parse", "HEAD"])).stdout;
   const timestamp = "20260730T120000";
-  await git(repo, ["remote", "set-url", "origin", path.join(base, "missing-origin")]);
+  const updater = path.join(base, "symbolic-safety-ref-updater");
+  await git(base, ["clone", remote, updater]);
+  await git(updater, ["config", "user.email", "guardian@example.test"]);
+  await git(updater, ["config", "user.name", "Guardian Test"]);
+  await git(updater, ["checkout", "-b", branch]);
+  await fs.writeFile(path.join(updater, "remote-symbolic-safety-ref.txt"), "remote\n");
+  await git(updater, ["add", "remote-symbolic-safety-ref.txt"]);
+  await git(updater, ["commit", "-m", "create divergent remote branch"]);
+  const remoteHead = (await git(updater, ["rev-parse", "HEAD"])).stdout;
+  await git(updater, ["push", "origin", branch]);
   const initial = await guardianFinish({ repoRoot: repo, cwd: worktree, sessionId: started.session.session_id, timestamp });
   assert.equal(initial.ok, false, JSON.stringify(initial));
   if (typeof initial.safetyRef !== "string") throw new Error("blocked finish did not return a safety ref");
   const targetRef = "refs/heads/symbolic-safety-ref-target";
   await git(repo, ["update-ref", targetRef, commit]);
   await git(repo, ["symbolic-ref", initial.safetyRef, targetRef]);
-  await git(repo, ["remote", "set-url", "origin", remote]);
 
   // When
   const retried = await guardianFinish({ repoRoot: repo, cwd: worktree, sessionId: started.session.session_id, timestamp });
@@ -256,7 +264,7 @@ test("guardian_finish rejects an owned retry when its same-OID safety ref is sym
   assert.equal((await git(repo, ["symbolic-ref", "--no-recurse", initial.safetyRef])).stdout, targetRef);
   assert.equal((await git(repo, ["rev-parse", targetRef])).stdout, commit);
   assert.equal((await git(repo, ["rev-parse", `refs/heads/${branch}`])).stdout, commit);
-  await assert.rejects(() => git(remote, ["rev-parse", "--verify", `refs/heads/${branch}`]));
+  assert.equal((await git(remote, ["rev-parse", `refs/heads/${branch}`])).stdout, remoteHead);
 });
 
 test("pushBranchWithLease publishes the approved object and rejects a stale remote head", async (t) => {

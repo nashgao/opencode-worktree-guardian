@@ -137,7 +137,7 @@ test("blocks an absolute missing target whose routed worktree ancestor is a syml
   assert.equal(output.args?.filePath, target);
 });
 
-test("guardian_done previews land-and-clean for recorded session worktrees", async (t) => {
+test("guardian_done previews already-landed cleanup for recorded session worktrees", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
   const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_done_session", taskName: "done session", createWorktree: true, config: DEFAULT_CONFIG });
@@ -147,12 +147,12 @@ test("guardian_done previews land-and-clean for recorded session worktrees", asy
   assert.equal(result.ok, true);
   assert.equal(result.lane, "session-finish");
   assert.equal(result.status, "planned");
-  assert.equal(result.action, "land-and-clean");
+  assert.equal(result.action, "already-landed-clean");
   assert.equal(result.worktreePath, started.session.worktree_path);
   assert.equal(result.nextAction, "guardian_done mode=apply confirm=true");
 });
 
-test("guardian_done previews the active session from primary cwd when primary is clean", async (t) => {
+test("guardian_done previews already-landed cleanup from primary cwd when primary is clean", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
   const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_done_primary_cwd", taskName: "done primary cwd", createWorktree: true, config: DEFAULT_CONFIG });
@@ -162,7 +162,7 @@ test("guardian_done previews the active session from primary cwd when primary is
   assert.equal(result.ok, true);
   assert.equal(result.lane, "session-finish");
   assert.equal(result.status, "planned");
-  assert.equal(result.action, "land-and-clean");
+  assert.equal(result.action, "already-landed-clean");
   assert.equal(result.worktreePath, started.session.worktree_path);
 });
 

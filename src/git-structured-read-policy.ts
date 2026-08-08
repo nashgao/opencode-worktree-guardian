@@ -19,6 +19,15 @@ export function areStructuredConfigsReadOnly(configs: readonly string[]): boolea
 export function isStructuredReadOnlyCommand(args: readonly string[]): boolean {
   if (args[0] === "rev-parse") {
     if (args.length === 2) return args[1] === "--show-toplevel";
+    if (args.length === 4) {
+      const upstream = args[3];
+      return args[1] === "--abbrev-ref"
+        && args[2] === "--symbolic-full-name"
+        && typeof upstream === "string"
+        && !upstream.startsWith("-")
+        && upstream.length > "@{upstream}".length
+        && upstream.endsWith("@{upstream}");
+    }
     if (args.length !== 3) return false;
     if (args[1] === "--path-format=absolute") return args[2] === "--git-common-dir";
     const revision = args[2];
@@ -34,6 +43,20 @@ export function isStructuredReadOnlyCommand(args: readonly string[]): boolean {
       && args[2] === "--null"
       && args[3] === "--get-regexp"
       && (args[4] === "^alias\\." || args[4] === "^remote\\..*\\.(fetch|push|mirror)$");
+  }
+  if (args[0] === "rev-list") {
+    const range = args[3];
+    return args.length === 4
+      && args[1] === "--left-right"
+      && args[2] === "--count"
+      && typeof range === "string"
+      && /^[0-9a-f]{40}(?:[0-9a-f]{24})?\.\.\.[0-9a-f]{40}(?:[0-9a-f]{24})?$/i.test(range);
+  }
+  if (args[0] === "merge-base") {
+    return args.length === 4
+      && args[1] === "--is-ancestor"
+      && /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i.test(args[2] ?? "")
+      && /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i.test(args[3] ?? "");
   }
   return args.length === 4
     && args[0] === "symbolic-ref"

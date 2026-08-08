@@ -41,17 +41,19 @@ async function createMergedGuardianWorktree(repo: string, branch: string, worktr
   return { head, worktreePath };
 }
 
-test("guardian_done all=true cleans already-merged sessions without creating a PR", async (t) => {
+test("guardian_done all=true cleans a session contained by a merge commit without creating a PR", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
   const session = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_all_already_merged", taskName: "all already merged", createWorktree: true, config: DEFAULT_CONFIG });
   await commitInWorktree(session.session.worktree_path, "feat-already.txt", "already\n", "feat already merged");
   const head = (await git(session.session.worktree_path, ["rev-parse", "HEAD"])).stdout;
-  await git(repo, ["merge", "--ff-only", session.session.branch]);
+  await git(repo, ["merge", "--no-ff", session.session.branch, "-m", "merge already-landed batch session"]);
   await git(repo, ["push", "origin", "main"]);
   const fakeGh = await installFakeGh(t, { repo, branch: session.session.branch, head });
 
   const plan = await guardianDone({ repoRoot: repo, cwd: repo, all: true, mode: "plan" }) as LooseRecord;
+  assert.equal(plan.ok, true, JSON.stringify(plan));
+  assert.equal((plan.sessions as LooseRecord[])[0].disposition, "finishable");
   const apply = await guardianDone({ repoRoot: repo, cwd: repo, all: true, mode: "apply", confirm: true, confirmToken: plan.confirmToken, timestamp: "20260624T121500" }) as LooseRecord;
 
   assert.equal(apply.ok, true, JSON.stringify(apply));
@@ -67,7 +69,7 @@ test("guardian_done all=true cleans already-merged sessions without creating a P
   await assert.rejects(git(repo, ["rev-parse", "--verify", `refs/heads/${session.session.branch}`]));
 });
 
-test("guardian_done all=true finishes every clean session and fast-forwards local main", async (t) => {
+test("guardian_done all=true blocks a sibling that becomes stale after an earlier session lands", async (t) => {
   const { base, repo, remote } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
   const a = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_all_e2e_a", taskName: "e2e a", createWorktree: true, config: DEFAULT_CONFIG });
@@ -79,19 +81,22 @@ test("guardian_done all=true finishes every clean session and fast-forwards loca
   const plan = await guardianDone({ repoRoot: repo, cwd: repo, all: true, mode: "plan" }) as LooseRecord;
   const apply = await guardianDone({ repoRoot: repo, cwd: repo, all: true, mode: "apply", confirm: true, confirmToken: plan.confirmToken, timestamp: "20260610T010101" }) as LooseRecord;
 
-  assert.equal(apply.ok, true, JSON.stringify(apply));
-  assert.equal(apply.status, "finished");
+  assert.equal(apply.ok, false, JSON.stringify(apply));
+  assert.equal(apply.status, "partial");
   const results = apply.results as LooseRecord[];
   assert.equal(results.length, 2);
-  assert.equal(results.every((entry) => entry.ok === true), true, JSON.stringify(results));
+  assert.equal(results[0].ok, true, JSON.stringify(results));
+  assert.equal(results[1].ok, false, JSON.stringify(results));
+  assert.match(String(results[1].reason), /plan changed|base.*ancestor/i);
   assert.equal(await pathExists(a.session.worktree_path), false);
-  assert.equal(await pathExists(b.session.worktree_path), false);
+  assert.equal(await pathExists(b.session.worktree_path), true);
   const mainSync = apply.mainSync as LooseRecord;
   assert.equal(mainSync.ok, true, JSON.stringify(mainSync));
   assert.equal(mainSync.fastForwarded, true, JSON.stringify(mainSync));
   const localMain = (await git(repo, ["rev-parse", "main"])).stdout;
   const remoteMain = (await git(repo, ["rev-parse", "origin/main"])).stdout;
   assert.equal(localMain, remoteMain);
+  await git(repo, ["rev-parse", "--verify", `refs/heads/${b.session.branch}`]);
   const ghLog = await fs.readFile(fakeGh.logPath, "utf8");
   assert.doesNotMatch(ghLog, /--delete-branch/);
 });
