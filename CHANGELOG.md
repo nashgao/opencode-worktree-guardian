@@ -4,6 +4,8 @@ All notable public-surface changes are tracked here.
 
 ## Unreleased
 
+## 1.0.0 - 2026-08-08
+
 ### Added
 
 - Operational-scope metadata and readable output now identify the effective remote, freshness, local and effective-remote branch counts, and disclosed secondary remotes. Status uses cached read-only refs, while final postflight uses the freshly fetched effective remote. Secondary remote names are disclosed but their branches are not scanned.

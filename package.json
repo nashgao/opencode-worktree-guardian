@@ -1,6 +1,6 @@
 {
   "name": "opencode-worktree-guardian",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "OpenCode plugin that guards Git worktree workflows from unsafe cleanup, reset, stash, and force-push operations.",
   "type": "module",
   "main": "./src/index.ts",

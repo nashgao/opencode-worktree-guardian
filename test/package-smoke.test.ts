@@ -164,7 +164,7 @@ test("packed artifact installs in a clean consumer and exposes plugin contract",
   t.after(packedConsumer.cleanup);
   const { base, consumer, packInfo } = packedConsumer;
   assert.equal(packInfo.name, "opencode-worktree-guardian");
-  assert.equal(packInfo.version, "0.1.0");
+  assert.equal(packInfo.version, packageJson.version);
   assert.deepEqual(sortedPackPaths(packInfo.files, "commands/"), [...expectedCommandAssets].sort((left, right) => left.localeCompare(right)));
   assert.deepEqual(sortedPackPaths(packInfo.files, "codex/"), [...expectedCodexAdapterFiles].sort((left, right) => left.localeCompare(right)));
   assert.equal(packInfo.files.some((file: { path: string }) => file.path === "src/index.ts"), true);
