@@ -38,11 +38,26 @@ export function isStructuredReadOnlyCommand(args: readonly string[]): boolean {
       && revision.endsWith(commitRevisionSuffix);
   }
   if (args[0] === "config") {
-    return args.length === 5
+    const transportConfigRead = args.length === 5
       && args[1] === "--includes"
       && args[2] === "--null"
       && args[3] === "--get-regexp"
       && (args[4] === "^alias\\." || args[4] === "^remote\\..*\\.(fetch|push|mirror)$");
+    const remoteNameRead = args.length === 6
+      && args[1] === "--includes"
+      && args[2] === "--null"
+      && args[3] === "--name-only"
+      && args[4] === "--get-regexp"
+      && args[5] === "^remote\\..*\\.(url|pushurl)$";
+    return transportConfigRead || remoteNameRead;
+  }
+  if (args[0] === "for-each-ref") {
+    const prefix = args[2];
+    return args.length === 3
+      && args[1] === "--format=%(refname:short)"
+      && typeof prefix === "string"
+      && prefix.startsWith("refs/remotes/")
+      && !prefix.includes("\0");
   }
   if (args[0] === "rev-list") {
     const range = args[3];

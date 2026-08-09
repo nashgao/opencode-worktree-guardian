@@ -2,6 +2,7 @@ import path from "node:path";
 import { resolveBaseRef } from "./done-base-ref.ts";
 import { fetchRemotePrune, getRefCommit, isAncestor, listBranches, listRefs, listRemoteBranches, listStashes, listWorktrees } from "./git.ts";
 import { hasBlockingStashInventory } from "./stash-policy.ts";
+import { listRemoteNames, operationalScope } from "./operational-scope.ts";
 
 export type FinalPostflightCommit = {
   readonly commit: string;
@@ -70,6 +71,7 @@ export async function runFinalCleanupPostflight(input: Record<string, unknown> =
   const branches = await listBranches(repoRoot);
   const worktrees = await listWorktrees(repoRoot);
   const remoteBranches = await listRemoteBranches(repoRoot, resolved.remote);
+  const remotes = await listRemoteNames(repoRoot);
   const stashes = await listStashes(repoRoot);
   const safetyRefs = await listRefs(repoRoot, "refs/opencode-guardian");
 
@@ -120,6 +122,7 @@ export async function runFinalCleanupPostflight(input: Record<string, unknown> =
     droppedCommits,
     branches,
     remoteBranches,
+    operationalScope: operationalScope({ effectiveRemote: resolved.remote, remotes, localBranchCount: branches.length, effectiveRemoteBranchCount: remoteBranches.length, freshness: "freshly-fetched-effective-remote" }),
     worktrees,
     stashes,
     refInventory: {

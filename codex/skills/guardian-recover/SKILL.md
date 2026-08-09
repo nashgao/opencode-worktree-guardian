@@ -11,4 +11,4 @@ Run the Guardian Codex adapter:
 node <adapter-path> tool guardian_recover '{}'
 ```
 
-Treat the result as read-only evidence. Do not create recovery branches, mutate stashes, delete worktrees, clean files, or remove refs from this skill.
+Treat the result as read-only evidence. Terminal reattach and stale cleanup are plan-only handoffs: inspect native pending-to-active proof and absent empty-lease reconciliation, then obtain a fresh plan before a separate mutation tool acts. Do not create recovery branches, mutate stashes, delete worktrees, clean files, or remove refs from this skill.

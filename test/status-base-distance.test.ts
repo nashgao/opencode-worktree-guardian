@@ -51,7 +51,7 @@ async function installStatusReadOnlyGitProbe(t: test.TestContext): Promise<strin
   const gitPath = path.join(binDir, "git");
   await fs.writeFile(gitPath, `#!/bin/sh
 set -eu
-if printf '%s\\n' "$*" | grep -Eq '(^| )((merge-base|rev-list)( |$)|[^ ]+@\\{upstream\\})'; then
+if printf '%s\\n' "$*" | grep -Eq '(^| )((merge-base|rev-list)( |$)|[^ ]+@\\{upstream\\})|--name-only|refs/remotes/'; then
   printf '%s|%s|%s\\n' "\${GIT_NO_LAZY_FETCH:-}" "\${GIT_OPTIONAL_LOCKS:-}" "$*" >> "$GUARDIAN_STATUS_GIT_LOG"
   if [ "\${GIT_NO_LAZY_FETCH:-}" != "1" ] || [ "\${GIT_OPTIONAL_LOCKS:-}" != "0" ]; then
     exit 97
@@ -92,6 +92,26 @@ test("guardian_status reports a fresh cached base without fetching", async (t) =
   assert.equal(await fs.access(fetchHead).then(() => true, () => false), fetchHeadBefore);
 });
 
+test("guardian_status reports cached effective-remote scope without examining secondary remotes", async (t) => {
+  // Given
+  const fixture = await startFixture(t, "ses_status_operational_scope");
+  const mirror = path.join(fixture.base, "mirror.git");
+  await git(fixture.repo, ["init", "--bare", mirror]);
+  await git(fixture.repo, ["remote", "add", "mirror", mirror]);
+
+  // When
+  const status = await guardianStatus({ repoRoot: fixture.repo, config: DEFAULT_CONFIG });
+
+  // Then
+  assert.deepEqual(status.operationalScope, {
+    effectiveRemote: "origin",
+    unexaminedSecondaryRemotes: ["mirror"],
+    localBranchCount: 2,
+    effectiveRemoteBranchCount: 1,
+    freshness: "cached-read-only",
+  });
+});
+
 test("guardian_status base distance routes ancestry through the read-only Git runner", async (t) => {
   const fixture = await startFixture(t, "ses_read_only_lineage");
   const logPath = await installStatusReadOnlyGitProbe(t);
@@ -101,6 +121,8 @@ test("guardian_status base distance routes ancestry through the read-only Git ru
   const calls = (await fs.readFile(logPath, "utf8")).trim().split("\n").filter(Boolean);
 
   assert.equal(distance.relation, "equal");
+  assert.ok(calls.some((call) => call.includes("config --includes --null --name-only --get-regexp ^remote\\..*\\.(url|pushurl)$")));
+  assert.ok(calls.some((call) => call.includes("for-each-ref --format=%(refname:short) refs/remotes/origin")));
   assert.ok(calls.some((call) => call.includes("merge-base")));
   assert.ok(calls.every((call) => call.startsWith("1|0|")));
 });

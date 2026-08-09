@@ -3,88 +3,15 @@ import path from "node:path";
 import { expandWorktreeRoot, loadConfig, normalizeConfig } from "./config.ts";
 import { realPathOrResolved, samePathOnDisk } from "./done-shared.ts";
 import { getCommonGitDir, getDirtyFiles, getRepoRoot, listBranches, listRecoveryCandidates, listRefs, listStashes, listWorktrees } from "./git.ts";
-import type { GitBranchEntry, GitRefEntry, GitStashEntry } from "./git.ts";
 import { scanWorkspaceHygiene } from "./hygiene.ts";
 import { isActiveSession, isTerminalSession } from "./lifecycle.ts";
 import { collectActiveSessionBaseDistances } from "./status-base-distance.ts";
-import type { ActiveSessionBaseDistance, CachedBaseAuthority } from "./status-base-distance.ts";
+import { terminalRecoveryPlans } from "./status-terminal-recovery.ts";
 import { getGuardianPaths, readState } from "./state.ts";
-import type { GuardianConfig, GuardianSession, GuardianToolInput, GuardianToolResult, LoadedGuardianConfig, WorktreeEntry } from "./types.ts";
+import { cachedRemoteBranchCountReadOnly, listRemoteNamesReadOnly, operationalScope } from "./operational-scope.ts";
+import type { GuardianConfig, GuardianSession, GuardianToolInput, LoadedGuardianConfig, WorktreeEntry } from "./types.ts";
 import { errorMessage, isRecordLike } from "./types.ts";
-
-type WorktreeAnnotationMetadata = {
-  readonly guardianRoot: string;
-  readonly commonGitDir?: string;
-  readonly commonGitDirError?: string;
-};
-
-type AnnotatedWorktreeEntry = WorktreeEntry & {
-  readonly category?: "external-temp-worktree" | "external-worktree";
-  readonly severity?: "fail";
-  readonly reason?: string;
-  readonly metadata?: WorktreeAnnotationMetadata;
-};
-
-type PoisonedSession = GuardianSession & {
-  readonly severity: "fail";
-  readonly reason: string;
-  readonly suggestedCommand: string;
-};
-
-type HygieneSummary = Record<string, unknown> & {
-  readonly findingCount: number;
-  readonly reviewableCandidateCount: number;
-  readonly reviewableShownCount: number;
-  readonly reviewableOmittedCount: number;
-  readonly reviewableTotalFileCount: number;
-  readonly reviewableTruncated: boolean;
-};
-
-type HygieneReviewableCandidate = {
-  readonly path: string;
-  readonly status: "ignored" | "untracked";
-  readonly fileCount: number;
-  readonly reason: string;
-  readonly source: string;
-  readonly suggestedDeletePathCommand: string;
-};
-
-type HygieneStatus = Record<string, unknown> & {
-  readonly ok?: unknown;
-  readonly summary: HygieneSummary;
-  readonly findings: readonly (Record<string, unknown> & { readonly path?: unknown })[];
-  readonly reviewableCandidates: readonly HygieneReviewableCandidate[];
-};
-
-type GuardianStatusResult = Omit<GuardianToolResult, "activeSessions" | "terminalSessions" | "worktrees" | "safetyRefs" | "sessions"> & {
-  readonly repoRoot: string;
-  readonly config: GuardianConfig;
-  readonly configPath: string | null;
-  readonly configLoaded: boolean;
-  readonly configSource: "defaults" | "file" | "input";
-  readonly stateVersion: number | undefined;
-  readonly sessions: readonly GuardianSession[];
-  readonly activeSessions: readonly GuardianSession[];
-  readonly baseAuthority: CachedBaseAuthority;
-  readonly activeSessionBaseDistances: readonly ActiveSessionBaseDistance[];
-  readonly terminalSessions: readonly GuardianSession[];
-  readonly orphanedSessions: readonly GuardianSession[];
-  readonly poisonedSessions: readonly PoisonedSession[];
-  readonly worktrees: readonly WorktreeEntry[];
-  readonly branchesWithoutWorktrees: readonly GitBranchEntry[];
-  readonly worktreesWithoutState: readonly AnnotatedWorktreeEntry[];
-  readonly stateBranchesWithoutWorktrees: readonly string[];
-  readonly safetyRefs: readonly GitRefEntry[];
-  readonly preservedRefs: readonly GitRefEntry[];
-  readonly stashes: readonly GitStashEntry[];
-  readonly dirtyFiles: readonly string[];
-  readonly hygiene: HygieneStatus;
-  readonly suggestedCommands: readonly string[];
-};
-
-type GuardianRecoverResult = GuardianStatusResult & {
-  readonly recoveryCandidates: Awaited<ReturnType<typeof listRecoveryCandidates>>;
-};
+import type { AnnotatedWorktreeEntry, GuardianRecoverResult, GuardianStatusResult, PoisonedSession, WorktreeAnnotationMetadata } from "./status-result-types.ts";
 
 async function pathExists(candidate: string) {
   try {
@@ -195,6 +122,10 @@ export async function guardianStatus(input: GuardianToolInput = {}): Promise<Gua
   const activeSessions = sessions.filter(isActiveSession);
   const terminalSessions = sessions.filter(isTerminalSession);
   const sessionWorktreePaths = await canonicalPathSet(activeSessions.map((session) => session.worktree_path).filter((entry): entry is string => typeof entry === "string"));
+  const terminalSessionWorktrees = await Promise.all(terminalSessions.map(async (session) => ({
+    session,
+    canonicalWorktreePath: typeof session.worktree_path === "string" ? path.resolve(await realPathOrResolved(session.worktree_path)) : null,
+  })));
   const sessionBranches = new Set(activeSessions.map((session) => session.branch).filter((entry): entry is string => typeof entry === "string"));
   const orphanedSessions = [];
   const poisonedSessions = [];
@@ -210,13 +141,25 @@ export async function guardianStatus(input: GuardianToolInput = {}): Promise<Gua
   }
 
   const branches = await listBranches(repoRoot);
+  const remotes = await listRemoteNamesReadOnly(repoRoot);
   const branchesWithoutWorktrees = branches.filter((branch) => !worktrees.some((worktree) => worktree.branch === branch.name));
+  const terminalRecovery = terminalRecoveryPlans({
+    repoRoot,
+    config,
+    terminalSessions: terminalSessionWorktrees,
+    worktrees: worktreeEntries,
+    activeWorktreePaths: sessionWorktreePaths,
+    activeBranches: sessionBranches,
+    branchesWithoutWorktrees,
+  });
   const worktreesWithoutState = await Promise.all(worktreeEntries
     .filter((worktree) => worktree.canonicalPath !== canonicalRepoRoot)
     .filter((worktree) => !sessionWorktreePaths.has(worktree.canonicalPath))
     .map((worktree) => annotateWorktreeWithoutState(worktree.entry, repoRoot, config)));
   const stateBranchesWithoutWorktrees = [...sessionBranches].filter((branch) => !worktrees.some((worktree) => worktree.branch === branch));
   const baseDistance = await collectActiveSessionBaseDistances(repoRoot, config, activeSessions, worktrees);
+  const effectiveRemote = baseDistance.baseAuthority.status === "available" ? baseDistance.baseAuthority.effectiveRemote : String(config.remote);
+  const effectiveRemoteBranchCount = await cachedRemoteBranchCountReadOnly(repoRoot, effectiveRemote);
 
   return {
     repoRoot,
@@ -229,9 +172,13 @@ export async function guardianStatus(input: GuardianToolInput = {}): Promise<Gua
     activeSessions,
     ...baseDistance,
     terminalSessions,
+    terminalRecoveryActions: terminalRecovery.actions,
+    terminalRecoveryActionCount: terminalRecovery.count,
+    terminalRecoveryActionOmittedCount: terminalRecovery.omittedCount,
     orphanedSessions,
     poisonedSessions,
     worktrees,
+    operationalScope: operationalScope({ effectiveRemote, remotes, localBranchCount: branches.length, effectiveRemoteBranchCount, freshness: "cached-read-only" }),
     branchesWithoutWorktrees,
     worktreesWithoutState,
     stateBranchesWithoutWorktrees,

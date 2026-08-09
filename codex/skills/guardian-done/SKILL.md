@@ -15,6 +15,8 @@ Inspect the selected lane, dirty files, blockers, and cleanup preview. Only afte
 
 `guardian_done` resolves the target from repo-wide inventory, not from whichever cwd Codex happens to be in. Bare `guardian_done` auto-selects exactly one dirty implementation target. If multiple dirty targets exist, stop on `needs-selection` and rerun the exact `primary=true`, `sessionId=...`, or `branch=...` option shown in the output. Use explicit `primary=true`, `sessionId=...`, or `branch=...` from any cwd when the user already selected the target.
 
+Terminal reattach and stale cleanup are plan-only handoffs. Treat an old terminal id as metadata; only confirmed apply may establish pending-to-active proof. Treat absent empty-lease reconciliation as native evidence, not cleanup authority. For advanced state-only retirement, preserve the branch/proof or report pending proof absent; do no sync, postflight, or deletion, and obtain a fresh plan before another tool acts.
+
 For recovery, use `guardian_done` with `rescue: true` and `mode: "plan"` first. Rescue plan/default is artifact-read-only and token-bound; ignored-untracked residue blocks it. Only matching `mode: "apply"`, `confirm: true` materializes the create-only recovery evidence and cleans only the planned paths. Primary-main unconfirmed apply does not refresh; confirmed apply refreshes and checks drift before mutation. Done-all unconfirmed apply rejects before discovery, fetch, or token reconstruction; confirmed apply refreshes and validates the exact plan.
 
 Never replace `guardian_done` with raw push, merge, branch deletion, worktree deletion, stash mutation, force-push, or protected-branch bypass commands.

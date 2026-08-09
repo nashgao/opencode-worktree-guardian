@@ -31,6 +31,8 @@ type DoneAllTokenInput = {
 type CleanupSweepInput = {
   readonly cleanupPlan: Record<string, unknown>;
   readonly cleanupCandidates: number;
+  readonly cleanupRetirementCandidates: number;
+  readonly cleanupApplyWorkCount: number;
   readonly cleanupBlockers: number;
   readonly cleanupApply: Record<string, unknown> | null;
 };
@@ -50,6 +52,7 @@ function cleanupPlanTokenMaterial(cleanupPlan: Record<string, unknown>): Record<
     status: typeof cleanupPlan.status === "string" ? cleanupPlan.status : null,
     confirmToken: typeof cleanupPlan.confirmToken === "string" ? cleanupPlan.confirmToken : null,
     candidates: candidates.map(candidateTokenMaterial),
+    reservationRetirementCandidates: recordArrayField(cleanupPlan, "reservationRetirementCandidates").map(candidateTokenMaterial),
     blockers: blockers.map((blocker) => ({
       kind: blocker.kind ?? null,
       targetPath: blocker.targetPath ?? null,
@@ -123,28 +126,38 @@ export function preSessionCleanupSweep(input: CleanupSweepInput): Record<string,
       status: input.cleanupApply.status === "cleaned" ? "cleaned" : "partial",
       reason: input.cleanupApply.ok === true ? undefined : "cleanup sweep applied safe candidates with remaining blockers",
       candidateCount: input.cleanupCandidates,
+      retirementCandidateCount: input.cleanupRetirementCandidates,
+      applyWorkCount: input.cleanupApplyWorkCount,
       cleanedCount: cleanupApplyResults.filter((result) => isRecordLike(result) && result.ok === true).length,
       failedCount: cleanupApplyResults.filter((result) => !isRecordLike(result) || result.ok !== true).length,
+      retiredCount: recordArrayField(input.cleanupApply, "reservationRetirementResults").filter((result) => result.status === "retired").length,
+      retirementFailedCount: recordArrayField(input.cleanupApply, "reservationRetirementResults").filter((result) => result.status !== "retired").length,
       plan: input.cleanupPlan,
       apply: input.cleanupApply,
       remaining: input.cleanupApply.remaining ?? input.cleanupApply.blockers ?? [],
     };
   }
-  if (input.cleanupCandidates > 0) return { ok: false, status: "blocked", reason: "cleanup plan has candidates but no apply token", candidateCount: input.cleanupCandidates, plan: input.cleanupPlan };
-  if (input.cleanupBlockers > 0 || input.cleanupPlan.ok !== true) return { ok: false, status: "partial", reason: "cleanup blockers remain", candidateCount: 0, plan: input.cleanupPlan, remaining: input.cleanupPlan.blockers ?? [] };
-  return { ok: true, status: "no-op", candidateCount: 0, plan: input.cleanupPlan };
+  if (input.cleanupApplyWorkCount > 0) return { ok: false, status: "blocked", reason: "cleanup plan has work but no apply token", candidateCount: input.cleanupCandidates, retirementCandidateCount: input.cleanupRetirementCandidates, applyWorkCount: input.cleanupApplyWorkCount, plan: input.cleanupPlan };
+  if (input.cleanupBlockers > 0 || input.cleanupPlan.ok !== true) return { ok: false, status: "partial", reason: "cleanup blockers remain", candidateCount: 0, retirementCandidateCount: 0, applyWorkCount: 0, plan: input.cleanupPlan, remaining: input.cleanupPlan.blockers ?? [] };
+  return { ok: true, status: "no-op", candidateCount: 0, retirementCandidateCount: 0, applyWorkCount: 0, plan: input.cleanupPlan };
 }
 
 export function combineCleanupSweeps(preSession: Record<string, unknown>, postSession: Record<string, unknown>): Record<string, unknown> {
   const candidateCount = numberField(preSession, "candidateCount") + numberField(postSession, "candidateCount");
+  const retirementCandidateCount = numberField(preSession, "retirementCandidateCount") + numberField(postSession, "retirementCandidateCount");
+  const applyWorkCount = numberField(preSession, "applyWorkCount") + numberField(postSession, "applyWorkCount");
   const ok = preSession.ok === true && postSession.ok === true;
   return {
     ok,
-    status: ok ? candidateCount === 0 ? "no-op" : "cleaned" : "partial",
+    status: ok ? applyWorkCount === 0 ? "no-op" : "cleaned" : "partial",
     reason: ok ? undefined : "cleanup sweep applied safe candidates with remaining blockers",
     candidateCount,
+    retirementCandidateCount,
+    applyWorkCount,
     cleanedCount: numberField(preSession, "cleanedCount") + numberField(postSession, "cleanedCount"),
     failedCount: numberField(preSession, "failedCount") + numberField(postSession, "failedCount"),
+    retiredCount: numberField(preSession, "retiredCount") + numberField(postSession, "retiredCount"),
+    retirementFailedCount: numberField(preSession, "retirementFailedCount") + numberField(postSession, "retirementFailedCount"),
     preSession,
     postSession,
     remaining: uniqueRemaining([...recordArrayField(preSession, "remaining"), ...recordArrayField(postSession, "remaining")]),

@@ -3,7 +3,9 @@ description: Show Guardian session, worktree, branch, stash, and recovery invent
 argument-hint: "[optional focus or question]"
 ---
 
-Use the native `guardian_status` tool to inspect the current repository. Treat the result as read-only evidence.
+Use the native `guardian_status` tool to inspect the current repository. Treat the result as read-only evidence within its bounded operational scope, not a repository-wide cleanliness claim. Additional secondary remotes are names-only unscanned secondary remotes unless native metadata selects one as the effective authority.
+
+Terminal reattach and stale cleanup are plan-only handoffs. Use the native metadata/output and obtain a fresh plan through the relevant mutation tool; status never changes state.
 
 Do not run raw cleanup, reset, stash mutation, worktree removal, branch deletion, or filesystem deletion commands. If the user asks what to do next, explain blockers and recommend the relevant Guardian native tool.
 

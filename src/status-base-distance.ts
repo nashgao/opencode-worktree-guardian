@@ -16,6 +16,7 @@ export type CachedBaseAuthority =
     readonly baseRef: string;
     readonly baseAuthorityRef: string;
     readonly baseRefOid: string;
+    readonly effectiveRemote: string;
     readonly source: "upstream" | "config";
   }
   | { readonly status: "unavailable"; readonly reason: "base-authority-unavailable" | "base-ref-unavailable" };
@@ -86,6 +87,7 @@ async function resolveCachedBaseAuthority(repoRoot: string, config: GuardianConf
     baseRef: resolved.baseRef,
     baseAuthorityRef: resolved.authorityRef,
     baseRefOid: localBase.stdout,
+    effectiveRemote: resolved.remote,
     source: resolved.source,
   };
 }
