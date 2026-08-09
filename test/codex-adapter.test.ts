@@ -172,6 +172,32 @@ test("Codex tool command applies a cached hygiene plan without exposing confirm 
   assert.equal(await pathExists(cacheFile), false);
 });
 
+test("Codex guardian_goal guides confirmed apply for strict planned-partial plans without exposing tokens", async () => {
+  const repo = await createRepo();
+  await fs.mkdir(path.join(repo, ".opencode"), { recursive: true });
+  await fs.writeFile(path.join(repo, CONFIG_PATH), `${JSON.stringify({
+    ...DEFAULT_CONFIG,
+    goal: {
+      ...DEFAULT_CONFIG.goal,
+      commitDirty: false,
+      landToBase: false,
+      pushBase: false,
+      cleanupWorktrees: false,
+      cleanupBranches: false,
+      cleanupHygiene: true,
+      hygieneCompletion: "no-unprotected-findings",
+    },
+  })}\n`);
+  await fs.mkdir(path.join(repo, "guardian-suspicious"));
+  await fs.writeFile(path.join(repo, "guardian-suspicious", "notes.txt"), "notes\n");
+
+  const { stdout } = await runCodexCli(["tool", "guardian_goal", JSON.stringify({ repoRoot: repo, cwd: repo, mode: "plan" })]);
+
+  assert.match(stdout, /\[WARN\] guardian_goal planned-partial/);
+  assert.match(stdout, /confirm=true; the Codex adapter reuses the matching cached plan token/);
+  assert.doesNotMatch(stdout, /confirmToken|[a-f0-9]{64}/i);
+});
+
 test("Codex guardian_done cache keys include primary target", async () => {
   const { base, repo } = await createRepoWithOrigin();
   test.after(() => fs.rm(base, { recursive: true, force: true }));

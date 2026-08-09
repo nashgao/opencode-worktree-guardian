@@ -5,6 +5,11 @@ import path from "node:path";
 import test from "node:test";
 import { createPackedConsumer, expectedCodexAdapterFiles, expectedCodexSkillNames, expectedCommandAssets, expectedPackageExports, expectedPackageFiles, expectedSlashNames, expectedToolNames, legacyHygieneCommandNameParts, projectRoot, run, sortedPackPaths } from "./package-smoke-helpers.ts";
 
+function isSameOrInside(candidate: string, root: string) {
+  const relative = path.relative(root, candidate);
+  return relative === "" || Boolean(relative) && !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
 test("package smoke run helper times out hung commands", async () => {
   await assert.rejects(
     () => run(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { timeout: 50 }),
@@ -23,6 +28,26 @@ test("package smoke run helper suppresses inherited coverage env", async () => {
   });
 
   assert.deepEqual(JSON.parse(result.stdout), { coverage: "", marker: "", compile: "" });
+});
+
+test("safe node temp wrapper rejects TMPDIR inside a different Git worktree", async (t) => {
+  const base = await fs.mkdtemp(path.join("/tmp", "guardian-safe-temp-git-"));
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const project = path.join(base, "no-repository-project");
+  const gitWorktree = path.join(base, "different-git-worktree");
+  await fs.mkdir(project);
+  await run("git", ["init", "--quiet", gitWorktree]);
+
+  const script = path.join(projectRoot, "scripts", "with-safe-node-temp.mjs");
+  const result = await run(process.execPath, [script, "--", process.execPath, "-e", "console.log(process.env.TMPDIR)"], {
+    cwd: project,
+    env: { TMPDIR: gitWorktree },
+  });
+  const tempRoot = result.stdout.trim();
+  const realTempRoot = await fs.realpath(tempRoot);
+  const realGitWorktree = await fs.realpath(gitWorktree);
+
+  assert.equal(isSameOrInside(realTempRoot, realGitWorktree), false, `${realTempRoot} must be outside ${realGitWorktree}`);
 });
 
 test("Given npm setup fails after a packed consumer temp base is created, when createPackedConsumer rejects, then it leaves no temp directory", async (t) => {

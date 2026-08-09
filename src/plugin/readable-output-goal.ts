@@ -1,6 +1,7 @@
 import { appendCleanupEvidence, appendFinalPostflightEvidence } from "./readable-output-evidence.ts";
 import { appendReservationRetirementEvidence } from "./readable-output-retirement.ts";
 import { appendBoundedList, appendStashInventoryWarning, arrayValue, recordValue, textValue } from "./readable-output-values.ts";
+import { sanitizeGoalResidualText } from "../goal-hygiene-postcondition.ts";
 
 function statusPrefix(result: Record<string, unknown>): "[FAIL]" | "[WARN]" | "[GOOD]" {
   if (result.ok === false || result.status === "blocked") return "[FAIL]";
@@ -39,6 +40,27 @@ function formatStep(entry: unknown): string {
   return `  - ${textValue(step.tool)} status=${textValue(step.status)} ok=${String(step.ok === true)}${details}${reason ? ` reason=${reason}` : ""}`;
 }
 
+function appendHygienePostcondition(lines: string[], value: unknown, complete: boolean | null): void {
+  const postcondition = recordValue(value);
+  if (Object.keys(postcondition).length === 0) return;
+  const counts = recordValue(postcondition.residualByCategory);
+  const shownFindings = arrayValue(postcondition.residualFindingsShown);
+  const residualCount = Number(postcondition.residualCount ?? 0);
+  const completeText = complete === null ? "pending" : String(complete);
+  lines.push(`[INFO] hygiene mode=${sanitizeGoalResidualText(postcondition.mode)} phase=${sanitizeGoalResidualText(postcondition.phase)} status=${sanitizeGoalResidualText(postcondition.status)} complete=${completeText}`);
+  lines.push(`[${residualCount > 0 ? "WARN" : "INFO"}] hygiene residuals: ${residualCount} | known-cleanable=${Number(counts["known-cleanable"] ?? 0)} | nested-git=${Number(counts["nested-git"] ?? 0)} | suspicious=${Number(counts.suspicious ?? 0)}`);
+  if (shownFindings.length > 0) {
+    lines.push("[WARN] hygiene residual findings:");
+    for (const entry of shownFindings.slice(0, 8)) {
+      const finding = recordValue(entry);
+      lines.push(`  - ${sanitizeGoalResidualText(finding.category)} ${sanitizeGoalResidualText(finding.path)}: ${sanitizeGoalResidualText(finding.reason)}`);
+    }
+  }
+  const omitted = Number(postcondition.residualFindingsOmittedCount ?? 0);
+  if (omitted > 0) lines.push(`[WARN] hygiene residual findings omitted: ${omitted}`);
+  lines.push(`[INFO] hygiene exclusions: ${Number(postcondition.protectedExclusionCount ?? 0)} | reviewable inventory: ${Number(postcondition.reviewableCandidateCount ?? 0)}`);
+}
+
 export function formatGuardianGoalOutput(rawResult: unknown): string {
   const result = recordValue(rawResult);
   const goal = recordValue(result.goal);
@@ -49,6 +71,7 @@ export function formatGuardianGoalOutput(rawResult: unknown): string {
     `[INFO] desired: ${formatGoalFlags(goal)}`,
     `[INFO] steps: ${steps.length} | blockers: ${blockers.length}`,
   ];
+  appendHygienePostcondition(lines, result.hygienePostcondition, result.complete === null ? null : result.complete === true);
   const doneStep = steps.map(recordValue).find((step) => step.tool === "guardian_done" || step.tool === "guardian_finish_workflow");
   const doneResult = recordValue(doneStep?.result);
   const donePreflight = recordValue(doneResult.preflight);

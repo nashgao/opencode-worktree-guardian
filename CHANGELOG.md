@@ -4,6 +4,14 @@ All notable public-surface changes are tracked here.
 
 ## Unreleased
 
+### Added
+
+- `goal.hygieneCompletion` now distinguishes cleanup authorization from goal completion. The default `authorized-cleanup` preserves legacy behavior, while `no-unprotected-findings` makes a post-apply hygiene rescan with no residual unprotected findings a strict completion postcondition. Goal plans expose `complete: null`; strict actionable plans can be `planned-partial`; strict apply can return `ok: true`, `complete: false`, and `status: "partial"`.
+
+### Changed
+
+- Strict goal hygiene does not broaden deletion. Both modes auto-delete only token-bound `known-cleanable` findings. Residual `nested-git` and `suspicious` findings require direct explicit review and are never auto-authorized. Dirty nested Git additionally requires direct `allowDirtyNestedGit`. Configured `protectedPaths` are intentional retention and excluded, while `reviewableCandidates` remain inventory rather than strict failures. TUI, skill, command, and invisible policy prompts now require agents to inspect `complete` and `hygienePostcondition` instead of treating `ok` as desired-state completion.
+
 ## 1.0.0 - 2026-08-08
 
 ### Added

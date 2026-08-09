@@ -176,6 +176,17 @@ test("guardian native tools expose OpenCode tool definitions", async () => {
   assert.equal(typeof hooks.tool.guardian_done.args.primary.safeParse, "function");
 });
 
+test("guardian_goal native description states the strict hygiene completion contract", async () => {
+  const hooks = await plugin.server({ directory: "/repo", worktree: "/repo" });
+  const description = hooks.tool.guardian_goal.description;
+
+  assert.match(description, /plans.*complete=null/i);
+  assert.match(description, /strict.*actionable.*planned-partial/i);
+  assert.match(description, /inspect.*complete.*hygienePostcondition/i);
+  assert.match(description, /ok=true.*status=partial.*complete=false/i);
+  assert.match(description, /token-bound.*known-cleanable/i);
+});
+
 test("README documents local shim and readiness command names", async () => {
   const readme = await readFile(new URL("../README.md", import.meta.url), "utf8");
   assert.match(readme, /export const WorktreeGuardian = Guardian\.server/);
@@ -232,6 +243,22 @@ test("packaged Codex skill starts hygiene with scan inventory before cleanup pla
   assert.equal(scanCommandIndex < planCommandIndex, true);
   assert.doesNotMatch(skill, /guardian_hygiene '\{"mode":"plan"\}' first/);
   assert.doesNotMatch(skill, /guardian_hygiene`, `guardian_delete_paths`, `guardian_delete_worktree`, and `guardian_finish_workflow`, always run `mode=plan` first/);
+});
+
+test("Codex hygiene guidance preserves the reviewable exact-path boundary", async () => {
+  const [hygieneSkill, umbrellaSkill] = await Promise.all([
+    readFile(new URL("../codex/skills/guardian-hygiene/SKILL.md", import.meta.url), "utf8"),
+    readFile(new URL("../codex/skills/worktree-guardian/SKILL.md", import.meta.url), "utf8"),
+  ]);
+
+  for (const skill of [hygieneSkill, umbrellaSkill]) {
+    assert.match(skill, /reviewableCandidates.*inventory, not hygiene targets/s);
+    assert.match(skill, /guardian_delete_paths.*mode.*plan.*paths/s);
+    assert.match(skill, /[Dd]irectories.*allowRecursive/s);
+    assert.match(skill, /Review target status and blockers before explicit confirmation/);
+    assert.match(skill, /Do not pass reviewables back to.*guardian_hygiene/);
+    assert.match(skill, /never run raw cleanup commands/i);
+  }
 });
 
 test("guardian_done plugin confirm reuses planned-partial tokens", () => {

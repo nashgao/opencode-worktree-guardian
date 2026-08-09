@@ -270,6 +270,14 @@ The plugin tool flow caches the plan token only for matching session, repo, and 
 
 Apply re-runs preflight and removes only token-bound approved paths using internal Node `fs` APIs. It never suggests or shells out to broad cleanup commands. Cleanup blocks tracked files, protected directories, configured or registered Guardian worktrees, paths outside the repo root, `.git`, symlink cleanup roots, missing selected paths, stale fingerprints, and selected roots with unexpected tracked contents.
 
+## `guardian_goal` Hygiene Completion Policy
+
+`goal.hygieneCompletion` separates cleanup authorization from desired-state completion. Its default, `authorized-cleanup`, preserves legacy behavior: a goal can complete after authorized hygiene cleanup even when residual findings remain visible. `no-unprotected-findings` is strict: after apply, Guardian rescans hygiene and completes only if no unprotected findings remain.
+
+This setting never broadens deletion. In either mode, `guardian_goal` auto-deletes only token-bound `known-cleanable` findings. Residual `nested-git` and `suspicious` findings require direct explicit review and are never auto-authorized. A dirty nested repository requires direct `allowDirtyNestedGit` for its own hygiene plan and apply. Configured `protectedPaths` represent intentional retention and are excluded from strict completion. `reviewableCandidates` are inventory, not findings and not strict failures.
+
+Goal plans report `complete: null`. A strict plan with safe authorized work and residual unprotected findings can be actionable with `status: "planned-partial"`. Goal apply reports authorization and completion separately. A strict post-apply rescan can return `ok: true`, `complete: false`, and `status: "partial"`: Guardian performed the authorized work, but the desired state was not reached. Prompt and TUI surfaces must inspect `complete` and `hygienePostcondition`; they must not equate `ok` with desired-state completion.
+
 ## `guardian_gc` State Record Cleanup Policy
 
 `guardian_gc` prunes stale Guardian session records from state. It is record-only: it removes JSON session entries and never deletes git branches, worktrees, refs, stashes, or files. Nothing reachable becomes unreachable, so recovery refs and reflog remain available.

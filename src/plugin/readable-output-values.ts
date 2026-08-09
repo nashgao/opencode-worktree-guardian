@@ -8,10 +8,12 @@ export function arrayValue(value: unknown): unknown[] {
 
 export const DETAIL_LIST_LIMIT = 8;
 
-function inertText(value: string): string {
+export function inertText(value: string): string {
   return value
-    .replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g, "")
+    .replace(/\u001b\][^\u0007\u001b\u009c]*(?:\u0007|\u001b\\|\u009c)?/g, "")
+    .replace(/\u009d[^\u0007\u001b\u009c]*(?:\u0007|\u001b\\|\u009c)?/g, "")
     .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "")
+    .replace(/\u009b[0-?]*[ -/]*[@-~]/g, "")
     .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g, "")
     .replace(/[\u200e\u200f\u061c\u202a-\u202e\u2066-\u2069]/g, (control) => {
       const codePoint = control.codePointAt(0);

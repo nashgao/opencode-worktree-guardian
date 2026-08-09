@@ -41,7 +41,7 @@ const COMMANDS = [
     name: "guardian-goal",
     title: "Guardian: Goal",
     description: "Drive the repo toward the configured Guardian desired end state.",
-    prompt: "Use the guardian_goal native tool. Run mode=plan first, inspect the configured goal flags, hygiene and done child steps, blockers, and selected commit target, then continue to mode=apply confirm=true with the same options when the plan is safe and the user invoked the goal workflow. If metadata says freshPlanRequired, stop and obtain the fresh plan rather than applying a prior one. Include commitMessage when dirty implementation work needs to be committed. Guardian goal composes safe known-cleanable hygiene cleanup before guardian_done so generated cache residue is not committed, then lands/pushes/cleans through existing Guardian gates. Do not use raw git cleanup, raw worktree removal, raw branch deletion, stash mutation, force-push, or bypass Guardian blockers.",
+    prompt: "Use the guardian_goal native tool. Run mode=plan first, inspect the configured goal flags, hygiene and done child steps, blockers, selected commit target, complete, and hygienePostcondition, then continue to mode=apply confirm=true with the same options when the plan is safe and the user invoked the goal workflow. Strict actionable plans can be planned-partial with complete=null. If metadata says freshPlanRequired, stop and obtain the fresh plan rather than applying a prior one. Include commitMessage when dirty implementation work needs to be committed. Guardian goal composes token-bound known-cleanable hygiene cleanup before guardian_done so generated cache residue is not committed, then lands/pushes/cleans through existing Guardian gates. After apply, do not treat ok as desired-state completion: inspect complete and hygienePostcondition. Strict no-unprotected-findings may return ok=true, complete=false, status=partial after its post-apply hygiene rescan. Strict mode does not broaden deletion. Both modes auto-delete only token-bound known-cleanable findings; residual nested-git and suspicious findings require direct explicit review, dirty nested Git requires allowDirtyNestedGit, protectedPaths are intentional retention, and reviewableCandidates are inventory rather than strict failures. Do not use raw git cleanup, raw worktree removal, raw branch deletion, stash mutation, force-push, or bypass Guardian blockers.",
   },
   {
     name: "guardian-status",
@@ -101,7 +101,7 @@ const COMMANDS = [
     name: "guardian-hygiene",
     title: "Guardian: Hygiene",
     description: "Scan, plan, or apply confirmed cleanup for workspace hygiene findings.",
-    prompt: "Use the guardian_hygiene native tool. With no mode it scans only. For cleanup, run mode=plan first, inspect exact approved targets and blockers, get explicit user confirmation, then apply with confirmDelete=true. Never run raw cleanup commands.",
+    prompt: "Use the guardian_hygiene native tool. With no mode it scans only. reviewableCandidates are inventory, not hygiene targets. For intentional reviewable cleanup, use guardian_delete_paths mode=plan paths=[...]; directories also require allowRecursive=true. Review target status and blockers before explicit confirmation, and do not pass reviewables back to guardian_hygiene. For hygiene findings, run mode=plan first, inspect exact approved targets and blockers, get explicit user confirmation, then apply with confirmDelete=true. Never run raw cleanup commands.",
   },
   {
     name: "guardian-delete-worktree",

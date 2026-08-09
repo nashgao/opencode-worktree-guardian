@@ -9,6 +9,7 @@ export type MutableRecord = {
 export type GuardianFinishMode = "preserve-only" | "push-branch" | "create-pr" | "merge-to-base";
 export type GuardianAutoStartMode = "eager" | "lazy";
 export type GuardianCommandInterceptionMode = "audit" | "strict";
+export type GuardianGoalHygieneCompletion = "authorized-cleanup" | "no-unprotected-findings";
 
 export type GuardianGoalConfig = {
   readonly commitDirty: boolean;
@@ -17,6 +18,7 @@ export type GuardianGoalConfig = {
   readonly cleanupWorktrees: boolean;
   readonly cleanupBranches: boolean;
   readonly cleanupHygiene: boolean;
+  readonly hygieneCompletion?: GuardianGoalHygieneCompletion;
   readonly quarantineSessionResidue: boolean;
 };
 

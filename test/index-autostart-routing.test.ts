@@ -208,6 +208,17 @@ test("/guardian slash commands rewrite to native tool instructions", async () =>
   await hooks["command.execute.before"]({ command: "/guardian delete-paths src/old.ts", sessionID: "ses_123", arguments: [] }, deletePathsOutput);
   assert.deepEqual(deletePathsOutput.parts, [{ type: "text", text: "Use the guardian_delete_paths native tool. Run mode=plan first with exact paths, inspect target status and blockers, get explicit user confirmation, then apply with confirmDelete=true. Tracked source deletion requires allowTracked=true; directory deletion requires allowRecursive=true. User arguments: src/old.ts" }]);
 
+  const hygieneOutput: { parts: Array<{ readonly type: string; readonly text: string }> } = { parts: [] };
+  await hooks["command.execute.before"]({ command: "/guardian hygiene", sessionID: "ses_123", arguments: [] }, hygieneOutput);
+  assert.equal(hygieneOutput.parts.length, 1);
+  const hygienePrompt = hygieneOutput.parts[0]?.text ?? "";
+  assert.match(hygienePrompt, /reviewableCandidates are inventory, not hygiene targets/);
+  assert.match(hygienePrompt, /guardian_delete_paths mode=plan paths=\[\.\.\.\]/);
+  assert.match(hygienePrompt, /directories also require allowRecursive=true/);
+  assert.match(hygienePrompt, /Review target status and blockers before explicit confirmation/);
+  assert.match(hygienePrompt, /do not pass reviewables back to guardian_hygiene/);
+  assert.match(hygienePrompt, /Never run raw cleanup commands/);
+
   const goalOutput: { parts: Array<{ readonly type: string; readonly text: string }> } = { parts: [] };
   await hooks["command.execute.before"]({ command: "/guardian goal commitMessage=feat: done", sessionID: "ses_123", arguments: [] }, goalOutput);
   assert.equal(goalOutput.parts.length, 1);
@@ -215,6 +226,11 @@ test("/guardian slash commands rewrite to native tool instructions", async () =>
   assert.match(goalPrompt, /guardian_goal/);
   assert.match(goalPrompt, /mode=plan/);
   assert.match(goalPrompt, /goal flags/);
+  assert.match(goalPrompt, /complete/);
+  assert.match(goalPrompt, /hygienePostcondition/);
+  assert.match(goalPrompt, /planned-partial/);
+  assert.match(goalPrompt, /complete=null/);
+  assert.match(goalPrompt, /ok.*completion/);
   assert.match(goalPrompt, /mode=apply confirm=true/);
   assert.match(goalPrompt, /commitMessage/);
   assert.match(goalPrompt, /User arguments: commitMessage=feat: done/);
