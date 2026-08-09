@@ -144,7 +144,7 @@ test("Given a registered guardian-hud command, when invoked, then it warns witho
   assert.equal(runtime.dialogReplacements.length, 0);
 });
 
-test("tui slash command dispatches a Guardian prompt in the current session", async () => {
+test("tui status prompt preserves bounded read-only scope", async () => {
   const runtime = createApi();
   await tui(runtime.api);
   const command = runtime.layer?.commands.find((candidate) => candidate.slashName === "guardian-status");
@@ -153,11 +153,8 @@ test("tui slash command dispatches a Guardian prompt in the current session", as
   await command.run();
 
   assert.equal(runtime.prompts.length, 1);
-  assert.deepEqual(runtime.prompts[0], {
-    sessionID: "ses_tui",
-    directory: "/repo",
-    parts: [{ type: "text", text: "Use the guardian_status native tool to inspect the current repository. Treat the result as read-only evidence." }],
-  });
+  const prompt = runtime.prompts[0] as { readonly parts: Array<{ readonly text: string }> };
+  assert.match(prompt.parts[0].text, /guardian_status.*bounded operational scope.*names-only unscanned secondary remotes.*plan-only handoffs/s);
 });
 
 test("tui project status prompt uses the read-only native tool", async () => {
@@ -177,7 +174,7 @@ test("tui project status prompt uses the read-only native tool", async () => {
 });
 
 
-test("tui done prompt preserves primary-main token gates and separate cleanup", async () => {
+test("tui done prompt preserves phased completion and terminal recovery gates", async () => {
   const runtime = createApi();
   await tui(runtime.api);
   const command = runtime.layer?.commands.find((candidate) => candidate.slashName === "guardian-done");
@@ -202,6 +199,7 @@ test("tui done prompt preserves primary-main token gates and separate cleanup", 
   assert.match(prompt.parts[0].text, /confirm=true/);
   assert.match(prompt.parts[0].text, /cleanupSweep/);
   assert.match(prompt.parts[0].text, /remaining blockers/);
+  assert.match(prompt.parts[0].text, /pending-to-active proof.*empty-lease reconciliation.*state-only retirement.*fresh plan/s);
   assert.match(prompt.parts[0].text, /Never force-push/);
 });
 
@@ -271,7 +269,9 @@ test("tui finish-workflow prompt preserves Guardian gated cleanup boundaries", a
   assert.match(prompt.parts[0].text, /guardian_finish_workflow/);
   assert.match(prompt.parts[0].text, /mode=plan/);
   assert.match(prompt.parts[0].text, /explicit user confirmation/);
+  assert.match(prompt.parts[0].text, /mode=apply confirm=true/);
   assert.match(prompt.parts[0].text, /redundant merged Guardian worktrees/);
+  assert.match(prompt.parts[0].text, /bounded operational scope.*names-only unscanned secondary remotes/s);
   assert.match(prompt.parts[0].text, /must not invent commits/);
   assert.match(prompt.parts[0].text, /raw cleanup commands/);
 });

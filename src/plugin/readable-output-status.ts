@@ -1,6 +1,7 @@
 import { computeGuardianVerdict } from "../verdict.ts";
 import { TERMINAL_SESSION_STATUSES, TERMINAL_SESSION_STATUS_VALUES } from "../lifecycle.ts";
-import { arrayValue, describeEntry, recordValue, shortCommit, textValue } from "./readable-output-values.ts";
+import { appendOperationalScope } from "./readable-output-evidence.ts";
+import { DETAIL_LIST_LIMIT, arrayValue, describeEntry, recordValue, shortCommit, textValue } from "./readable-output-values.ts";
 
 function operationalLine(result: Record<string, unknown>, activeSessionCount: number) {
   return [
@@ -38,6 +39,17 @@ function terminalHistoryLines(terminalSessions: readonly unknown[], result: Reco
   ];
 }
 
+function terminalRecoveryPlanLines(result: Record<string, unknown>) {
+  const actions = arrayValue(result.terminalRecoveryActions);
+  const count = numberValue(result.terminalRecoveryActionCount ?? actions.length);
+  if (count === 0) return [];
+  const omittedCount = numberValue(result.terminalRecoveryActionOmittedCount ?? Math.max(0, count - actions.length));
+  return [
+    `Available plans: ${count} | omitted: ${omittedCount}`,
+    ...actions.map((action) => `- ${textValue(recordValue(action).command).replace(/\r\n|\n|\r/g, "\\n").replace(/\t/g, "\\t")}`),
+  ];
+}
+
 function numberValue(value: unknown): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -53,8 +65,8 @@ function addProblemList(lines: string[], label: string, value: unknown) {
   const entries = arrayValue(value);
   if (entries.length === 0) return;
   lines.push(`  ${label}: ${entries.length}`);
-  for (const entry of entries.slice(0, 8)) lines.push(`    - ${describeEntry(entry)}`);
-  if (entries.length > 8) lines.push(`    - ... ${entries.length - 8} more`);
+  for (const entry of entries.slice(0, DETAIL_LIST_LIMIT)) lines.push(`    - ${describeEntry(entry)}`);
+  if (entries.length > DETAIL_LIST_LIMIT) lines.push(`    - ... ${entries.length - DETAIL_LIST_LIMIT} more`);
 }
 
 function hygieneProblemLines(result: Record<string, unknown>): string[] {
@@ -118,6 +130,9 @@ export function formatGuardianStatusOutput(name: string, rawResult: unknown) {
   if (verdict?.nextAction) addSection(lines, "Next", [verdict.nextAction]);
   addSection(lines, "Repo", [textValue(result.repoRoot)]);
   addSection(lines, "Config", configLines(result));
+  const scopeLines: string[] = [];
+  appendOperationalScope(scopeLines, result.operationalScope);
+  addSection(lines, "Operational Scope", scopeLines.slice(1).map((line) => line.replace(/^\[INFO\] /, "")));
   const reason = textValue(result.reason, "");
   if (result.ok === false || reason) addSection(lines, "Problem", [reason || "guardian tool reported failure"]);
   const activeSessions = arrayValue(result.activeSessions);
@@ -135,6 +150,7 @@ export function formatGuardianStatusOutput(name: string, rawResult: unknown) {
   addProblemList(lines, "State branches without worktrees", result.stateBranchesWithoutWorktrees);
   addProblemList(lines, "Stashes", result.stashes);
   if (lines.length === problemStart + 2) lines.splice(problemStart, 2);
+  addSection(lines, "Terminal Recovery Plans", terminalRecoveryPlanLines(result));
   addSection(lines, "History", terminalHistoryLines(terminalSessions, result));
   if (visibleActiveSessions.length > 0) lines.push("", "Active Sessions");
   for (const entry of visibleActiveSessions.slice(0, 12)) {

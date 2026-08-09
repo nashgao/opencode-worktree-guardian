@@ -1,4 +1,6 @@
-import { appendStashInventoryWarning, arrayValue, recordValue, textValue } from "./readable-output-values.ts";
+import { appendCleanupEvidence, appendFinalPostflightEvidence } from "./readable-output-evidence.ts";
+import { appendReservationRetirementEvidence } from "./readable-output-retirement.ts";
+import { appendBoundedList, appendStashInventoryWarning, arrayValue, recordValue, textValue } from "./readable-output-values.ts";
 
 function statusPrefix(result: Record<string, unknown>): "[FAIL]" | "[WARN]" | "[GOOD]" {
   if (result.ok === false || result.status === "blocked") return "[FAIL]";
@@ -56,16 +58,18 @@ export function formatGuardianGoalOutput(rawResult: unknown): string {
   const reason = textValue(result.reason, "");
   if (result.ok === false && reason) lines.push(`[FAIL] ${reason}`);
   if (typeof result.nextAction === "string") lines.push(`[INFO] nextAction: ${result.nextAction}`);
-  if (steps.length > 0) {
-    lines.push("[INFO] goal steps:");
-    for (const step of steps.slice(0, 8)) lines.push(formatStep(step));
-  }
-  if (blockers.length > 0) {
-    lines.push("[WARN] blockers:");
-    for (const entry of blockers.slice(0, 8)) {
-      const blocker = recordValue(entry);
-      lines.push(`  - ${textValue(blocker.tool)}: ${textValue(blocker.reason)}`);
-    }
+  appendBoundedList({ lines, heading: "[INFO] goal steps", entries: steps, format: formatStep });
+  appendBoundedList({ lines, heading: "[WARN] blockers", entries: blockers, format: (entry) => {
+    const blocker = recordValue(entry);
+    return `  - ${textValue(blocker.tool)}: ${textValue(blocker.reason)}`;
+  } });
+  for (const step of steps.map(recordValue)) {
+    const nested = recordValue(step.result);
+    if (Object.keys(nested).length === 0 || (step.tool !== "guardian_done" && step.tool !== "guardian_finish_workflow")) continue;
+    lines.push(`[${nested.ok === false || nested.status === "blocked" || nested.status === "partial" || nested.status === "planned-partial" ? "WARN" : "INFO"}] ${textValue(step.tool)} evidence:`);
+    appendCleanupEvidence(lines, nested);
+    appendReservationRetirementEvidence(lines, nested);
+    appendFinalPostflightEvidence(lines, nested.finalPostflight);
   }
   if (typeof result.commit === "string") lines.push(`[INFO] commit: ${result.commit.slice(0, 12)}`);
   return lines.join("\n");

@@ -5,6 +5,7 @@ import test from "node:test";
 import { DEFAULT_CONFIG } from "../src/config.ts";
 import { guardianDone } from "../src/done.ts";
 import { createSafetyRef } from "../src/git.ts";
+import { getGuardianPaths, readState, updateState } from "../src/state.ts";
 import { guardianStart } from "../src/tools.ts";
 import { createRepoWithOrigin, git } from "./helpers.ts";
 import { installFakeGh } from "./delete-fixtures.ts";
@@ -253,6 +254,45 @@ test("guardian_done all=true cleans stale branches without active sessions", asy
   assert.equal(cleanupSweep.cleanedCount, 2);
   await assert.rejects(git(repo, ["rev-parse", "--verify", localBranch]));
   assert.equal(await remoteBranchExists(repo, remoteBranch), false);
+});
+
+test("guardian_done all=true applies retirement-only maintenance without sync or final postflight", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const branch = "guardian/done-all-retirement-only";
+  const head = await createMergedGuardianWorktree(repo, branch, "done-all-retirement-only", "done-all-retirement-only.txt").then(async ({ head, worktreePath }) => {
+    await git(repo, ["worktree", "remove", worktreePath]);
+    return head;
+  });
+  await git(repo, ["push", "origin", branch]);
+  const safetyRef = "refs/opencode-guardian/remote-branch-cleanup/origin/guardian/done-all-retirement-only/20260810T020202";
+  await createSafetyRef(repo, { sessionId: "remote-branch-cleanup", branch: `origin/${branch}`, commit: head, ref: safetyRef });
+  await updateState(repo, DEFAULT_CONFIG, (state) => ({
+    ...state,
+    remote_branch_cleanup_reservations: [{ remote: "origin", remote_branch: branch, head, safety_ref: safetyRef, reserved_at: "2026-08-10T02:02:02.000Z" }],
+  }));
+  await git(repo, ["checkout", branch]);
+  await fs.writeFile(path.join(repo, "done-all-retirement-only-advanced.txt"), "advanced\n");
+  await git(repo, ["add", "done-all-retirement-only-advanced.txt"]);
+  await git(repo, ["commit", "-m", "advance retired reservation"]);
+  await git(repo, ["push", "origin", branch]);
+  await git(repo, ["checkout", "main"]);
+
+  const plan = await guardianDone({ repoRoot: repo, cwd: repo, all: true, mode: "plan" }) as LooseRecord;
+  const apply = await guardianDone({ repoRoot: repo, cwd: repo, all: true, mode: "apply", confirm: true, confirmToken: plan.confirmToken }) as LooseRecord;
+  const state = await readState(await getGuardianPaths(repo), { repoRoot: repo, config: DEFAULT_CONFIG });
+  const sweep = apply.cleanupSweep as LooseRecord;
+
+  assert.equal(plan.status, "planned-partial", JSON.stringify(plan));
+  assert.equal(apply.status, "partial", JSON.stringify(apply));
+  assert.equal(apply.freshPlanRequired, true);
+  assert.equal(sweep.candidateCount, 0);
+  assert.equal(sweep.retirementCandidateCount, 1);
+  assert.equal(sweep.retiredCount, 1);
+  assert.equal("mainSync" in apply, false);
+  assert.equal("finalPostflight" in apply, false);
+  assert.equal(await remoteBranchExists(repo, branch), true);
+  assert.equal(Array.isArray(state.remote_branch_cleanup_reservations) ? state.remote_branch_cleanup_reservations.length : 0, 0);
 });
 
 

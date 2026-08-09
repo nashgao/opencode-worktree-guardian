@@ -13,10 +13,10 @@ Canonical safety policy: [ADR 0001: Guardian Safety Policy](../../docs/adr/0001-
 ## Rules
 
 - Do not run raw cleanup, reset, stash mutation, force-push, worktree removal, raw `git worktree add` outside Guardian-owned roots, raw branch deletion, or `rm -rf` against worktrees. Use the matching native Guardian tool.
-- Use `guardian_status` for read-only inventory.
+- Use `guardian_status` for read-only inventory within its bounded operational scope, not as a repository-wide cleanliness claim. Additional remotes are names-only unscanned secondary remotes unless native metadata selects an effective authority.
 - Use `guardian_project_status` for read-only project intelligence evidence from roadmap, milestone review, `.omo/plans`, and `.omo/ulw-loop` artifacts. It does not establish ownership or approval to mutate. Only pass `writeReport: true` when the user explicitly asks for the static project report.
 - Use `guardian_done` for normal implementation completion. It inventories dirty implementation targets across the primary worktree and active Guardian sessions before choosing a lane, so it can be run from any cwd. Bare `guardian_done` auto-selects exactly one dirty target; multiple dirty targets return `needs-selection` with exact `primary=true`, `sessionId=...`, or `branch=...` follow-up options. With no dirty targets, clean primary with active sessions plans the repo-wide done-all lane; after confirmation it lands finishable sessions, syncs local base when safe, and applies safe redundant cleanup from the same clean no-blocker plan while reporting dirty or protected leftovers. Prefer it over raw protected-branch push/merge commands or low-level finish tools unless the user explicitly asks for those tools.
-- Use `guardian_goal` when the user wants the configured desired repo state in one command. It reads config `goal`, runs safe known-cleanable hygiene cleanup before `guardian_done`, then delegates commit/land/push/worktree/branch cleanup to existing Guardian gates. Run `mode: "plan"` first and apply with `confirm: true` only when the user invoked the goal workflow and the plan is safe.
+- Use `guardian_goal` when the user wants the configured desired repo state in one command. It reads config `goal`, runs safe known-cleanable hygiene cleanup before `guardian_done`, then delegates commit/land/push/worktree/branch cleanup to existing Guardian gates. Run `mode: "plan"` first and apply with `confirm: true` only when the user invoked the goal workflow and the plan is safe; respect `freshPlanRequired` by obtaining a new plan.
 - Use `guardian_hygiene` for hygiene scan/plan/apply cleanup. With no `mode`, it scans only. For cleanup, first run `mode: "plan"`; inspect exact approved targets and blockers, get explicit user confirmation, then run `mode: "apply"` with `confirmDelete: true`.
 - Use `guardian_delete_paths` when the user intentionally wants exact files or directories deleted, including tracked source only with explicit `allowTracked: true`. Worktree deletion must use `guardian_delete_worktree`.
 - Use `guardian_report_html` or `/guardian report` when the user wants a browser-readable branch/worktree/session report. It writes a static offline file at `.git/opencode-guardian/report.html` and returns the exact path.
@@ -24,7 +24,7 @@ Canonical safety policy: [ADR 0001: Guardian Safety Policy](../../docs/adr/0001-
 - Use `guardian_unblock_finish` only when `guardian_finish` is blocked by narrow generated review artifacts. First run `mode: "plan"`; only apply after explicit confirmation with the returned `confirmToken` and the same target options.
 - Use `guardian_finish` for explicit low-level gated completion.
 - Use `guardian_preserve` only to create a safety ref and mark a session terminal/preserved. Preserved worktrees are cleanup-eligible; do not treat preservation as a reason to keep disk state forever.
-- Use `guardian_recover` for safety refs, orphaned sessions, stash inventory, reflog, and recovery suggestions.
+- Use `guardian_recover` for safety refs, orphaned sessions, stash inventory, reflog, and recovery suggestions. Terminal reattach and stale cleanup are plan-only handoffs: native pending-to-active proof and absent empty-lease reconciliation are evidence, never authorization to mutate.
 - Treat repository stash inventory as advisory by default. Guardian reports it and never mutates it; only repo config `requireEmptyStashInventory: true` makes it a finish, goal, or cleanup blocker.
 - For mutating commands such as `git add` or `git commit`, rely on Guardian routing after the default auto-start hook or explicit `guardian_start` records a session worktree. Repo config `autoStart=false` disables automatic ownership; without recorded ownership, normal non-destructive commands run in the current worktree.
 - If Guardian state records the current session on the primary repo worktree or a protected branch, use `guardian_start` with `createWorktree: true` to repair the session into a proper Guardian worktree. Do not use raw `git switch`, raw branch creation, or protected-branch bypass commands to escape the poisoned binding.
@@ -61,6 +61,8 @@ Canonical safety policy: [ADR 0001: Guardian Safety Policy](../../docs/adr/0001-
 ## Recovery posture
 
 Recovery is read-only by default. Creating recovery branches requires explicit user approval.
+
+If native metadata reports advanced state-only retirement, preserve the branch/proof or report pending proof absent. Do not sync, postflight, or delete; obtain a fresh plan before a separate tool acts.
 
 ## Finish-unblock posture
 

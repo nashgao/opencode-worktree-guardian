@@ -111,6 +111,18 @@ export async function getRefCommitOrNull(repoRoot: string, ref: string): Promise
   return getRefCommit(repoRoot, ref);
 }
 
+export async function getDirectRefCommitOrNull(repoRoot: string, ref: string): Promise<string | null> {
+  validateGitRef(ref);
+  if (await getSymbolicRefTarget(repoRoot, ref) !== null) return null;
+  const direct = await tryGit(repoRoot, ["rev-parse", "--verify", ref]);
+  if (!direct.ok) {
+    if (direct.error.gitExitCode === 1 && !direct.error.gitSignal) return null;
+    throw direct.error;
+  }
+  const type = await tryGit(repoRoot, ["cat-file", "-t", direct.stdout]);
+  return type.ok && type.stdout === "commit" ? direct.stdout : null;
+}
+
 function safeRefSegment(value: unknown) {
   const segment = String(value ?? "")
     .replace(/^refs\//, "")
@@ -252,6 +264,14 @@ export async function deleteRemoteBranch(repoRoot: string, remote: string, branc
   validateGitRef(expectedHead);
   const ref = `refs/heads/${branch}`;
   await runGit(repoRoot, ["push", remote, `--force-with-lease=${ref}:${expectedHead}`, `:${ref}`]);
+  await fetchRemotePrune(repoRoot, remote);
+}
+
+export async function deleteAbsentRemoteBranchAtExpectedAbsence(repoRoot: string, remote: string, branch: string) {
+  await validateConfiguredRemote(repoRoot, remote);
+  validateGitRef(branch);
+  const ref = `refs/heads/${branch}`;
+  await runGit(repoRoot, ["push", remote, `--force-with-lease=${ref}:`, `:${ref}`]);
   await fetchRemotePrune(repoRoot, remote);
 }
 

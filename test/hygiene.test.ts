@@ -54,6 +54,22 @@ test("hygiene scanner detects known scratch artifact patterns", async () => {
   assert.equal(reasons.get("tsx-501"), "generated tsx runtime cache");
 });
 
+test("hygiene scanner declares Git untracked and ignored coverage while excluding empty directories", async () => {
+  // Given
+  const repo = await createRepo();
+  await fs.mkdir(path.join(repo, "empty-directory"));
+
+  // When
+  const result = await scanWorkspaceHygiene({ repoRoot: repo, config: DEFAULT_CONFIG });
+
+  // Then
+  assert.deepEqual(result.operationalScope, {
+    enumeration: "git-untracked-and-ignored",
+    emptyDirectories: "outside-coverage",
+  });
+  assert.equal(result.summary.candidateCount, 0);
+});
+
 test("hygiene scanner degrades one unenumerable ignored directory without losing precision elsewhere", async () => {
   const repo = await createRepo();
   await fs.writeFile(path.join(repo, ".gitignore"), "data/\nhuge/\n");

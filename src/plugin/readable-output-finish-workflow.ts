@@ -1,4 +1,6 @@
-import { appendStashInventoryWarning, arrayValue, recordValue, shortCommit, textValue } from "./readable-output-values.ts";
+import { appendCleanupResults, appendFinalPostflightEvidence } from "./readable-output-evidence.ts";
+import { appendReservationRetirementEvidence } from "./readable-output-retirement.ts";
+import { appendBoundedList, appendStashInventoryWarning, arrayValue, recordValue, shortCommit, textValue } from "./readable-output-values.ts";
 
 export function formatGuardianFinishWorkflowOutput(rawResult: unknown) {
   const result = recordValue(rawResult);
@@ -22,22 +24,12 @@ export function formatGuardianFinishWorkflowOutput(rawResult: unknown) {
   const reason = textValue(result.reason, "");
   if (result.ok === false || reason) lines.push(`[FAIL] ${reason || "guardian_finish_workflow blocked"}`);
   if (typeof result.confirmToken === "string") lines.push(`[WARN] confirmToken: ${result.confirmToken}`);
-  if (candidates.length > 0) {
-    lines.push("[INFO] cleanup candidates:");
-    for (const entry of candidates.slice(0, 8)) lines.push(formatCleanupCandidate(entry));
-  }
-  if (blockers.length > 0) {
-    lines.push("[WARN] cleanup blockers:");
-    for (const entry of blockers.slice(0, 8)) lines.push(formatCleanupBlocker(entry));
-  }
-  if (remaining.length > 0) {
-    lines.push("[WARN] remaining repo blockers:");
-    for (const entry of remaining.slice(0, 8)) lines.push(formatRemaining(entry));
-  }
-  if (results.length > 0) {
-    lines.push("[INFO] cleanup results:");
-    for (const entry of results.slice(0, 8)) lines.push(formatCleanupResult(entry));
-  }
+  appendBoundedList({ lines, heading: "[INFO] cleanup candidates", entries: candidates, format: formatCleanupCandidate, count: preflight.candidateCount });
+  appendBoundedList({ lines, heading: "[WARN] cleanup blockers", entries: blockers, format: formatCleanupBlocker, count: preflight.blockerCount });
+  appendBoundedList({ lines, heading: "[WARN] remaining repo blockers", entries: remaining, format: formatRemaining });
+  appendCleanupResults(lines, results);
+  appendReservationRetirementEvidence(lines, result);
+  appendFinalPostflightEvidence(lines, result.finalPostflight);
   return lines.join("\n");
 }
 
@@ -65,10 +57,4 @@ function formatRemaining(entry: unknown): string {
   const head = remaining.head ? ` head=${shortCommit(remaining.head)}` : "";
   const reason = textValue(remaining.reason, "");
   return `  - kind=${kind} branch=${branch} path=${path}${head}${reason ? ` reason=${reason}` : ""}`;
-}
-
-function formatCleanupResult(entry: unknown): string {
-  const item = recordValue(entry);
-  const abandon = item.abandonUnmerged === true ? " abandonUnmerged=true" : "";
-  return `  - status=${textValue(item.status)} branch=${textValue(item.branch)} worktreeRemoved=${String(item.worktreeRemoved === true)} branchDeleted=${String(item.branchDeleted === true)}${abandon}`;
 }
