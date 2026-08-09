@@ -1,4 +1,5 @@
 import { guardianFinishWorkflow } from "./workflow.ts";
+import { workflowApplyWorkCount } from "./workflow-candidates.ts";
 import type { FinalPostflightCommit } from "./final-postflight.ts";
 import { isRecordLike } from "./types.ts";
 import type { GuardianConfig } from "./types.ts";
@@ -57,19 +58,29 @@ export async function runCleanupSweep(repoRoot: string, config: GuardianConfig, 
   const plan = await guardianFinishWorkflow({ ...input, repoRoot, cwd: repoRoot, mode: "plan", config, skipFinalPostflight: true, abandonUnmerged: true });
   if (plan.ok !== true) return { ok: false, status: "blocked", reason: "cleanup sweep planning blocked", plan };
   const candidates = Array.isArray(plan.candidates) ? plan.candidates : [];
-  if (candidates.length === 0) return { ok: true, status: "no-op", candidateCount: 0, plan };
+  const retirementCandidates = Array.isArray(plan.reservationRetirementCandidates) ? plan.reservationRetirementCandidates : [];
+  const applyWorkCount = workflowApplyWorkCount(plan);
+  if (applyWorkCount === 0) return { ok: true, status: "no-op", candidateCount: 0, retirementCandidateCount: 0, applyWorkCount: 0, plan };
   if (typeof plan.confirmToken !== "string") return { ok: false, status: "blocked", reason: "cleanup sweep plan did not return a confirm token", plan };
   const applied = await guardianFinishWorkflow({ ...input, repoRoot, cwd: repoRoot, mode: "apply", confirm: true, confirmToken: plan.confirmToken, config, skipFinalPostflight: true, abandonUnmerged: true });
   const results = Array.isArray(applied.results) ? applied.results : [];
+  const retirementResults = Array.isArray(applied.reservationRetirementResults) ? applied.reservationRetirementResults : [];
   const cleanedCount = results.filter((result) => result && typeof result === "object" && (result as { ok?: unknown }).ok === true).length;
   const failedCount = results.length - cleanedCount;
+  const retiredCount = retirementResults.filter((result) => result && typeof result === "object" && (result as { status?: unknown }).status === "retired").length;
+  const retirementFailedCount = retirementResults.length - retiredCount;
   return {
     ok: applied.ok === true,
     status: applied.status === "cleaned" ? "cleaned" : "partial",
     reason: applied.ok === true ? undefined : "cleanup sweep applied safe candidates with remaining blockers",
     candidateCount: candidates.length,
+    retirementCandidateCount: retirementCandidates.length,
+    applyWorkCount,
     cleanedCount,
     failedCount,
+    retiredCount,
+    retirementFailedCount,
+    freshPlanRequired: applied.freshPlanRequired === true,
     plan,
     apply: applied,
     remaining: applied.remaining ?? applied.blockers ?? [],

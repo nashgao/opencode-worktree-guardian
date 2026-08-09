@@ -43,6 +43,9 @@ type WorkflowResult = {
   finalPostflight?: Record<string, unknown>;
   results: Array<Record<string, unknown>>;
   remaining: Array<Record<string, unknown>>;
+  reservationRetirementCandidates?: Array<Record<string, unknown>>;
+  reservationRetirementResults?: Array<Record<string, unknown>>;
+  freshPlanRequired?: boolean;
 };
 
 function workflowResult(result: Record<string, unknown>): WorkflowResult {

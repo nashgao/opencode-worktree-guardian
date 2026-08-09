@@ -1,4 +1,6 @@
-import { appendStashInventoryWarning, arrayValue, recordValue, shortCommit, textValue } from "./readable-output-values.ts";
+import { appendCleanupResults, appendFinalPostflightEvidence } from "./readable-output-evidence.ts";
+import { appendReservationRetirementEvidence, formatCleanupSweepSummary } from "./readable-output-retirement.ts";
+import { appendBoundedList, appendStashInventoryWarning, arrayValue, recordValue, shortCommit, textValue } from "./readable-output-values.ts";
 import { appendDoneHygieneGuidance } from "./readable-output-hygiene.ts";
 
 function statusPrefix(result: Record<string, unknown>): "[FAIL]" | "[WARN]" | "[GOOD]" {
@@ -81,36 +83,23 @@ function formatGuardianDoneAllOutput(result: Record<string, unknown>) {
   if (Object.keys(cleanupPlan).length > 0) {
     lines.push(`[INFO] cleanupPlan: ${textValue(cleanupPlan.status)} candidates=${cleanupCandidates.length} blockers=${cleanupBlockers.length}`);
   }
-  if (cleanupCandidates.length > 0) {
-    lines.push("[INFO] cleanup candidates:");
-    for (const entry of cleanupCandidates.slice(0, 8)) lines.push(formatCleanupPlanEntry(entry));
-  }
-  if (cleanupBlockers.length > 0) {
-    lines.push("[WARN] cleanup blockers:");
-    for (const entry of cleanupBlockers.slice(0, 8)) lines.push(formatCleanupPlanEntry(entry));
-  }
-  if (finishable.length > 0) {
-    lines.push("[INFO] finishable sessions:");
-    for (const entry of finishable.slice(0, 8)) lines.push(formatDoneAllSession(entry));
-  }
-  if (results.length > 0) {
-    lines.push("[INFO] finish results:");
-    for (const entry of results.slice(0, 8)) lines.push(formatDoneAllSession(entry));
-  }
-  if (remaining.length > 0) {
-    lines.push("[WARN] remaining repo blockers:");
-    for (const entry of remaining.slice(0, 8)) lines.push(formatDoneAllRemaining(entry));
-  }
+  appendBoundedList({ lines, heading: "[INFO] cleanup candidates", entries: cleanupCandidates, format: formatCleanupPlanEntry });
+  appendBoundedList({ lines, heading: "[WARN] cleanup blockers", entries: cleanupBlockers, format: formatCleanupPlanEntry });
+  appendBoundedList({ lines, heading: "[INFO] finishable sessions", entries: finishable, format: formatDoneAllSession });
+  appendBoundedList({ lines, heading: "[INFO] finish results", entries: results, format: formatDoneAllSession });
+  appendBoundedList({ lines, heading: "[WARN] remaining repo blockers", entries: remaining, format: formatDoneAllRemaining });
   const mainSync = recordValue(result.mainSync);
   if (Object.keys(mainSync).length > 0) {
     lines.push(`[INFO] mainSync: ok=${String(mainSync.ok === true)} baseBranch=${textValue(mainSync.baseBranch)} fastForwarded=${String(mainSync.fastForwarded === true)} alreadySynced=${String(mainSync.alreadySynced === true)} reason=${textValue(mainSync.reason, "")}`);
   }
   const cleanupSweep = recordValue(result.cleanupSweep);
   if (Object.keys(cleanupSweep).length > 0) {
-    lines.push(`[INFO] cleanupSweep: ok=${String(cleanupSweep.ok === true)} status=${textValue(cleanupSweep.status)} candidates=${Number(cleanupSweep.candidateCount ?? 0)} cleaned=${Number(cleanupSweep.cleanedCount ?? 0)} failed=${Number(cleanupSweep.failedCount ?? 0)}`);
+    lines.push(formatCleanupSweepSummary(cleanupSweep));
   }
   const hint = textValue(result.remainingHint, "");
   if (hint) lines.push(`[WARN] ${hint}`);
+  appendReservationRetirementEvidence(lines, result);
+  appendFinalPostflightEvidence(lines, result.finalPostflight);
   return lines.join("\n");
 }
 
@@ -182,7 +171,7 @@ export function formatGuardianDoneOutput(rawResult: unknown) {
   const mainSync = recordValue(result.mainSync);
   if (Object.keys(mainSync).length > 0) lines.push(`[INFO] mainSync: ok=${String(mainSync.ok === true)} baseBranch=${textValue(mainSync.baseBranch)} fastForwarded=${String(mainSync.fastForwarded === true)} alreadySynced=${String(mainSync.alreadySynced === true)} reason=${textValue(mainSync.reason, "")}`);
   const cleanupSweep = recordValue(result.cleanupSweep);
-  if (Object.keys(cleanupSweep).length > 0) lines.push(`[INFO] cleanupSweep: ok=${String(cleanupSweep.ok === true)} status=${textValue(cleanupSweep.status)} candidates=${Number(cleanupSweep.candidateCount ?? 0)} cleaned=${Number(cleanupSweep.cleanedCount ?? 0)} failed=${Number(cleanupSweep.failedCount ?? 0)}`);
+  if (Object.keys(cleanupSweep).length > 0) lines.push(formatCleanupSweepSummary(cleanupSweep));
   if (typeof result.commitMessage === "string") lines.push(`[INFO] commitMessage: ${result.commitMessage}`);
   if (typeof result.commit === "string") lines.push(`[INFO] commit: ${shortCommit(result.commit)}`);
   if (dirtyPaths.length > 0) {
@@ -193,18 +182,8 @@ export function formatGuardianDoneOutput(rawResult: unknown) {
   if (Object.keys(cleanupPlan).length > 0) {
     lines.push(`[INFO] cleanupPlan: ${textValue(cleanupPlan.status)} candidates=${arrayValue(cleanupPlan.candidates).length} blockers=${arrayValue(cleanupPlan.blockers).length}`);
   }
-  if (candidates.length > 0) {
-    lines.push("[INFO] cleanup candidates:");
-    for (const entry of candidates.slice(0, 8)) lines.push(formatCleanupPlanEntry(entry));
-  }
-  if (results.length > 0) {
-    lines.push("[INFO] cleanup results:");
-    for (const entry of results.slice(0, 8)) {
-      const item = recordValue(entry);
-      const abandon = item.abandonUnmerged === true ? " abandonUnmerged=true" : "";
-      lines.push(`  - status=${textValue(item.status)} branch=${textValue(item.branch)} worktreeRemoved=${String(item.worktreeRemoved === true)} branchDeleted=${String(item.branchDeleted === true)}${abandon}`);
-    }
-  }
+  appendBoundedList({ lines, heading: "[INFO] cleanup candidates", entries: candidates, format: formatCleanupPlanEntry });
+  appendCleanupResults(lines, results);
   const suggestions = arrayValue(result.suggestedCommands);
   if (suggestions.length > 0) {
     lines.push("[INFO] suggested commands:");
@@ -218,5 +197,7 @@ export function formatGuardianDoneOutput(rawResult: unknown) {
       lines.push(`  - branch=${textValue(session.branch)} session=${textValue(session.session_id)} path=${textValue(session.worktree_path)}`);
     }
   }
+  appendReservationRetirementEvidence(lines, result);
+  appendFinalPostflightEvidence(lines, result.finalPostflight);
   return lines.join("\n");
 }

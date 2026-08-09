@@ -2,22 +2,15 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { expandWorktreeRoot, loadConfig } from "./config.ts";
 import { getRepoRoot, listWorktrees, runGitNullSeparated, tryGit } from "./git.ts";
-import { isEnoent, isSameOrInside, normalizeRelativePath, relativePath } from "./filesystem-boundaries.ts";
+import { isEnoent, isSameOrInside, relativePath } from "./filesystem-boundaries.ts";
+import { listCandidatePaths } from "./hygiene-candidates.ts";
+import type { NullSeparatedRunner, ReviewableCandidateInput } from "./hygiene-candidates.ts";
+import { buildReviewableCandidates } from "./hygiene-reviewable.ts";
+import { HYGIENE_OPERATIONAL_SCOPE } from "./operational-scope.ts";
 import { protectedPathMatch, protectedPathsFromConfig } from "./protected-paths.ts";
 
 export type HygieneSeverity = "warn" | "fail";
 export type HygieneCategory = "known-cleanable" | "nested-git" | "suspicious";
-type HygieneCandidateStatus = "ignored" | "untracked";
-type ReviewableCandidateInput = { readonly path: string; readonly status: HygieneCandidateStatus };
-
-type ReviewableCandidate = {
-  readonly path: string;
-  readonly status: HygieneCandidateStatus;
-  readonly fileCount: number;
-  readonly reason: "not matched by Guardian hygiene cleanup rules";
-  readonly source: "git ls-files --others/--ignored";
-  readonly suggestedDeletePathCommand: string;
-};
 
 const PROTECTED_DIR_NAMES = new Set([
   "node_modules", "vendor", "target", "dist", "build", "coverage",
@@ -29,44 +22,6 @@ const SUSPICIOUS_NAME_PATTERN = /(^|[-_.])(clone|clones|research|dump|dumps|scra
 const RESIDUE_ROOT_PATTERN = /^(guardian-[^/]+|guardian-origin-[^/]+|opencode-temp-[^/]+|omo-research-[^/]+|opencode-research-[^/]+|git-docs-research)$/;
 const DEFAULT_REVIEWABLE_CANDIDATE_LIMIT = 12;
 
-type NullSeparatedRunner = (repoPath: string, args: readonly string[]) => Promise<string[]>;
-
-const IGNORED_ENUMERATION_ARGS = ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"] as const;
-
-async function listIgnoredPaths(repoRoot: string, runNullSeparated: NullSeparatedRunner): Promise<string[]> {
-  try {
-    return await runNullSeparated(repoRoot, [...IGNORED_ENUMERATION_ARGS]);
-  } catch (error) {
-    void error;
-    const collapsed = await runNullSeparated(repoRoot, [...IGNORED_ENUMERATION_ARGS, "--directory"]);
-    const expanded: string[] = [];
-    for (const entry of collapsed) {
-      try {
-        const scoped = await runNullSeparated(repoRoot, [...IGNORED_ENUMERATION_ARGS, "--", entry]);
-        expanded.push(...(scoped.length > 0 ? scoped : [entry]));
-      } catch (scopedError) {
-        void scopedError;
-        expanded.push(entry);
-      }
-    }
-    return expanded;
-  }
-}
-
-async function listCandidatePaths(repoRoot: string, runNullSeparated: NullSeparatedRunner = runGitNullSeparated) {
-  const untracked = await runNullSeparated(repoRoot, ["ls-files", "--others", "--exclude-standard", "-z"]);
-  const ignored = await listIgnoredPaths(repoRoot, runNullSeparated);
-  const candidatesByPath = new Map<string, HygieneCandidateStatus>();
-  for (const entry of untracked) {
-    candidatesByPath.set(normalizeRelativePath(entry), "untracked");
-  }
-  for (const entry of ignored) {
-    candidatesByPath.set(normalizeRelativePath(entry), "ignored");
-  }
-  return [...candidatesByPath.entries()]
-    .map(([candidatePath, status]) => ({ path: candidatePath, status }))
-    .sort((left, right) => left.path.localeCompare(right.path));
-}
 
 export function protectedDirReason(relative: string, protectedPaths: readonly string[] = []) {
   const parts = relative.split("/").filter(Boolean);
@@ -119,7 +74,7 @@ function shellQuote(value: string) {
   return /^[A-Za-z0-9_./:-]+$/.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`;
 }
 
-async function pathKind(candidate: string) {
+async function pathKind(candidate: string): Promise<"directory" | "file" | "missing"> {
   try {
     const stat = await fs.lstat(candidate);
     return stat.isDirectory() ? "directory" : "file";
@@ -129,61 +84,6 @@ async function pathKind(candidate: string) {
   }
 }
 
-async function hasTrackedEntriesUnder(repoRoot: string, relative: string) {
-  const result = await tryGit(repoRoot, ["ls-files", "--", `${relative.replace(/\/$/, "")}/`]);
-  return result.ok && result.stdout.trim().length > 0;
-}
-
-async function reviewablePath(repoRoot: string, relative: string, blockedRoots: Set<string>) {
-  const parts = relative.split("/").filter(Boolean);
-  if (parts.length <= 1) return relative;
-  for (let index = 1; index <= parts.length; index += 1) {
-    const candidate = parts.slice(0, index).join("/");
-    const overlapsBlockedRoot = [...blockedRoots].some((blockedRoot) => candidate === blockedRoot || candidate.startsWith(`${blockedRoot}/`) || blockedRoot.startsWith(`${candidate}/`));
-    if (!overlapsBlockedRoot && (index === parts.length || !await hasTrackedEntriesUnder(repoRoot, candidate))) return candidate;
-  }
-  return null;
-}
-
-function mergeReviewableStatus(current: HygieneCandidateStatus | undefined, next: HygieneCandidateStatus) {
-  return current === "ignored" || next === "ignored" ? "ignored" : "untracked";
-}
-
-async function buildReviewableCandidates(repoRoot: string, candidates: readonly ReviewableCandidateInput[], blockedRoots: Set<string>, visibleLimit: number | null) {
-  const collapsedByPath = new Map<string, HygieneCandidateStatus>();
-  const fileCountByPath = new Map<string, number>();
-  for (const candidate of candidates) {
-    const collapsedPath = await reviewablePath(repoRoot, candidate.path, blockedRoots);
-    if (collapsedPath === null) continue;
-    collapsedByPath.set(collapsedPath, mergeReviewableStatus(collapsedByPath.get(collapsedPath), candidate.status));
-    fileCountByPath.set(collapsedPath, (fileCountByPath.get(collapsedPath) ?? 0) + 1);
-  }
-  const collapsed = [...collapsedByPath.entries()]
-    .map(([candidatePath, status]) => ({ path: candidatePath, status, fileCount: fileCountByPath.get(candidatePath) ?? 1 }))
-    // Order a truncated slice by consequence, not by name: localeCompare sorted dot-directories
-    // first, so the visible rows were reliably the smallest and the largest fell into the remainder.
-    .sort((left, right) => right.fileCount - left.fileCount || left.path.localeCompare(right.path));
-  const visible = visibleLimit === null ? collapsed : collapsed.slice(0, visibleLimit);
-  const reviewableCandidates: ReviewableCandidate[] = [];
-  for (const candidate of visible) {
-    const kind = await pathKind(path.resolve(repoRoot, candidate.path));
-    const recursiveFlag = kind === "directory" ? " allowRecursive=true" : "";
-    reviewableCandidates.push({
-      path: candidate.path,
-      status: candidate.status,
-      fileCount: candidate.fileCount,
-      reason: "not matched by Guardian hygiene cleanup rules",
-      source: "git ls-files --others/--ignored",
-      suggestedDeletePathCommand: `guardian_delete_paths mode=plan paths=${JSON.stringify([candidate.path])}${recursiveFlag}`,
-    });
-  }
-  const reviewableCandidateCount = collapsed.length;
-  const reviewableShownCount = reviewableCandidates.length;
-  // Summed over every collapsed candidate, not the visible slice: a total cannot be truncated,
-  // so it stays correct no matter how few rows the display limit allows through.
-  const reviewableTotalFileCount = collapsed.reduce((total, candidate) => total + candidate.fileCount, 0);
-  return { reviewableCandidates, reviewableCandidateCount, reviewableShownCount, reviewableTotalFileCount, reviewableOmittedCount: reviewableCandidateCount - reviewableShownCount, reviewableTruncated: reviewableCandidateCount > reviewableShownCount };
-}
 
 async function findNestedGitRoot(repoRoot: string, candidatePath: string) {
   let current = await pathKind(candidatePath) === "directory" ? candidatePath : path.dirname(candidatePath);
@@ -292,9 +192,9 @@ export async function scanWorkspaceHygiene(input: Record<string, unknown> = {}) 
       summary.byCategory[category] = (summary.byCategory[category] ?? 0) + 1;
     }
     const nestedCommands = findings.filter((finding) => finding.category === "nested-git").map((finding) => `git -C ${shellQuote(String(finding.path))} status --short`);
-    return { ok: true, repoRoot, summary, findings, exclusions, reviewableCandidates: reviewableSummary.reviewableCandidates, scannedAt, suggestedCommands: ["guardian_hygiene", "guardian_status", "git status --short --ignored", ...nestedCommands] };
+    return { ok: true, repoRoot, summary, findings, exclusions, reviewableCandidates: reviewableSummary.reviewableCandidates, operationalScope: HYGIENE_OPERATIONAL_SCOPE, scannedAt, suggestedCommands: ["guardian_hygiene", "guardian_status", "git status --short --ignored", ...nestedCommands] };
   } catch (error) {
     if (!(error instanceof Error)) throw error;
-    return { ok: false, status: "failed", reason: error.message, failureReason: error.message, summary: { scanFailed: true, candidateCount: 0, findingCount: 0, exclusionCount: 0, reviewableCandidateCount: 0, reviewableShownCount: 0, reviewableOmittedCount: 0, reviewableTotalFileCount: 0, reviewableTruncated: false, bySeverity: { warn: 0, fail: 0 }, byCategory: { "known-cleanable": 0, "nested-git": 0, suspicious: 0 } }, findings: [], exclusions: [], reviewableCandidates: [], scannedAt, suggestedCommands: ["guardian_hygiene", "guardian_status"] };
+    return { ok: false, status: "failed", reason: error.message, failureReason: error.message, summary: { scanFailed: true, candidateCount: 0, findingCount: 0, exclusionCount: 0, reviewableCandidateCount: 0, reviewableShownCount: 0, reviewableOmittedCount: 0, reviewableTotalFileCount: 0, reviewableTruncated: false, bySeverity: { warn: 0, fail: 0 }, byCategory: { "known-cleanable": 0, "nested-git": 0, suspicious: 0 } }, findings: [], exclusions: [], reviewableCandidates: [], operationalScope: HYGIENE_OPERATIONAL_SCOPE, scannedAt, suggestedCommands: ["guardian_hygiene", "guardian_status"] };
   }
 }

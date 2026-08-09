@@ -163,6 +163,7 @@ export async function primaryMainDone(repoRoot: string, cwd: string, config: Gua
   const proven = await isAncestor(repoRoot, commit, configuredRemoteAuthority(config).authorityRef);
   if (!proven) return blocked("published commit is not proven reachable from remote base", { safetyRef, commit }, preflight);
   const cleanupSweep = await runCleanupSweep(repoRoot, config, input);
+  if (cleanupSweep.freshPlanRequired === true) return { ok: false, status: "partial", reason: "published, but reservation retirement requires a fresh cleanup plan", lane: "primary-main-publish", branch, commit, safetyRef, preflight, cleanupSweep, freshPlanRequired: true };
   const finalPostflight = await runFinalCleanupPostflight({ repoRoot, config, requiredCommits: [{ commit, source: branch, reason: "published primary-main commit must be present on final base" }, ...finalPostflightCommitsFromCleanupSweep(cleanupSweep)] });
   const ok = cleanupSweep.ok !== false && finalPostflight.ok === true;
   return { ok, status: ok ? "published" : "partial", ...(ok ? {} : { reason: finalPostflight.ok === false ? "published, but final cleanup postflight failed" : "published, but post-publish cleanup has remaining blockers" }), lane: "primary-main-publish", branch, commit, safetyRef, preflight, cleanupSweep, finalPostflight };

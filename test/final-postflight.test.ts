@@ -108,6 +108,36 @@ test("final postflight allows the resolved upstream remote branch by default", a
   assert.equal(result.status, "passed");
 });
 
+test("final postflight reports its freshly fetched effective-remote scope without examining secondary remotes", async (t) => {
+  // Given
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const gitlab = path.join(base, "gitlab.git");
+  const mirror = path.join(base, "mirror.git");
+  await execFileAsync("git", ["init", "--bare", gitlab]);
+  await execFileAsync("git", ["init", "--bare", mirror]);
+  await git(repo, ["remote", "add", "gitlab", gitlab]);
+  await git(repo, ["remote", "add", "mirror", mirror]);
+  await git(repo, ["push", "-u", "gitlab", "main:trunk"]);
+  await git(repo, ["branch", "--set-upstream-to", "gitlab/trunk", "main"]);
+
+  // When
+  const result = await runFinalCleanupPostflight({
+    repoRoot: repo,
+    config: { ...DEFAULT_CONFIG, trustedUpstreamRemotes: ["gitlab"] },
+  });
+  const scope = requireRecord(result.operationalScope, "result.operationalScope");
+
+  // Then
+  assert.deepEqual(scope, {
+    effectiveRemote: "gitlab",
+    unexaminedSecondaryRemotes: ["mirror", "origin"],
+    localBranchCount: 1,
+    effectiveRemoteBranchCount: 1,
+    freshness: "freshly-fetched-effective-remote",
+  });
+});
+
 test("final postflight reports stash inventory without blocking by default", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));

@@ -92,6 +92,15 @@ export type DirtyCommitSafetyRefReservation = {
   readonly reserved_at: string;
 };
 
+export type RemoteBranchCleanupSafetyRefReservation = {
+  readonly remote: string;
+  readonly remote_branch: string;
+  readonly head: string;
+  readonly safety_ref: string;
+  readonly reserved_at: string;
+  readonly phase?: "pending-proof" | "active";
+};
+
 export type GuardianSession = {
   readonly session_id?: string;
   readonly sessionId?: string;
@@ -128,6 +137,7 @@ export type GuardianState = {
   finish_mode: string;
   worktree_root: string;
   sessions: Record<string, GuardianSession>;
+  remote_branch_cleanup_reservations?: readonly RemoteBranchCleanupSafetyRefReservation[];
   created_at: string;
   updated_at: string;
   [key: string]: unknown;

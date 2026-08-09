@@ -143,6 +143,88 @@ test("guardian_done readable done-all output includes cleanup plan details", () 
   assert.match(output, /\[WARN\] repository stash inventory: 1/);
 });
 
+test("guardian_done done-all renders retirement evidence from the production cleanup sweep nesting", () => {
+  const active = { remote: "origin", remoteBranch: "guardian/active", head: "abcdef1234567890", observedHead: "fedcba0987654321", safetyRef: "refs/opencode-guardian/active", reservationPhase: "active" };
+  const pending = { remote: "origin", remoteBranch: "guardian/pending", head: "1122334455667788", observedHead: "8877665544332211", reservationPhase: "pending-proof" };
+  const output = formatGuardianOutput("guardian_done", {
+    ok: false,
+    status: "partial",
+    lane: "done-all",
+    summary: {},
+    freshPlanRequired: true,
+    cleanupSweep: {
+      ok: false,
+      status: "partial",
+      candidateCount: 0,
+      cleanedCount: 0,
+      failedCount: 0,
+      retirementCandidateCount: 2,
+      retiredCount: 1,
+      retirementFailedCount: 1,
+      applyWorkCount: 2,
+      plan: { reservationRetirementCandidates: [active, pending] },
+      apply: { reservationRetirementResults: [{ ...active, status: "retired" }, { ...pending, status: "blocked" }] },
+    },
+  });
+
+  assert.match(output, /cleanupSweep: ok=false status=partial candidates=0 cleaned=0 failed=0 retirementCandidates=2 retired=1 retirementFailed=1 applyWork=2/);
+  assert.match(output, /reservation retirement candidates: 2/);
+  assert.match(output, /reservation retirement results: 2/);
+  assert.match(output, /reservationPhase=active .*safety ref preserved=true/);
+  assert.match(output, /reservationPhase=pending-proof .*safety-ref proof absent\/pending/);
+  assert.match(output, /fresh plan required before cleanup/);
+});
+
+test("guardian_done retirement evidence deduplicates production-shaped nested reservations", () => {
+  const reservation = {
+    remote: "origin",
+    remoteBranch: "guardian/duplicate",
+    head: "abcdef1234567890",
+    observedHead: "fedcba0987654321",
+    reservationPhase: "active",
+    safetyRef: "refs/opencode-guardian/duplicate",
+    action: "retire",
+    remoteBranchPresent: true,
+  };
+  const distinctReservation = { ...reservation, remoteBranch: "guardian/distinct", head: "1122334455667788" };
+  const deferred = {
+    kind: "reservation-retirement",
+    status: "blocked",
+    reason: "pending proof",
+    reservationRetirementCandidates: [reservation],
+  };
+  const output = formatGuardianOutput("guardian_done", {
+    ok: false,
+    status: "partial",
+    lane: "done-all",
+    cleanupSweep: {
+      preflight: { reservationRetirementCandidateCount: 1, reservationRetirementResultCount: 1 },
+      reservationRetirementCandidates: [reservation],
+      reservationRetirementResults: [{ ...reservation, status: "blocked" }],
+      remaining: [deferred, { ...deferred, reservationRetirementCandidates: [distinctReservation] }],
+      plan: {
+        reservationRetirementCandidates: [{ ...reservation }],
+        apply: {
+          reservationRetirementResults: [{ ...reservation, status: "blocked" }],
+          remaining: [{ ...deferred, reservationRetirementCandidates: [{ ...reservation }] }],
+        },
+      },
+      apply: {
+        reservationRetirementCandidates: [{ ...reservation }],
+        reservationRetirementResults: [{ ...reservation, status: "retired" }],
+        remaining: [{ ...deferred, reservationRetirementCandidates: [{ ...reservation }] }],
+      },
+    },
+  });
+
+  assert.match(output, /reservation retirement candidates: 1/);
+  assert.match(output, /reservation retirement results: 1/);
+  assert.match(output, /deferred cleanup: 2/);
+  assert.match(output, /status=retired .*remoteBranch=guardian\/duplicate/);
+  assert.doesNotMatch(output, /status=blocked .*remoteBranch=guardian\/duplicate/);
+  assert.equal((output.match(/remoteBranch=guardian\/duplicate/g) ?? []).length, 2);
+});
+
 test("guardian_done readable output warns about advisory stash inventory", () => {
   const output = formatGuardianOutput("guardian_done", {
     ok: true,
