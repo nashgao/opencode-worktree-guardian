@@ -1,0 +1,16 @@
+{
+  "finishMode": "create-pr",
+  "protectedPaths": [
+    ".omo",
+    ".omc",
+    ".omx",
+    ".sisyphus",
+    ".milestones",
+    ".opencode",
+    ".codegraph",
+    ".worktrees"
+  ],
+  "goal": {
+    "hygieneCompletion": "no-unprotected-findings"
+  }
+}

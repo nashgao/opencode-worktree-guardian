@@ -2,8 +2,17 @@ import { readFileSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { normalizeProtectedPaths } from "./protected-paths.ts";
-import type { GuardianAutoStartMode, GuardianCommandInterceptionMode, GuardianConfig, GuardianFinishMode, GuardianGoalConfig, LoadedGuardianConfig, LoadConfigOptions, RecordLike } from "./types.ts";
+import type {
+  GuardianAutoStartMode,
+  GuardianCommandInterceptionMode,
+  GuardianFinishMode,
+  GuardianGoalHygieneCompletion,
+  LoadedGuardianConfig,
+  LoadConfigOptions,
+  RecordLike,
+} from "./types.ts";
 import { errorCode, isRecordLike } from "./types.ts";
+import type { NormalizedGuardianConfig, NormalizedGuardianGoalConfig } from "./normalized-config.ts";
 
 export const CONFIG_PATH = path.join(".opencode", "worktree-guardian.json");
 const DEFAULT_CONFIG_TEMPLATE_URL = new URL("../templates/worktree-guardian.json", import.meta.url);
@@ -12,8 +21,16 @@ const DEFAULT_CONFIG_TEMPLATE = readFileSync(DEFAULT_CONFIG_TEMPLATE_URL, "utf8"
 export const FINISH_MODES = new Set(["preserve-only", "push-branch", "create-pr", "merge-to-base"]);
 export const AUTO_START_MODES = new Set(["eager", "lazy"]);
 export const COMMAND_INTERCEPTION_MODES = new Set(["audit", "strict"]);
+export const GOAL_HYGIENE_COMPLETIONS = new Set(["authorized-cleanup", "no-unprotected-findings"]);
 
-export type ConfigErrorKind = "invalid_config_root" | "unsupported_finish_mode" | "unsupported_auto_start_mode" | "unsupported_command_interception_mode" | "invalid_quarantine_session_residue";
+export type ConfigErrorKind =
+  | "invalid_config_root"
+  | "unsupported_finish_mode"
+  | "unsupported_auto_start_mode"
+  | "unsupported_command_interception_mode"
+  | "invalid_goal_config"
+  | "unsupported_goal_hygiene_completion"
+  | "invalid_quarantine_session_residue";
 export type ConfigBoundaryError = Error & { readonly configErrorKind: ConfigErrorKind };
 
 function configError(kind: ConfigErrorKind, message: string): ConfigBoundaryError {
@@ -34,6 +51,10 @@ function isGuardianAutoStartMode(value: unknown): value is GuardianAutoStartMode
 
 function isGuardianCommandInterceptionMode(value: unknown): value is GuardianCommandInterceptionMode {
   return typeof value === "string" && COMMAND_INTERCEPTION_MODES.has(value);
+}
+
+function isGuardianGoalHygieneCompletion(value: unknown): value is GuardianGoalHygieneCompletion {
+  return typeof value === "string" && GOAL_HYGIENE_COMPLETIONS.has(value);
 }
 
 function templateError(message: string) {
@@ -64,9 +85,11 @@ function stringArrayField(record: RecordLike, key: string) {
   return value;
 }
 
-function goalField(record: RecordLike, key: string): GuardianGoalConfig {
+function goalField(record: RecordLike, key: string): NormalizedGuardianGoalConfig {
   const value = record[key];
   if (!isRecordLike(value)) throw templateError(`${key} must be an object`);
+  const hygieneCompletion = stringField(value, "hygieneCompletion");
+  if (!isGuardianGoalHygieneCompletion(hygieneCompletion)) throw templateError("goal.hygieneCompletion is unsupported");
   return {
     commitDirty: booleanField(value, "commitDirty"),
     landToBase: booleanField(value, "landToBase"),
@@ -74,11 +97,12 @@ function goalField(record: RecordLike, key: string): GuardianGoalConfig {
     cleanupWorktrees: booleanField(value, "cleanupWorktrees"),
     cleanupBranches: booleanField(value, "cleanupBranches"),
     cleanupHygiene: booleanField(value, "cleanupHygiene"),
+    hygieneCompletion,
     quarantineSessionResidue: booleanField(value, "quarantineSessionResidue"),
   };
 }
 
-function parseDefaultConfigTemplate(raw: string): GuardianConfig {
+function parseDefaultConfigTemplate(raw: string): NormalizedGuardianConfig {
   const value: unknown = JSON.parse(raw);
   if (!isRecordLike(value)) throw templateError("root must be an object");
   const finishMode = value.finishMode;
@@ -110,10 +134,19 @@ function parseDefaultConfigTemplate(raw: string): GuardianConfig {
   };
 }
 
-export const DEFAULT_CONFIG: GuardianConfig = Object.freeze(parseDefaultConfigTemplate(DEFAULT_CONFIG_TEMPLATE));
+export const DEFAULT_CONFIG: NormalizedGuardianConfig = Object.freeze(parseDefaultConfigTemplate(DEFAULT_CONFIG_TEMPLATE));
 
-export function normalizeGoalConfig(input: unknown): GuardianGoalConfig {
-  if (!isRecordLike(input)) return DEFAULT_CONFIG.goal;
+type NormalizedLoadedGuardianConfig = Omit<LoadedGuardianConfig, "config"> & {
+  readonly config: NormalizedGuardianConfig;
+};
+
+export function normalizeGoalConfig(input: unknown): NormalizedGuardianGoalConfig {
+  if (input === undefined) return DEFAULT_CONFIG.goal;
+  if (!isRecordLike(input)) throw configError("invalid_goal_config", "goal must be an object");
+  const hygieneCompletion = input.hygieneCompletion;
+  if (hygieneCompletion !== undefined && !isGuardianGoalHygieneCompletion(hygieneCompletion)) {
+    throw configError("unsupported_goal_hygiene_completion", `Unsupported goal hygieneCompletion: ${String(hygieneCompletion)}`);
+  }
   const quarantineSessionResidue = input.quarantineSessionResidue;
   if (quarantineSessionResidue !== undefined && typeof quarantineSessionResidue !== "boolean") {
     throw configError("invalid_quarantine_session_residue", "goal.quarantineSessionResidue must be a boolean");
@@ -125,11 +158,12 @@ export function normalizeGoalConfig(input: unknown): GuardianGoalConfig {
     cleanupWorktrees: typeof input.cleanupWorktrees === "boolean" ? input.cleanupWorktrees : DEFAULT_CONFIG.goal.cleanupWorktrees,
     cleanupBranches: typeof input.cleanupBranches === "boolean" ? input.cleanupBranches : DEFAULT_CONFIG.goal.cleanupBranches,
     cleanupHygiene: typeof input.cleanupHygiene === "boolean" ? input.cleanupHygiene : DEFAULT_CONFIG.goal.cleanupHygiene,
+    hygieneCompletion: hygieneCompletion ?? DEFAULT_CONFIG.goal.hygieneCompletion,
     quarantineSessionResidue: quarantineSessionResidue ?? DEFAULT_CONFIG.goal.quarantineSessionResidue,
   };
 }
 
-export function normalizeConfig(input: RecordLike = {}): GuardianConfig {
+export function normalizeConfig(input: RecordLike = {}): NormalizedGuardianConfig {
   const { allowStashIfUnrelated: retiredAllowStashIfUnrelated, ...supportedInput } = input;
   void retiredAllowStashIfUnrelated;
   const config = { ...DEFAULT_CONFIG, ...supportedInput };
@@ -166,7 +200,7 @@ export function normalizeConfig(input: RecordLike = {}): GuardianConfig {
   };
 }
 
-export async function loadConfig(repoRoot: string, options: LoadConfigOptions = {}): Promise<LoadedGuardianConfig> {
+export async function loadConfig(repoRoot: string, options: LoadConfigOptions = {}): Promise<NormalizedLoadedGuardianConfig> {
   const fileSystem = options.fs ?? fs;
   const configPath = options.configPath ?? path.join(repoRoot, CONFIG_PATH);
   let parsed: RecordLike = {};

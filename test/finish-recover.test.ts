@@ -846,6 +846,12 @@ test("invisible policy helper injects policy but does not enable auto-finish by 
   assert.match(output.system[1], /auto-finish is disabled/);
   assert.match(output.system[1], /guardian_finish/);
   assert.match(output.system[1], /protected branches/);
+  assert.match(output.system[1], /reviewableCandidates are inventory, not hygiene targets/);
+  assert.match(output.system[1], /guardian_delete_paths mode=plan paths=\[\.\.\.\]/);
+  assert.match(output.system[1], /directories also require allowRecursive=true/);
+  assert.match(output.system[1], /Review target status and blockers before explicit confirmation/);
+  assert.match(output.system[1], /do not pass reviewables back to guardian_hygiene/);
+  assert.match(output.system[1], /never run raw cleanup commands/);
 });
 
 test("guardian tool dispatcher exposes internal functions", async () => {

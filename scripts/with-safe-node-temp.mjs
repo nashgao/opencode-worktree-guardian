@@ -28,6 +28,21 @@ function findExistingSafeTempRoot(candidate) {
   return matches.at(-1);
 }
 
+async function isInsideGitWorktree(candidate) {
+  let current = path.resolve(candidate);
+  while (true) {
+    try {
+      await fs.lstat(path.join(current, ".git"));
+      return true;
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+    const parent = path.dirname(current);
+    if (parent === current) return false;
+    current = parent;
+  }
+}
+
 async function resolveSafeTempRoot(projectRoot) {
   for (const candidate of [os.tmpdir(), ...fallbackTempBases]) {
     try {
@@ -35,6 +50,7 @@ async function resolveSafeTempRoot(projectRoot) {
       await fs.mkdir(candidatePath, { recursive: true });
       const realCandidate = await fs.realpath(candidatePath);
       if (isSameOrInside(realCandidate, projectRoot)) continue;
+      if (await isInsideGitWorktree(realCandidate)) continue;
       const existingSafeRoot = findExistingSafeTempRoot(realCandidate);
       if (existingSafeRoot && !isSameOrInside(existingSafeRoot, projectRoot)) return existingSafeRoot;
       const safeRoot = path.join(realCandidate, safeTempDirectoryName);

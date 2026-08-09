@@ -135,7 +135,7 @@ function textField(record: Record<string, unknown>, key: string, fallback = "-")
 }
 
 function confirmationHint(name: string, result: Record<string, unknown>): string | undefined {
-  if (result["status"] !== "planned" || typeof result["confirmToken"] !== "string") return undefined;
+  if ((result["status"] !== "planned" && result["status"] !== "planned-partial") || typeof result["confirmToken"] !== "string") return undefined;
   if (name === "guardian_hygiene" || name === "guardian_delete_paths") {
     return "After explicit user confirmation, rerun with mode=apply and confirmDelete=true; the Codex adapter reuses the matching cached plan token.";
   }

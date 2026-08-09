@@ -33,6 +33,42 @@ test("config defaults are delivery-first and cleanup-conservative", () => {
   assert.deepEqual(config.allowDirtyPaths, []);
   assert.deepEqual(config.protectedPaths, TEMPLATE_PROTECTED_PATHS);
   assert.deepEqual(config.protectedBranches, DEFAULT_CONFIG.protectedBranches);
+  assert.equal(config.goal.hygieneCompletion, "authorized-cleanup");
+});
+
+test("missing goal config defaults hygiene completion", () => {
+  const config = normalizeConfig({});
+
+  assert.equal(config.goal.hygieneCompletion, "authorized-cleanup");
+});
+
+test("partial legacy goal config preserves explicit values and defaults hygiene completion", () => {
+  const config = normalizeConfig({ goal: { cleanupHygiene: false } });
+
+  assert.equal(config.goal.cleanupHygiene, false);
+  assert.equal(config.goal.hygieneCompletion, "authorized-cleanup");
+});
+
+test("goal hygiene completion accepts strict unprotected-finding policy", () => {
+  const config = normalizeConfig({ goal: { hygieneCompletion: "no-unprotected-findings" } });
+
+  assert.equal(config.goal.hygieneCompletion, "no-unprotected-findings");
+});
+
+test("invalid goal hygiene completion fails closed", () => {
+  assert.throws(
+    () => normalizeConfig({ goal: { hygieneCompletion: "delete-everything" } }),
+    (error: unknown) => isRecordLike(error) && error.configErrorKind === "unsupported_goal_hygiene_completion",
+  );
+});
+
+test("malformed goal config containers fail closed", () => {
+  for (const goal of [null, [], "goal", 1, true]) {
+    assert.throws(
+      () => normalizeConfig({ goal }),
+      (error: unknown) => isRecordLike(error) && error.configErrorKind === "invalid_goal_config",
+    );
+  }
 });
 
 test("quarantine session residue requires an explicit boolean opt-in", () => {
@@ -217,6 +253,22 @@ test("repo-local config replaces template protected paths", async () => {
   assert.deepEqual(config.protectedBranches, ["main", "master", "develop", "production", "release"]);
 });
 
+test("repo-local strict hygiene completion keeps automatic cleanup disabled and protects Beads", async () => {
+  const repo = await createTempDir();
+  await fs.mkdir(path.join(repo, ".opencode"));
+  await fs.writeFile(path.join(repo, ".opencode", "worktree-guardian.json"), JSON.stringify({
+    finishMode: "create-pr",
+    protectedPaths: [".omo", ".omc", ".omx", ".sisyphus", ".milestones", ".opencode", ".codegraph", ".worktrees"],
+    goal: { hygieneCompletion: "no-unprotected-findings" },
+  }));
+
+  const { config } = await loadConfig(repo);
+
+  assert.equal(config.autoCleanup, false);
+  assert.equal(config.goal.hygieneCompletion, "no-unprotected-findings");
+  assert.equal(config.protectedPaths.includes(".beads"), true);
+});
+
 test("repo-local config uses template protected paths when the field is absent", async () => {
   const repo = await createTempDir();
   await fs.mkdir(path.join(repo, ".opencode"));
@@ -256,6 +308,7 @@ test("config initialization writes defaults once", async () => {
   assert.deepEqual(loaded.config, DEFAULT_CONFIG);
   assert.deepEqual(loaded.config.protectedPaths, TEMPLATE_PROTECTED_PATHS);
   assert.equal(await fs.readFile(configPath, "utf8"), `${JSON.stringify(DEFAULT_CONFIG, null, 2)}\n`);
+  assert.equal(JSON.parse(await fs.readFile(configPath, "utf8")).goal.hygieneCompletion, "authorized-cleanup");
 });
 
 test("non-object config payloads fail closed at the boundary", async () => {

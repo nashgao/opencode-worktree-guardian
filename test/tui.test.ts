@@ -203,6 +203,46 @@ test("tui done prompt preserves phased completion and terminal recovery gates", 
   assert.match(prompt.parts[0].text, /Never force-push/);
 });
 
+test("tui goal prompt distinguishes authorized cleanup from strict completion", async () => {
+  const runtime = createApi();
+  await tui(runtime.api);
+  const command = runtime.layer?.commands.find((candidate) => candidate.slashName === "guardian-goal");
+  assert.ok(command);
+
+  await command.run();
+
+  assert.equal(runtime.prompts.length, 1);
+  const prompt = runtime.prompts[0] as { parts: Array<{ text: string }> };
+  assert.match(prompt.parts[0].text, /complete.*hygienePostcondition/s);
+  assert.match(prompt.parts[0].text, /planned-partial.*complete=null/s);
+  assert.match(prompt.parts[0].text, /do not treat ok as desired-state completion/);
+  assert.match(prompt.parts[0].text, /no-unprotected-findings.*ok=true, complete=false, status=partial.*post-apply hygiene rescan/s);
+  assert.match(prompt.parts[0].text, /Strict mode does not broaden deletion/);
+  assert.match(prompt.parts[0].text, /only token-bound known-cleanable findings/);
+  assert.match(prompt.parts[0].text, /nested-git and suspicious findings require direct explicit review/);
+  assert.match(prompt.parts[0].text, /dirty nested Git requires allowDirtyNestedGit/);
+  assert.match(prompt.parts[0].text, /protectedPaths are intentional retention/);
+  assert.match(prompt.parts[0].text, /reviewableCandidates are inventory rather than strict failures/);
+});
+
+test("tui hygiene prompt preserves the reviewable exact-path boundary", async () => {
+  const runtime = createApi();
+  await tui(runtime.api);
+  const command = runtime.layer?.commands.find((candidate) => candidate.slashName === "guardian-hygiene");
+  assert.ok(command);
+
+  await command.run();
+
+  assert.equal(runtime.prompts.length, 1);
+  const prompt = runtime.prompts[0] as { parts: Array<{ text: string }> };
+  assert.match(prompt.parts[0].text, /reviewableCandidates are inventory, not hygiene targets/);
+  assert.match(prompt.parts[0].text, /guardian_delete_paths mode=plan paths=\[\.\.\.\]/);
+  assert.match(prompt.parts[0].text, /directories also require allowRecursive=true/);
+  assert.match(prompt.parts[0].text, /Review target status and blockers before explicit confirmation/);
+  assert.match(prompt.parts[0].text, /do not pass reviewables back to guardian_hygiene/);
+  assert.match(prompt.parts[0].text, /Never run raw cleanup commands/);
+});
+
 test("tui delete-worktree prompt includes explicit abandon guidance", async () => {
   const runtime = createApi();
   await tui(runtime.api);

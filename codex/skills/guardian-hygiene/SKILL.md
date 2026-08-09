@@ -13,4 +13,4 @@ node <adapter-path> tool guardian_hygiene '{}'
 
 For cleanup, run `mode: "plan"` first with the intended cleanup options. Inspect exact approved targets and blockers. Apply only after explicit delete confirmation with `mode: "apply"`, `confirmDelete: true`, and the same options.
 
-`reviewableCandidates` are scan-only inventory, not cleanup findings. Use `guardian-delete-paths` for intentional exact-path cleanup of reviewable files or directories.
+`reviewableCandidates` are inventory, not hygiene targets. For intentional reviewable cleanup, run `guardian_delete_paths mode=plan paths=["..."]`. Directories also require `allowRecursive=true`. Review target status and blockers before explicit confirmation, then apply through `guardian_delete_paths` with `confirmDelete=true`. Do not pass reviewables back to `guardian_hygiene`, and never run raw cleanup commands.

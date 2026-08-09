@@ -5,7 +5,8 @@ dist/
 *.tgz
 *.log
 .DS_Store
-.opencode/
+.opencode/*
+!.opencode/worktree-guardian.json
 .omo/
 .omc/
 .omx/
