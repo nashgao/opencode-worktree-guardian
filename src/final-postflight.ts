@@ -22,6 +22,10 @@ function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string" && entry.length > 0) : [];
 }
 
+export function normalizeAllowedRemoteBranches(value: unknown): string[] {
+  return [...new Set(stringArray(value))].sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
+}
+
 function postflightCommits(value: unknown): FinalPostflightCommit[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((entry): FinalPostflightCommit[] => {
@@ -62,7 +66,7 @@ export async function runFinalCleanupPostflight(input: Record<string, unknown> =
     : typeof config.baseBranch === "string" && config.baseBranch.length > 0
       ? config.baseBranch
       : "main";
-  const allowedRemoteBranches = new Set([configuredBaseBranch, baseBranch, resolved.remoteBranch, ...stringArray(input.allowedRemoteBranches)]);
+  const allowedRemoteBranches = new Set([configuredBaseBranch, baseBranch, resolved.remoteBranch, ...normalizeAllowedRemoteBranches(input.allowedRemoteBranches)]);
   const allowedLocalBranches = new Set([baseBranch, ...stringArray(input.allowedLocalBranches)]);
   const allowedWorktreeBranches = new Set([baseBranch, ...stringArray(input.allowedWorktreeBranches), ...stringArray(input.allowedLocalBranches)]);
 

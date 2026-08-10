@@ -3,7 +3,7 @@ import path from "node:path";
 import { createSafetyRef, fetchRemote, getCurrentBranch, getHeadCommit, getRefCommit, getRepoRoot, isAncestor, listStashes, runGit, validateConfiguredRemote, validateGitRef } from "./git.ts";
 import { configuredRemoteAuthority, isTrustedRemoteNamespaceOverlapError } from "./git-authority.ts";
 import { finalPostflightCommitsFromCleanupSweep, runCleanupSweep } from "./done-cleanup-sweep.ts";
-import { runFinalCleanupPostflight } from "./final-postflight.ts";
+import { normalizeAllowedRemoteBranches, runFinalCleanupPostflight } from "./final-postflight.ts";
 import { hasBlockingStashInventory } from "./stash-policy.ts";
 import type { GuardianConfig, MutableRecord } from "./types.ts";
 import type { DirtySnapshot } from "./done-primary-snapshot.ts";
@@ -25,6 +25,7 @@ export function createPrimaryToken(preflight: Record<string, unknown>, snapshot:
     baseRefOid: preflight.baseRefOid,
     commitMessage,
     snapshot,
+    allowedRemoteBranches: normalizeAllowedRemoteBranches(preflight.allowedRemoteBranches),
   };
   return crypto.createHash("sha256").update(JSON.stringify(material)).digest("hex");
 }
@@ -51,6 +52,7 @@ export async function primaryPreflight(repoRoot: string, cwd: string, config: Gu
     dirtyFiles: [],
     blockers: [],
   };
+  preflight.allowedRemoteBranches = normalizeAllowedRemoteBranches(input.allowedRemoteBranches);
   let baseAuthorityRef: string;
   try {
     baseAuthorityRef = configuredRemoteAuthority(config).authorityRef;
@@ -164,7 +166,7 @@ export async function primaryMainDone(repoRoot: string, cwd: string, config: Gua
   if (!proven) return blocked("published commit is not proven reachable from remote base", { safetyRef, commit }, preflight);
   const cleanupSweep = await runCleanupSweep(repoRoot, config, input);
   if (cleanupSweep.freshPlanRequired === true) return { ok: false, status: "partial", reason: "published, but reservation retirement requires a fresh cleanup plan", lane: "primary-main-publish", branch, commit, safetyRef, preflight, cleanupSweep, freshPlanRequired: true };
-  const finalPostflight = await runFinalCleanupPostflight({ repoRoot, config, requiredCommits: [{ commit, source: branch, reason: "published primary-main commit must be present on final base" }, ...finalPostflightCommitsFromCleanupSweep(cleanupSweep)] });
+  const finalPostflight = await runFinalCleanupPostflight({ repoRoot, config, requiredCommits: [{ commit, source: branch, reason: "published primary-main commit must be present on final base" }, ...finalPostflightCommitsFromCleanupSweep(cleanupSweep)], allowedRemoteBranches: preflight.allowedRemoteBranches });
   const ok = cleanupSweep.ok !== false && finalPostflight.ok === true;
   return { ok, status: ok ? "published" : "partial", ...(ok ? {} : { reason: finalPostflight.ok === false ? "published, but final cleanup postflight failed" : "published, but post-publish cleanup has remaining blockers" }), lane: "primary-main-publish", branch, commit, safetyRef, preflight, cleanupSweep, finalPostflight };
 }

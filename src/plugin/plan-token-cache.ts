@@ -1,5 +1,6 @@
 import type { GuardCommandPayload, GuardianToolName, PlanCacheToolArgs, PlanTokenCache } from "../types.ts";
 import { isMutableRecord } from "../types.ts";
+import { normalizeAllowedRemoteBranches } from "../final-postflight.ts";
 
 export function ensureToolArgs(output: GuardCommandPayload = {}) {
   if (!isMutableRecord(output.args)) output.args = {};
@@ -25,6 +26,7 @@ function planCacheKey(name: GuardianToolName, toolArgs: PlanCacheToolArgs) {
     paths: sortedStringArgs(toolArgs.paths),
     cleanupPaths: sortedStringArgs(toolArgs.cleanupPaths),
     allowCategories: sortedStringArgs(toolArgs.allowCategories),
+    allowedRemoteBranches: normalizeAllowedRemoteBranches(toolArgs.allowedRemoteBranches),
     allowTracked: toolArgs.allowTracked === true,
     allowRecursive: toolArgs.allowRecursive === true,
     allowDirtyNestedGit: toolArgs.allowDirtyNestedGit === true,

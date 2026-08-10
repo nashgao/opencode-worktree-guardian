@@ -7,6 +7,7 @@ All notable public-surface changes are tracked here.
 ### Added
 
 - `goal.hygieneCompletion` now distinguishes cleanup authorization from goal completion. The default `authorized-cleanup` preserves legacy behavior, while `no-unprotected-findings` makes a post-apply hygiene rescan with no residual unprotected findings a strict completion postcondition. Goal plans expose `complete: null`; strict actionable plans can be `planned-partial`; strict apply can return `ok: true`, `complete: false`, and `status: "partial"`.
+- `guardian_goal` now accepts `allowedRemoteBranches`, an explicit per-call exact-name retention list on the resolved effective remote. Guardian normalizes and deduplicates the list, requires the same option set on plan and apply through the plan token, excludes listed remote refs from cleanup candidate discovery and strict extra-remote postflight blocking, and continues to evaluate a same-named local branch independently. The option does not persist policy, broaden deletion authority, affect unscanned secondary remotes, or allow unlisted remote branches.
 
 ### Changed
 

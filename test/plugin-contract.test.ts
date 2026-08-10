@@ -176,6 +176,16 @@ test("guardian native tools expose OpenCode tool definitions", async () => {
   assert.equal(typeof hooks.tool.guardian_done.args.primary.safeParse, "function");
 });
 
+test("guardian completion tools accept explicitly allowed remote branches", async () => {
+  const hooks = await plugin.server({ directory: "/repo", worktree: "/repo" });
+
+  for (const toolName of ["guardian_done", "guardian_finish_workflow", "guardian_goal"] as const) {
+    const allowedRemoteBranches = hooks.tool[toolName].args.allowedRemoteBranches;
+    assert.equal(allowedRemoteBranches.safeParse(["chore/retained"]).success, true, toolName);
+    assert.equal(allowedRemoteBranches.safeParse(["chore/retained", 1]).success, false, toolName);
+  }
+});
+
 test("guardian_goal native description states the strict hygiene completion contract", async () => {
   const hooks = await plugin.server({ directory: "/repo", worktree: "/repo" });
   const description = hooks.tool.guardian_goal.description;
@@ -290,6 +300,35 @@ test("guardian_done plugin cache keys include primary target", () => {
 
   assert.equal(bareApplyArgs.confirmToken, "");
   assert.equal(primaryApplyArgs.confirmToken, "primary-token");
+});
+
+test("guardian completion cache normalizes and isolates allowed remote branches", () => {
+  const cache: PlanTokenCache = new Map();
+  const planArgs: PlanCacheToolArgs = {
+    repoRoot: "/repo",
+    cwd: "/repo",
+    mode: "plan",
+    allowedRemoteBranches: ["chore/retained-b", "chore/retained-a", "chore/retained-b", 1],
+  };
+  const matchingApply: PlanCacheToolArgs = {
+    repoRoot: "/repo",
+    cwd: "/repo",
+    mode: "apply",
+    confirm: true,
+    confirmToken: "",
+    allowedRemoteBranches: ["chore/retained-a", "chore/retained-b"],
+  };
+  const changedApply: PlanCacheToolArgs = {
+    ...matchingApply,
+    allowedRemoteBranches: ["chore/retained-a", "chore/other"],
+  };
+
+  rememberPlanConfirmToken("guardian_goal", planArgs, { ok: true, status: "planned", confirmToken: "retained-branches-token" }, cache);
+  maybeInjectPlanConfirmToken("guardian_goal", matchingApply, cache);
+  maybeInjectPlanConfirmToken("guardian_goal", changedApply, cache);
+
+  assert.equal(matchingApply.confirmToken, "retained-branches-token");
+  assert.equal(changedApply.confirmToken, "");
 });
 
 test("guardian_done exposes rescue and injects only a matching confirmed rescue plan token", async (t) => {

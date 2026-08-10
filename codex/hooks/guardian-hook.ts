@@ -4,6 +4,7 @@ import path from "node:path";
 import { stdin as processStdin, stdout as processStdout } from "node:process";
 import { z } from "zod";
 import { formatGuardianOutput, READABLE_GUARDIAN_TOOLS } from "../../src/plugin/readable-output.ts";
+import { normalizeAllowedRemoteBranches } from "../../src/final-postflight.ts";
 import { getGuardianPaths } from "../../src/state.ts";
 import { recordLastSafeState, runGuardianTool } from "../../src/tools.ts";
 import { commandFromToolInput, parseHookPayload, runPreToolUse } from "./command-interception.ts";
@@ -46,7 +47,7 @@ function sortedStringArgs(value: unknown): readonly string[] {
 
 function planCacheKey(name: string, toolArgs: Record<string, unknown>): string {
   return JSON.stringify({
-    name, paths: sortedStringArgs(toolArgs["paths"]), cleanupPaths: sortedStringArgs(toolArgs["cleanupPaths"]), allowCategories: sortedStringArgs(toolArgs["allowCategories"]),
+    name, paths: sortedStringArgs(toolArgs["paths"]), cleanupPaths: sortedStringArgs(toolArgs["cleanupPaths"]), allowCategories: sortedStringArgs(toolArgs["allowCategories"]), allowedRemoteBranches: normalizeAllowedRemoteBranches(toolArgs["allowedRemoteBranches"]),
     sessionId: typeof toolArgs["sessionId"] === "string" ? toolArgs["sessionId"] : "", repoRoot: typeof toolArgs["repoRoot"] === "string" ? toolArgs["repoRoot"] : "", cwd: typeof toolArgs["cwd"] === "string" ? toolArgs["cwd"] : "",
     commitMessage: typeof toolArgs["commitMessage"] === "string" ? toolArgs["commitMessage"] : "", finishMode: typeof toolArgs["finishMode"] === "string" ? toolArgs["finishMode"] : "", action: typeof toolArgs["action"] === "string" ? toolArgs["action"] : "",
     allowTracked: toolArgs["allowTracked"] === true, allowRecursive: toolArgs["allowRecursive"] === true, allowDirtyNestedGit: toolArgs["allowDirtyNestedGit"] === true,
@@ -184,7 +185,7 @@ async function runTool(name: string | undefined, rawArgs: string | undefined): P
 }
 
 async function main(): Promise<number> {
-  const [command, subcommand, toolName, rawArgs] = process.argv.slice(2);
+  const [command, subcommand, toolName] = process.argv.slice(2);
   if (command === undefined || command === "help" || command === "--help" || command === "-h") {
     processStdout.write(HELP);
     return 0;

@@ -186,14 +186,15 @@ test("guardian_done blocks stale dirty-primary tokens after file content changes
   await assert.rejects(() => git(repo, ["rev-parse", "--verify", "refs/opencode-guardian/primary-main/main/20260609T010101"]));
 });
 
-test("guardian_done applies dirty primary-main publish and cleans safe redundant candidates", async (t) => {
+test("guardian_done applies dirty primary-main publish, cleans a local candidate, and retains its allowed remote branch", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
   const candidate = await makeMergedCleanupCandidate(repo);
+  await git(repo, ["push", "origin", candidate.branch]);
   await fs.writeFile(path.join(repo, "done-publish.txt"), "publish\n");
-  const plan = asDone(await guardianDone({ repoRoot: repo, cwd: repo, mode: "plan", commitMessage: "feat: done publish" }));
+  const plan = asDone(await guardianDone({ repoRoot: repo, cwd: repo, mode: "plan", commitMessage: "feat: done publish", allowedRemoteBranches: [candidate.branch] }));
 
-  const apply = asDone(await guardianDone({ repoRoot: repo, cwd: repo, mode: "apply", confirm: true, commitMessage: "feat: done publish", confirmToken: plan.confirmToken, timestamp: "20260609T010101" }));
+  const apply = asDone(await guardianDone({ repoRoot: repo, cwd: repo, mode: "apply", confirm: true, commitMessage: "feat: done publish", confirmToken: plan.confirmToken, timestamp: "20260609T010101", allowedRemoteBranches: [candidate.branch] }));
 
   assert.equal(apply.ok, true);
   assert.equal(apply.status, "published");
@@ -208,6 +209,8 @@ test("guardian_done applies dirty primary-main publish and cleans safe redundant
   assert.equal(apply.cleanupSweep.apply?.results?.[0]?.branchDeleted, true);
   assert.equal(await pathExists(candidate.worktreePath), false);
   await assert.rejects(() => git(repo, ["rev-parse", "--verify", candidate.branch]));
+  const { stdout: retainedRemote } = await git(repo, ["ls-remote", "--heads", "origin", candidate.branch]);
+  assert.notEqual(retainedRemote, "");
   const { stdout: remoteMain } = await git(repo, ["rev-parse", "origin/main"]);
   assert.equal(remoteMain, apply.commit);
 });

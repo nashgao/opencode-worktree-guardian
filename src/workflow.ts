@@ -5,7 +5,7 @@ import { syncLocalBase } from "./done-main-sync.ts";
 import { guardianDeleteWorktree } from "./delete.ts";
 import { deleteAbsentRemoteBranchAtExpectedAbsence, deleteRemoteBranch, fetchRemotePrune, getCurrentBranch, getDirtyFiles, getRefCommit, getRepoRoot, listStashes } from "./git.ts";
 import { isTrustedRemoteNamespaceOverlapError } from "./git-authority.ts";
-import { runFinalCleanupPostflight } from "./final-postflight.ts";
+import { normalizeAllowedRemoteBranches, runFinalCleanupPostflight } from "./final-postflight.ts";
 import { hasBlockingStashInventory } from "./stash-policy.ts";
 import { completeRemoteBranchCleanupSafetyRefReservation, reserveRemoteBranchCleanupSafetyRef, retirePendingRemoteBranchCleanupSafetyRefReservation, retireRemoteBranchCleanupSafetyRefReservation } from "./state-remote-branch-reservation.ts";
 import { isRecordLike } from "./types.ts";
@@ -28,10 +28,14 @@ function addPreflightBlocker(preflight: Record<string, unknown>, reason: string)
   preflight.blockers = [...blockers, reason];
 }
 
-function plannedCleanupAllowances(candidates: readonly Record<string, unknown>[]): Record<string, string[]> {
+function compareText(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function plannedCleanupAllowances(candidates: readonly Record<string, unknown>[], allowedRemoteBranches: readonly string[]): Record<string, string[]> {
   const localBranches = new Set<string>();
   const worktreeBranches = new Set<string>();
-  const remoteBranches = new Set<string>();
+  const remoteBranches = new Set(normalizeAllowedRemoteBranches(allowedRemoteBranches));
   for (const candidate of candidates) {
     const targetKind = typeof candidate.targetKind === "string" ? candidate.targetKind : "";
     const branch = typeof candidate.branch === "string" ? candidate.branch : "";
@@ -44,9 +48,9 @@ function plannedCleanupAllowances(candidates: readonly Record<string, unknown>[]
     if (targetKind === "worktree" && branch.length > 0) worktreeBranches.add(branch);
   }
   return {
-    allowedLocalBranches: [...localBranches],
-    allowedWorktreeBranches: [...worktreeBranches],
-    allowedRemoteBranches: [...remoteBranches],
+    allowedLocalBranches: [...localBranches].sort(compareText),
+    allowedWorktreeBranches: [...worktreeBranches].sort(compareText),
+    allowedRemoteBranches: [...remoteBranches].sort(compareText),
   };
 }
 
@@ -84,6 +88,7 @@ export async function guardianFinishWorkflow(input: Record<string, unknown> = {}
   const baseRef = resolvedBase.baseRef;
   const baseAuthorityRef = resolvedBase.authorityRef;
   const guardianRoot = path.resolve(repoRoot, expandWorktreeRoot(String(config.worktreeRoot), repoRoot));
+  const allowedRemoteBranches = normalizeAllowedRemoteBranches(input.allowedRemoteBranches);
   const preflight: Record<string, unknown> = {
     repoRoot: path.resolve(repoRoot),
     mode,
@@ -101,11 +106,11 @@ export async function guardianFinishWorkflow(input: Record<string, unknown> = {}
     dirtyFileCount: 0,
     stashCount: 0,
     allowIgnoredFiles: input.allowIgnoredFiles === true,
+    allowedRemoteBranches,
     blockerCount: 0,
     maxCandidateCount: MAX_WORKFLOW_CLEANUP_CANDIDATES,
     blockers: [],
   };
-
   try {
     await fetchRemotePrune(repoRoot, resolvedBase.remote);
     preflight.baseRefFetched = true;
@@ -196,7 +201,7 @@ export async function guardianFinishWorkflow(input: Record<string, unknown> = {}
   if (mode === "plan") {
     const finalPostflight = input.skipFinalPostflight === true
       ? { ok: true, status: "skipped", reason: "internal cleanup sweep skips final postflight" }
-      : await runFinalCleanupPostflight({ repoRoot, config, plannedBaseSync: candidates.length > 0 && blockingDirtyFiles.length === 0, ...plannedCleanupAllowances(candidates) });
+      : await runFinalCleanupPostflight({ repoRoot, config, plannedBaseSync: candidates.length > 0 && blockingDirtyFiles.length === 0, ...plannedCleanupAllowances(candidates, allowedRemoteBranches) });
     const remaining = finalPostflight.ok === true ? [...blockers, ...primaryDirtyRemaining] : [...blockers, ...primaryDirtyRemaining, { kind: "final-postflight", status: "blocked", reason: finalPostflight.reason ?? "final cleanup postflight failed", finalPostflight }];
     return { ok: true, status: remaining.length > 0 ? "planned-partial" : "planned", confirmToken, preflight, candidates, blockers, applyWorkCount, remaining, finalPostflight };
   }
@@ -272,7 +277,7 @@ export async function guardianFinishWorkflow(input: Record<string, unknown> = {}
         }
         : {}),
     }));
-  const finalPostflight = input.skipFinalPostflight === true ? { ok: true, status: "skipped", reason: "internal cleanup sweep skips final postflight" } : await runFinalCleanupPostflight({ repoRoot, config, requiredCommits });
+  const finalPostflight = input.skipFinalPostflight === true ? { ok: true, status: "skipped", reason: "internal cleanup sweep skips final postflight" } : await runFinalCleanupPostflight({ repoRoot, config, requiredCommits, ...plannedCleanupAllowances(candidates, allowedRemoteBranches) });
   const postflightRemaining = finalPostflight.ok === true ? [] : [{ kind: "final-postflight", status: "blocked", reason: finalPostflight.reason ?? "final cleanup postflight failed", finalPostflight }];
   const allRemaining = [...remaining, ...postflightRemaining];
   const ok = failedResults.length === 0 && applyBlockers.length === 0 && finalPostflight.ok === true;

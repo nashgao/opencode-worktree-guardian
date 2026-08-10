@@ -155,10 +155,11 @@ test("guardian_done all=true skips remote refresh until confirmed, then blocks r
   assert.equal(applied.ok, true, JSON.stringify(applied)); assert.equal(await fs.access(worktreePath).then(() => true, () => false), false); await assert.rejects(git(repo, ["rev-parse", "--verify", branch]));
 });
 
-test("guardian_finish_workflow cleans local branches merged to tracked upstream", async (t) => {
+test("guardian_finish_workflow retains an allowed branch on the trusted tracked upstream without scanning secondary remotes", async (t) => {
   const { base, repo, gitlab } = await createRepoWithGitlabUpstream();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
   const branch = "guardian/upstream-merged";
+  const secondaryBranch = "guardian/secondary-unscanned";
   await git(repo, ["checkout", "-b", branch]);
   await fs.writeFile(path.join(repo, "upstream-merged.txt"), "merged upstream\n");
   await git(repo, ["add", "upstream-merged.txt"]);
@@ -166,27 +167,33 @@ test("guardian_finish_workflow cleans local branches merged to tracked upstream"
   const branchHead = (await git(repo, ["rev-parse", "HEAD"])).stdout;
   await createSafetyRef(repo, { sessionId: "upstream-merged", branch, commit: branchHead, timestamp: "20260610T060606" });
   await git(repo, ["push", "gitlab", branch]);
+  await git(repo, ["push", "origin", `main:refs/heads/${secondaryBranch}`]);
   await git(repo, ["checkout", "main"]);
   await mergeBranchToGitlabMain(gitlab, branch);
 
-  const plan = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "plan", config: TRUST_GITLAB_CONFIG }));
+  const plan = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "plan", config: TRUST_GITLAB_CONFIG, allowedRemoteBranches: [branch] }));
 
   assert.equal(plan.ok, true, JSON.stringify(plan));
   assert.equal(plan.status, "planned");
   assert.equal(plan.preflight.baseRef, "gitlab/main");
   assert.equal(plan.preflight.configuredBaseRef, "origin/main");
   assert.equal(plan.preflight.baseRefSource, "upstream");
-  assert.equal(plan.candidates.length, 2);
-  assert.deepEqual(plan.candidates.map((candidate) => candidate.targetKind).sort(), ["remote-branch", "stale-branch"]);
+  assert.equal(plan.candidates.length, 1);
+  assert.deepEqual(plan.candidates.map((candidate) => candidate.targetKind), ["stale-branch"]);
   assert.equal(plan.candidates.every((candidate) => candidate.branch === branch && candidate.head === branchHead), true);
+  const scope = plan.finalPostflight?.operationalScope as Record<string, unknown>;
+  assert.equal(scope.effectiveRemote, "gitlab");
+  assert.deepEqual(scope.unexaminedSecondaryRemotes, ["origin"]);
 
-  const apply = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "apply", confirm: true, confirmToken: plan.confirmToken, config: TRUST_GITLAB_CONFIG }));
+  const apply = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "apply", confirm: true, confirmToken: plan.confirmToken, config: TRUST_GITLAB_CONFIG, allowedRemoteBranches: [branch] }));
 
   assert.equal(apply.ok, true, JSON.stringify(apply));
   assert.equal(apply.status, "cleaned");
   assert.equal(apply.results.some((result) => result.branchDeleted === true), true);
-  assert.equal(apply.results.some((result) => result.remoteBranchDeleted === true), true);
+  assert.equal(apply.results.some((result) => result.remoteBranchDeleted === true), false);
   await assert.rejects(() => git(repo, ["rev-parse", "--verify", branch]));
+  assert.notEqual((await git(repo, ["ls-remote", "--heads", "gitlab", branch])).stdout, "");
+  assert.notEqual((await git(repo, ["ls-remote", "--heads", "origin", secondaryBranch])).stdout, "");
 });
 
 test("guardian_finish_workflow final postflight keeps local base when trusted upstream branch has a different name", async (t) => {

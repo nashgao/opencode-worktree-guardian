@@ -9,7 +9,7 @@ import { guardianFinishWorkflow } from "./workflow.ts";
 import { workflowApplyWorkCount } from "./workflow-candidates.ts";
 import { activeFeatureSessions, type FeatureSession } from "./done-feature-sessions.ts";
 import { syncLocalBase } from "./done-main-sync.ts";
-import { runFinalCleanupPostflight } from "./final-postflight.ts";
+import { normalizeAllowedRemoteBranches, runFinalCleanupPostflight } from "./final-postflight.ts";
 import { isRecordLike } from "./types.ts";
 import { batchChildFailureCanContinue } from "./done-land-clean-consent.ts";
 import type { BatchLandAuthorization } from "./done-land-clean-consent.ts";
@@ -53,7 +53,9 @@ export async function guardianDoneAll(input: Record<string, unknown> = {}): Prom
   const mode = input.mode ?? "plan";
   if (mode !== "plan" && mode !== "apply") return { ok: false, status: "blocked", lane: "done-all", reason: "mode must be plan or apply", mode, remoteRefresh: "skipped" };
   if (mode === "apply" && input.confirm !== true) return { ok: false, status: "blocked", lane: "done-all", reason: "guardian_done apply requires confirm=true before remote refresh or planning", confirmationRequired: true, tokenChecked: false, remoteRefresh: "skipped", nextAction: input.all === true ? "guardian_done all=true mode=apply confirm=true" : "guardian_done mode=apply confirm=true" };
-  const { timestamp: _timestamp, ...nestedInput } = input;
+  const allowedRemoteBranches = normalizeAllowedRemoteBranches(input.allowedRemoteBranches);
+  const { timestamp: _timestamp, ...nestedInputWithoutTimestamp } = input;
+  const nestedInput = { ...nestedInputWithoutTimestamp, allowedRemoteBranches };
   const cwd = typeof input.cwd === "string" ? input.cwd : typeof input.repoRoot === "string" ? input.repoRoot : process.cwd();
   const repoRoot = typeof input.repoRoot === "string" ? input.repoRoot : await getRepoRoot(cwd);
   const config = isRecordLike(input.config) ? normalizeConfig(input.config) : (await loadConfig(repoRoot)).config;
@@ -143,7 +145,7 @@ export async function guardianDoneAll(input: Record<string, unknown> = {}): Prom
       cleanupSummary: { candidates: cleanupCandidates, retirementCandidates: cleanupRetirementCandidates, applyWorkCount: cleanupApplyWorkCount, blockers: cleanupBlockers },
     };
   }
-  const confirmToken = createDoneAllConfirmToken({ repoRoot, config, baseRef, baseRefOid, protectedBranches, plans, cleanupPlan, allowIgnoredFiles: input.allowIgnoredFiles === true, allowAdminBypass: input.allowAdminBypass === true });
+  const confirmToken = createDoneAllConfirmToken({ repoRoot, config, baseRef, baseRefOid, protectedBranches, plans, cleanupPlan, allowIgnoredFiles: input.allowIgnoredFiles === true, allowAdminBypass: input.allowAdminBypass === true, allowedRemoteBranches });
 
   if (mode === "plan") {
     const noSessionWork = plans.length === 0;
@@ -281,7 +283,7 @@ export async function guardianDoneAll(input: Record<string, unknown> = {}): Prom
   const requiredCommits = results
     .filter((result) => result.ok === true && typeof result.head === "string")
     .map((result) => ({ commit: String(result.head), source: typeof result.branch === "string" ? result.branch : "done-all-session", reason: "finished session commit must be present on final base" }));
-  const finalPostflight = await runFinalCleanupPostflight({ repoRoot, config, requiredCommits: [...requiredCommits, ...finalPostflightCommitsFromCleanupSweep(combinedCleanupSweep)] });
+  const finalPostflight = await runFinalCleanupPostflight({ repoRoot, config, requiredCommits: [...requiredCommits, ...finalPostflightCommitsFromCleanupSweep(combinedCleanupSweep)], allowedRemoteBranches });
   const finalRemaining = finalPostflight.ok === true ? allRemaining : [...allRemaining, { kind: "final-postflight", status: "blocked", reason: finalPostflight.reason ?? "final cleanup postflight failed", finalPostflight }];
   const repoFinished = !hardFailure && combinedCleanupSweep.ok === true && mainSync.ok === true && finalPostflight.ok === true && finalRemaining.length === 0;
   return {

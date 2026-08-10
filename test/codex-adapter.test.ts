@@ -212,6 +212,27 @@ test("Codex guardian_done cache keys include primary target", async () => {
   assert.equal(JSON.parse(keys[0]).primary, true);
 });
 
+test("Codex guardian_goal cache keys normalize allowed remote branches", async (t) => {
+  // Given
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+
+  // When
+  await runCodexCli(["tool", "guardian_goal", JSON.stringify({
+    repoRoot: repo,
+    cwd: repo,
+    mode: "plan",
+    allowedRemoteBranches: ["ä", "z", "ä"],
+  })]);
+
+  // Then
+  const cachePath = path.join((await getGuardianPaths(repo)).dir, "codex-plan-cache.json");
+  const cache = JSON.parse(await fs.readFile(cachePath, "utf8")) as { readonly entries?: Record<string, string> };
+  const keys = Object.keys(cache.entries ?? {});
+  assert.equal(keys.length, 1);
+  assert.deepEqual(JSON.parse(keys[0]).allowedRemoteBranches, ["z", "ä"]);
+});
+
 test("Codex guardian_done lands one dirty session from the primary cwd", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
