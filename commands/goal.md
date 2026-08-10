@@ -1,9 +1,18 @@
 ---
 description: Drive the repo toward the configured Guardian desired end state
-argument-hint: [mode=plan|apply] [commitMessage=...] [confirm=true]
+argument-hint: [mode=plan|apply] [commitMessage=...] [confirm=true] [allowedRemoteBranches=[...]]
 ---
 
 Use the `guardian_goal` native tool for the configured repo goal workflow. Run `mode=plan` first and inspect the desired goal flags, child steps, blockers, dirty target, `complete`, and `hygienePostcondition`. Do not stop at the plan when the user invoked this goal workflow: an actionable strict plan can be `planned-partial`, with `complete: null`. Continue with `mode=apply`, `confirm: true`, and the same options. The plugin reuses a fresh matching internal plan token, so the user should not have to copy a token in normal command use.
+
+`allowedRemoteBranches` is an explicit per-call exact-name list on the resolved effective remote. Guardian normalizes and deduplicates the list, binds it into the plan token, excludes listed remote refs from cleanup candidate discovery and strict extra-remote postflight blocking, and still evaluates a same-named local branch for cleanup independently. Pass the same option set on plan and apply. This exception does not persist retention policy, broaden deletion authority, affect unscanned secondary remotes, or allow unlisted remote branches.
+
+For example, invoke `/guardian-goal` with the equivalent native-tool arguments in both phases:
+
+```text
+guardian_goal mode=plan allowedRemoteBranches=["__dolt_remote_info__","chore/finalize-standalone-migration"]
+guardian_goal mode=apply confirm=true allowedRemoteBranches=["__dolt_remote_info__","chore/finalize-standalone-migration"]
+```
 
 `guardian_goal` reads `.opencode/worktree-guardian.json` `goal` settings. The default `hygieneCompletion: "authorized-cleanup"` preserves legacy behavior: it commits dirty implementation work when a `commitMessage` is explicit, lands/pushes it to the configured base through `guardian_done`, cleans Guardian-owned stale worktrees/branches through existing Guardian gates, and applies safe token-bound `known-cleanable` hygiene cleanup before done so generated cache residue is not committed. Residual findings remain visible but do not prevent completion.
 

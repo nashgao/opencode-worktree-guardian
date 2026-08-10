@@ -212,7 +212,7 @@ test("guardian_done all=true cleans post-finish remote branches through Guardian
 });
 
 
-test("guardian_done all=true cleans stale branches without active sessions", async (t) => {
+test("guardian_done all=true retains an allowed stale remote branch while cleaning stale local branches", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
   const localBranch = "guardian/done-all-local-stale";
@@ -237,23 +237,23 @@ test("guardian_done all=true cleans stale branches without active sessions", asy
   await git(repo, ["branch", "-d", remoteBranch]);
   await git(repo, ["fetch", "origin"]);
 
-  const plan = await guardianDone({ repoRoot: repo, cwd: repo, all: true, mode: "plan" }) as LooseRecord;
+  const plan = await guardianDone({ repoRoot: repo, cwd: repo, all: true, mode: "plan", allowedRemoteBranches: [remoteBranch] }) as LooseRecord;
 
   assert.equal(plan.ok, true, JSON.stringify(plan));
   assert.equal(plan.status, "planned");
   assert.equal((plan.summary as LooseRecord).total, 0);
   const cleanupPlan = plan.cleanupPlan as LooseRecord;
-  assert.equal((cleanupPlan.candidates as LooseRecord[]).length, 2);
+  assert.equal((cleanupPlan.candidates as LooseRecord[]).length, 1);
 
-  const apply = await guardianDone({ repoRoot: repo, cwd: repo, all: true, mode: "apply", confirm: true, confirmToken: plan.confirmToken }) as LooseRecord;
+  const apply = await guardianDone({ repoRoot: repo, cwd: repo, all: true, mode: "apply", confirm: true, confirmToken: plan.confirmToken, allowedRemoteBranches: [remoteBranch] }) as LooseRecord;
 
   assert.equal(apply.ok, true, JSON.stringify(apply));
   assert.equal(apply.status, "finished");
   const cleanupSweep = apply.cleanupSweep as LooseRecord;
   assert.equal(cleanupSweep.status, "cleaned");
-  assert.equal(cleanupSweep.cleanedCount, 2);
+  assert.equal(cleanupSweep.cleanedCount, 1);
   await assert.rejects(git(repo, ["rev-parse", "--verify", localBranch]));
-  assert.equal(await remoteBranchExists(repo, remoteBranch), false);
+  assert.equal(await remoteBranchExists(repo, remoteBranch), true);
 });
 
 test("guardian_done all=true applies retirement-only maintenance without sync or final postflight", async (t) => {

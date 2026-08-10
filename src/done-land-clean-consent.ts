@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { normalizeAllowedRemoteBranches } from "./final-postflight.ts";
 import type { DeletionFingerprintEntry } from "./deletion-fingerprint.ts";
 import { buildDirtySessionDoneIntentFromInspection, DoneIntentBuildError, inspectDirtySessionDoneIntent } from "./done-intent.ts";
 import type { DirtySnapshot } from "./done-primary-snapshot.ts";
@@ -199,6 +200,7 @@ export function createSessionLandCleanConfirmToken(input: SessionLandCleanTokenI
       .sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : left.kind < right.kind ? -1 : left.kind > right.kind ? 1 : 0),
     commitMessage: input.commitMessage,
     allowIgnoredFiles: input.context.input.allowIgnoredFiles === true,
+    allowedRemoteBranches: normalizeAllowedRemoteBranches(input.context.input.allowedRemoteBranches),
     allowAdminBypass: input.context.input.allowAdminBypass === true,
     remote: input.preflight.remote,
     baseBranch: input.preflight.baseBranch,

@@ -201,6 +201,7 @@ export type PlanCacheToolArgs = MutableRecord & {
   abandonUnmerged?: unknown;
   allowIgnoredFiles?: unknown;
   allowRedundantDirtyPaths?: unknown;
+  allowedRemoteBranches?: unknown;
   action?: unknown;
   confirm?: unknown;
   confirmDelete?: unknown;

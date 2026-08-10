@@ -3,6 +3,7 @@ import path from "node:path";
 import { fetchRemote, getRefCommit, isAncestor, runGit } from "./git.ts";
 import { classifyLandBaseTransition } from "./done-land-clean-consent.ts";
 import { candidateTokenMaterial } from "./workflow-candidates.ts";
+import { normalizeAllowedRemoteBranches } from "./final-postflight.ts";
 import { isRecordLike } from "./types.ts";
 import type { GuardianConfig } from "./types.ts";
 
@@ -26,6 +27,7 @@ type DoneAllTokenInput = {
   readonly cleanupPlan: Record<string, unknown>;
   readonly allowIgnoredFiles: boolean;
   readonly allowAdminBypass: boolean;
+  readonly allowedRemoteBranches: readonly string[];
 };
 
 type CleanupSweepInput = {
@@ -76,6 +78,7 @@ export function createDoneAllConfirmToken(input: DoneAllTokenInput): string {
     baseRefOid: input.baseRefOid,
     allowIgnoredFiles: input.allowIgnoredFiles,
     allowAdminBypass: input.allowAdminBypass,
+    allowedRemoteBranches: normalizeAllowedRemoteBranches(input.allowedRemoteBranches),
     protectedBranches: [...input.protectedBranches].sort(),
     sessions: input.plans.map((plan) => ({
       session_id: plan.session_id,

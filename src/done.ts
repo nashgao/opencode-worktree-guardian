@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import { loadConfig, normalizeConfig } from "./config.ts";
+import { normalizeAllowedRemoteBranches } from "./final-postflight.ts";
 import { guardianFinish } from "./finish.ts";
 import { getHeadCommit, getRepoRoot } from "./git.ts";
 import { isActiveSession } from "./lifecycle.ts";
@@ -172,20 +173,21 @@ function requestedPoisonedSessionBlocker(inventory: DoneWorkInventory, requested
 }
 
 export async function guardianDone(input: Record<string, unknown> = {}, runtime: GuardianDoneRuntime = {}): Promise<Record<string, unknown>> {
-  const rawCwd = typeof input.cwd === "string" ? input.cwd : typeof input.repoRoot === "string" ? input.repoRoot : process.cwd();
+  const request: Record<string, unknown> = { ...input, allowedRemoteBranches: normalizeAllowedRemoteBranches(input.allowedRemoteBranches) };
+  const rawCwd = typeof request.cwd === "string" ? request.cwd : typeof request.repoRoot === "string" ? request.repoRoot : process.cwd();
   const cwd = await realPathOrOriginal(rawCwd);
-  const rawRepoRoot = typeof input.repoRoot === "string" ? input.repoRoot : await getRepoRoot(cwd);
+  const rawRepoRoot = typeof request.repoRoot === "string" ? request.repoRoot : await getRepoRoot(cwd);
   const repoRoot = await realPathOrOriginal(rawRepoRoot);
-  const config = isRecordLike(input.config) ? normalizeConfig(input.config) : (await loadConfig(repoRoot)).config;
-  const requestedMode = input.mode ?? "plan";
+  const config = isRecordLike(request.config) ? normalizeConfig(request.config) : (await loadConfig(repoRoot)).config;
+  const requestedMode = request.mode ?? "plan";
   if (requestedMode !== "plan" && requestedMode !== "apply") return { ok: false, status: "blocked", reason: "mode must be plan or apply", mode: requestedMode };
   const mode = requestedMode;
 
-  if (input.rescue === true) {
-    return rescueDirtyWorktree({ repoRoot, worktree: await getRepoRoot(cwd), config, input, mode });
+  if (request.rescue === true) {
+    return rescueDirtyWorktree({ repoRoot, worktree: await getRepoRoot(cwd), config, input: request, mode });
   }
   const inventory = await buildDoneWorkInventory({ repoRoot, cwd, config });
-  const requestedSessionId = typeof input.sessionId === "string" && input.sessionId.trim().length > 0 ? input.sessionId : null;
+  const requestedSessionId = typeof request.sessionId === "string" && request.sessionId.trim().length > 0 ? request.sessionId : null;
   const poisonBlocker = requestedPoisonedSessionBlocker(inventory, requestedSessionId);
   if (poisonBlocker) return poisonBlocker;
   const preserved = preservedSessionForWorktree(inventory.state, inventory.currentWorktree, requestedSessionId);
@@ -197,20 +199,20 @@ export async function guardianDone(input: Record<string, unknown> = {}, runtime:
     }
   }
 
-  const decision = resolveDoneTarget({ input: { ...input, mode }, inventory });
+  const decision = resolveDoneTarget({ input: { ...request, mode }, inventory });
   switch (decision.kind) {
     case "session-finish":
-      return runSessionTarget(decision, input, mode, inventory, config, runtime);
+      return runSessionTarget(decision, request, mode, inventory, config, runtime);
     case "primary-main-publish":
-      return withSelectedTarget(await primaryMainDone(repoRoot, repoRoot, config, input), decision.selectedTarget);
+      return withSelectedTarget(await primaryMainDone(repoRoot, repoRoot, config, request), decision.selectedTarget);
     case "done-all":
-      return guardianDoneAll({ ...input, repoRoot, cwd: repoRoot, config });
+      return guardianDoneAll({ ...request, repoRoot, cwd: repoRoot, config });
     case "cleanup-only": {
-      const cleanup = await guardianFinishWorkflow({ ...input, repoRoot, cwd: repoRoot, config, abandonUnmerged: true });
+      const cleanup = await guardianFinishWorkflow({ ...request, repoRoot, cwd: repoRoot, config, abandonUnmerged: true });
       return { ...cleanup, lane: "cleanup-only" };
     }
     case "reattach":
-      return reattachCurrentGuardianWorktree(repoRoot, inventory.currentWorktree, inventory.currentBranch, config, requestedSessionId, { ...input, mode });
+      return reattachCurrentGuardianWorktree(repoRoot, inventory.currentWorktree, inventory.currentBranch, config, requestedSessionId, { ...request, mode });
     case "primary-rescue-recommended":
       return primaryRescueRecommended(inventory);
     case "needs-selection":

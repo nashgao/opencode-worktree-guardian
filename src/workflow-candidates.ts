@@ -56,6 +56,7 @@ export function createWorkflowToken(preflight: Record<string, unknown>, candidat
     baseRef: preflight.baseRef,
     baseRefOid: preflight.baseRefOid,
     allowIgnoredFiles: preflight.allowIgnoredFiles === true,
+    allowedRemoteBranches: preflight.allowedRemoteBranches,
     candidates: candidates.map(candidateTokenMaterial),
     reservationRetirementCandidates: reservationRetirementCandidates.map(candidateTokenMaterial),
   };
@@ -96,6 +97,11 @@ export async function discoverCandidates(repoRoot: string, cwd: string, config: 
   const worktrees = await listWorktrees(repoRoot) as Array<{ path: string; branch?: string; head?: string }>;
   const checkedOutBranches = new Set(worktrees.map((worktree) => worktree.branch).filter(Boolean));
   const excludedBranchSet = new Set(excludedBranches.filter((branch) => branch.length > 0));
+  const allowedRemoteBranchSet = new Set(
+    Array.isArray(preflight.allowedRemoteBranches)
+      ? preflight.allowedRemoteBranches.filter((branch): branch is string => typeof branch === "string")
+      : [],
+  );
   const candidates: Record<string, unknown>[] = [];
   const blockers: Record<string, unknown>[] = [];
   let reservationRetirementCandidates: Record<string, unknown>[] = [];
@@ -159,6 +165,7 @@ export async function discoverCandidates(repoRoot: string, cwd: string, config: 
   for (const remoteBranch of remoteBranches) {
     if (!remoteBranch.branch || !remoteBranch.commit) continue;
     if (remoteBranch.branch === String(config.baseBranch)) continue;
+    if (allowedRemoteBranchSet.has(remoteBranch.branch)) continue;
     if (excludedBranchSet.has(remoteBranch.branch)) continue;
     if (isReservedCleanupBranch(remoteBranch.branch)) continue;
     if ((config.protectedBranches as string[]).includes(remoteBranch.branch)) continue;
@@ -194,6 +201,7 @@ export async function discoverCandidates(repoRoot: string, cwd: string, config: 
   }
   for (const reservation of remoteReservations) {
     if (reservedRemoteBranches.has(reservation.remote_branch)) continue;
+    if (allowedRemoteBranchSet.has(reservation.remote_branch)) continue;
     if (reservation.remote_branch === String(config.baseBranch) || excludedBranchSet.has(reservation.remote_branch) || isReservedCleanupBranch(reservation.remote_branch) || (config.protectedBranches as string[]).includes(reservation.remote_branch)) {
       blockers.push({ kind: "remote-branch", remote, remoteBranch: reservation.remote_branch, head: reservation.head, safetyRef: reservation.safety_ref, reason: "remote branch cleanup reservation is no longer eligible" });
       continue;

@@ -1,7 +1,7 @@
 import { guardianDeleteWorktree } from "./delete-worktree.ts";
 import { finalPostflightCommitsFromCleanupSweep, runCleanupSweep } from "./done-cleanup-sweep.ts";
 import { syncLocalBase } from "./done-main-sync.ts";
-import { runFinalCleanupPostflight, type FinalPostflightCommit } from "./final-postflight.ts";
+import { normalizeAllowedRemoteBranches, runFinalCleanupPostflight, type FinalPostflightCommit } from "./final-postflight.ts";
 import type { GuardianConfig } from "./types.ts";
 import { isRecordLike } from "./types.ts";
 
@@ -28,7 +28,7 @@ export async function postFinishMaintenance(context: LandCleanMaintenanceContext
   const cleanupSweep = await runCleanupSweep(context.repoRoot, context.config, context.input);
   if (cleanupSweep.freshPlanRequired === true) return { cleanupSweep, freshPlanRequired: true };
   const mainSync = await syncLocalBase(context.repoRoot, context.config);
-  const finalPostflight = await runFinalCleanupPostflight({ repoRoot: context.repoRoot, config: context.config, requiredCommits: [...requiredCommits, ...finalPostflightCommitsFromCleanupSweep(cleanupSweep)] });
+  const finalPostflight = await runFinalCleanupPostflight({ repoRoot: context.repoRoot, config: context.config, requiredCommits: [...requiredCommits, ...finalPostflightCommitsFromCleanupSweep(cleanupSweep)], allowedRemoteBranches: normalizeAllowedRemoteBranches(context.input.allowedRemoteBranches) });
   return { mainSync, cleanupSweep, finalPostflight };
 }
 

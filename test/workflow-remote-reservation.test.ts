@@ -35,6 +35,34 @@ async function recordRemoteBranchCleanupReservation(input: ReservationInput): Pr
   }));
 }
 
+test("guardian_finish_workflow leaves an allowed remote branch reservation untouched", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const branch = "guardian/workflow-allowed-reservation";
+  const head = await createMergedBranch(repo, branch, "workflow-allowed-reservation.txt");
+  await git(repo, ["push", "origin", branch]);
+  await git(repo, ["branch", "-d", branch]);
+  await git(repo, ["fetch", "origin"]);
+  const timestamp = "20260810T001010";
+  const safetyRef = `refs/opencode-guardian/remote-branch-cleanup/origin/${branch}/${timestamp}`;
+  await createSafetyRef(repo, { sessionId: "remote-branch-cleanup", branch: `origin/${branch}`, commit: head, ref: safetyRef });
+  await recordRemoteBranchCleanupReservation({ repo, branch, head, safetyRef });
+
+  const plan = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "plan", timestamp, allowedRemoteBranches: [branch] }));
+
+  assert.equal(plan.ok, true, JSON.stringify(plan));
+  assert.equal(plan.candidates.length, 0);
+  assert.equal(plan.reservationRetirementCandidates?.length ?? 0, 0);
+  assert.equal(plan.blockers.some((blocker) => blocker.remoteBranch === branch), false);
+
+  const apply = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "apply", confirm: true, confirmToken: plan.confirmToken, timestamp, allowedRemoteBranches: [branch] }));
+
+  assert.equal(apply.ok, true, JSON.stringify(apply));
+  assert.equal(await remoteBranchExists(repo, branch), true);
+  assert.equal((await remoteBranchCleanupReservations(repo, DEFAULT_CONFIG)).length, 1);
+  assert.equal(await getDirectRefCommitOrNull(repo, safetyRef), head);
+});
+
 test("remote cleanup promotes a persisted pending proof after a crash before activation", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));

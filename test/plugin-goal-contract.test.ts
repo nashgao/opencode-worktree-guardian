@@ -291,6 +291,61 @@ test("guardian_goal delegates a cleanup-only goal to the finish-workflow lane", 
   assert.equal(requireRecord(result, "guardian_goal result").ok, true);
 });
 
+test("guardian_goal completes while retaining an explicitly allowed remote branch", async (t) => {
+  // Given
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const retainedBranch = "chore/retained-remote";
+  await git(repo, ["checkout", "-b", retainedBranch]);
+  await fs.writeFile(path.join(repo, "retained-remote.txt"), "retained\n");
+  await git(repo, ["add", "retained-remote.txt"]);
+  await git(repo, ["commit", "-m", "add retained remote fixture"]);
+  await git(repo, ["push", "origin", retainedBranch]);
+  await git(repo, ["checkout", "main"]);
+  await git(repo, ["branch", "-D", retainedBranch]);
+  const hooks = await plugin.server({ directory: repo, worktree: repo });
+  const { context } = createToolContext();
+  context.directory = repo;
+  context.worktree = repo;
+  const request = { repoRoot: repo, cwd: repo, allowedRemoteBranches: [retainedBranch] };
+
+  // When
+  const plan = await runTool(hooks.tool.guardian_goal.execute, { ...request, mode: "plan" }, context);
+  const applied = await runTool(hooks.tool.guardian_goal.execute, { ...request, mode: "apply", confirm: true, confirmToken: "" }, context);
+
+  // Then
+  assert.equal(plan.metadata.status, "planned", JSON.stringify(plan.metadata));
+  assert.equal(applied.metadata.ok, true, JSON.stringify(applied.metadata));
+  assert.equal(applied.metadata.status, "complete", JSON.stringify(applied.metadata));
+  const { stdout: retainedRemote } = await git(repo, ["ls-remote", "--heads", "origin", retainedBranch]);
+  assert.match(retainedRemote, new RegExp(`refs/heads/${retainedBranch}$`));
+});
+
+test("guardian_goal retains an explicitly allowed merged remote branch", async (t) => {
+  // Given
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const retainedBranch = "chore/retained-merged-remote";
+  await createMergedBranch(repo, retainedBranch, "retained-merged-remote.txt");
+  await git(repo, ["push", "origin", retainedBranch]);
+  const hooks = await plugin.server({ directory: repo, worktree: repo });
+  const { context } = createToolContext();
+  context.directory = repo;
+  context.worktree = repo;
+  const request = { repoRoot: repo, cwd: repo, allowedRemoteBranches: [retainedBranch] };
+
+  // When
+  const plan = await runTool(hooks.tool.guardian_goal.execute, { ...request, mode: "plan" }, context);
+  const applied = await runTool(hooks.tool.guardian_goal.execute, { ...request, mode: "apply", confirm: true, confirmToken: "" }, context);
+
+  // Then
+  assert.equal(plan.metadata.status, "planned", JSON.stringify(plan.metadata));
+  assert.equal(applied.metadata.status, "complete", JSON.stringify(applied.metadata));
+  assert.equal(await branchExists(repo, retainedBranch), false, "local merged branch remains cleanup-eligible");
+  const { stdout: retainedRemote } = await git(repo, ["ls-remote", "--heads", "origin", retainedBranch]);
+  assert.match(retainedRemote, new RegExp(`refs/heads/${retainedBranch}$`));
+});
+
 test("guardian_goal still blocks a partial write goal set", async () => {
   const { base, repo } = await createRepoWithOrigin();
   test.after(() => fs.rm(base, { recursive: true, force: true }));
@@ -326,6 +381,7 @@ test("guardian_goal applies a cleanup-only goal through the finish-workflow lane
   test.after(() => fs.rm(base, { recursive: true, force: true }));
   const branch = "feat/goal-cleanup-only-apply";
   await createMergedBranch(repo, branch, "goal-cleanup-only.txt");
+  await git(repo, ["push", "origin", branch]);
   await git(repo, ["fetch", "origin"]);
 
   const cleanupOnlyConfig = {
@@ -346,6 +402,8 @@ test("guardian_goal applies a cleanup-only goal through the finish-workflow lane
   );
   assert.equal(plan.ok, true, JSON.stringify(plan));
   assert.equal(await branchExists(repo, branch), true, "the merged branch must exist before apply");
+  const { stdout: remoteBeforeApply } = await git(repo, ["ls-remote", "--heads", "origin", branch]);
+  assert.match(remoteBeforeApply, new RegExp(`refs/heads/${branch}$`));
 
   const applied = requireRecord(
     await guardianGoal({
@@ -370,4 +428,6 @@ test("guardian_goal applies a cleanup-only goal through the finish-workflow lane
     false,
     "the cleanup-only goal must actually delete the merged branch",
   );
+  const { stdout: remoteAfterApply } = await git(repo, ["ls-remote", "--heads", "origin", branch]);
+  assert.equal(remoteAfterApply, "", "the cleanup-only goal must delete an unallowed merged remote branch");
 });
