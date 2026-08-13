@@ -3,7 +3,7 @@ description: Write a static offline Guardian HTML report.
 argument-hint: "[optional report focus]"
 ---
 
-Use the native `guardian_report_html` tool to write the offline control-room report at `.git/opencode-guardian/report.html`.
+Use the native `guardian_report_html` tool to write the cached, read-only offline Operations Center at `.git/opencode-guardian/report.html`. Its Operations, Topology, Evidence, and Raw Data views are documented in [`docs/operations-center.md`](../docs/operations-center.md).
 
 Do not mutate worktrees, branches, refs, stashes, or workspace files beyond the report that the native tool writes. Return the report path and summarize the main risks.
 
