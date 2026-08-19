@@ -249,19 +249,37 @@ test("Given the controller source, when reviewing DOM safety, then it has no uns
 
 test("Given the Operations Center sources, when auditing responsive accessibility contracts, then focus, records, and reduced motion remain explicit", () => {
   // Then
-  for (const token of [".operations-row-owner::before", ".topology-card button:focus-visible", ".topology-terminal-table", ".topology-terminal-action", ".topology-alternative", "#panel-evidence .table-shell", "prefers-reduced-motion", "overflow-x: clip", ".topology-stage svg", ".topology-terminal-table th", "@media (min-width: 721px) and (max-width: 900px)", "@media (max-width: 720px)", "@media (max-width: 420px)"]) assert.match(REPORT_CSS, new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  for (const token of [".operations-row-owner::before", "#operations-list:focus-visible", ".topology-stage:focus-visible", ".topology-card button:focus-visible", ".topology-terminal-table", ".topology-terminal-action", ".topology-alternative", "#panel-evidence .table-shell", "prefers-reduced-motion", "overflow-x: clip", ".topology-stage svg", ".topology-terminal-table th", "@media (min-width: 721px) and (max-width: 900px)", "@media (max-width: 900px)", "@media (max-width: 420px)"]) assert.match(REPORT_CSS, new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.match(REPORT_CSS, /#operations-list:focus-visible, \.topology-stage:focus-visible \{ outline: 2px solid var\(--accent\); outline-offset: 3px; \}/);
   assert.doesNotMatch(REPORT_CSS, /min-width: 620px/);
   for (const forbidden of [".operations-row-owner { display: none"] ) assert.doesNotMatch(REPORT_CSS, new RegExp(forbidden.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 });
 
+test("Given the Open Design control-room authority, when auditing selection and title CSS, then selection remains neutral while focus remains accented", () => {
+  // Then
+  assert.match(REPORT_CSS, /h1 \{[^}]*font: 650 clamp\(2\.5rem, 6vw, 4\.5rem\)\/\.95 var\(--font-display\);/);
+  assert.doesNotMatch(REPORT_CSS, /@media \(max-width: 720px\) \{[^}]*h1 \{[^}]*font-size:/);
+  assert.match(REPORT_CSS, /\.tabs button\[aria-selected="true"\] \{ border-color: var\(--border\); color: var\(--fg\); background: var\(--surface-raised\); \}/);
+  assert.match(REPORT_CSS, /\.operations-filter\.active, \.operations-view-toggle button\[aria-pressed="true"\] \{ color: var\(--fg\); border-color: var\(--border\); background: var\(--surface-raised\); \}/);
+  assert.match(REPORT_CSS, /#topology-mode-selector button\[aria-checked="true"\] \{ border-color: var\(--border\); color: var\(--fg\); background: var\(--surface-raised\); \}/);
+  assert.match(REPORT_CSS, /\.topology-terminal-action\[aria-pressed="true"\] \{ border-color: var\(--border\); color: var\(--fg\); background: var\(--surface-raised\); \}/);
+  assert.match(REPORT_CSS, /\.operations-row:hover, \.operations-row\[aria-selected="true"\] \{ background: var\(--surface-raised\); \}/);
+  assert.match(REPORT_CSS, /\.operations-graph-node\.selected circle \{ fill: var\(--surface-raised\); stroke: var\(--fg\); stroke-width: 4; \}/);
+  assert.match(REPORT_CSS, /\.topology-node\.selected \{ fill: var\(--surface-raised\); stroke: var\(--fg\); stroke-width: 4; \}/);
+  assert.doesNotMatch(REPORT_CSS, /\.tabs button\[aria-selected="true"\] \{[^}]*var\(--accent\)/);
+  assert.doesNotMatch(REPORT_CSS, /\.operations-filter\.active, \.operations-view-toggle button\[aria-pressed="true"\] \{[^}]*var\(--accent\)/);
+});
+
 test("Given long repository values, when auditing desktop table layout, then scrolling preserves readable columns without changing mobile record cards", () => {
   // Then
-  for (const token of [".table-shell { width: 100%; min-width: 0; overflow-x: auto;", "table { width: max-content; min-width: 100%; border-collapse: collapse; table-layout: auto;", ".topology-terminal-table { min-width: 58rem;", ".topology-event-table { min-width: 38rem;", "@media (max-width: 900px)", ".table-shell { max-height: 32rem; overflow: auto;"]) assert.match(REPORT_CSS, new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-  assert.match(REPORT_CSS, /\.topology-stage-swimlanes, \.topology-stage-gittree \{ max-height: 32rem; overflow: auto; \}/);
+  for (const token of [".table-shell { width: 100%; min-width: 0; overflow-x: auto;", "table { width: max-content; min-width: 100%; border-collapse: collapse; table-layout: auto;", ".topology-terminal-table { min-width: 58rem;", ".topology-event-table { min-width: 38rem;", "@media (max-width: 900px)", ".topology-terminal-table, .topology-event-table { min-width: 0; width: 100%; table-layout: fixed; }", ".table-shell { max-height: 32rem; overflow: auto;"]) assert.match(REPORT_CSS, new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.match(REPORT_CSS, /\.topology-terminal-table td, \.topology-event-table td \{[^}]*display: grid;[^}]*overflow-wrap: anywhere;/);
+   assert.match(REPORT_CSS, /\.topology-stage \{ min-width: 0; min-height: 21rem; max-height: 32rem; overflow: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch;/);
+   assert.match(REPORT_CSS, /\.topology-stage \.topology-drawing \{ min-width: 50rem; width: 50rem; \}/);
   assert.match(REPORT_CSS, /\.topology-card, #topology-mode-selector, \.topology-stage, \.topology-alternative \{ min-width: 0; max-width: 100%; \}/);
   assert.match(REPORT_CSS, /\.topology-alternative \{[^}]*max-height: 32rem;[^}]*overflow: auto;[^}]*overscroll-behavior-inline: contain;/);
   assert.match(REPORT_CSS, /\.topology-graphic \{ min-width: 0; max-width: 100%; width: 100%; overflow: hidden;/);
-  assert.match(REPORT_CSS, /@media \(max-width: 420px\) \{ \.topology-stage \{ min-height: 0; \} \.topology-stage-swimlanes, \.topology-stage-gittree \{ overflow: auto; \}/);
+   assert.match(REPORT_CSS, /@media \(max-width: 420px\) \{ \.topology-stage \{ min-height: 0; \}/);
   assert.match(REPORT_CSS, /#topology-mode-selector \{ display: flex; flex-wrap: nowrap; gap: var\(--space-2\); overflow-x: auto;/);
   assert.match(REPORT_CSS, /#topology-mode-selector button \{ flex: 0 0 auto; scroll-margin-inline: var\(--space-2\); white-space: nowrap; \}/);
   assert.match(REPORT_CSS, /\.topology-stage-terminal \{ max-height: 32rem; overflow: auto;/);

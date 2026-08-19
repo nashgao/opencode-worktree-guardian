@@ -200,9 +200,10 @@ test("Given narrow report viewports, when evidence and topology overflow, then e
   assert.match(REPORT_CSS, /\.topology-stage-terminal \{ max-height: 32rem; overflow: auto;/);
   assert.match(REPORT_CSS, /\.topology-card, #topology-mode-selector, \.topology-stage, \.topology-alternative \{ min-width: 0; max-width: 100%; \}/);
   assert.match(REPORT_CSS, /\.topology-alternative \{[^}]*max-height: 32rem;[^}]*overflow: auto;[^}]*overscroll-behavior-inline: contain;/);
-  assert.match(REPORT_CSS, /\.topology-stage-swimlanes \.topology-drawing, \.topology-stage-gittree \.topology-drawing \{ min-width: 50rem; width: 50rem; \}/);
+  assert.match(REPORT_CSS, /\.topology-stage \{ min-width: 0; min-height: 21rem; max-height: 32rem; overflow: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch;/);
+  assert.match(REPORT_CSS, /\.topology-stage \.topology-drawing \{ min-width: 50rem; width: 50rem; \}/);
   assert.match(REPORT_CSS, /\.topology-graphic \{ min-width: 0; max-width: 100%; width: 100%; overflow: hidden;/);
-  assert.match(REPORT_CSS, /@media \(max-width: 420px\) \{ \.topology-stage \{ min-height: 0; \} \.topology-stage-swimlanes, \.topology-stage-gittree \{ overflow: auto; \}/);
+  assert.match(REPORT_CSS, /@media \(max-width: 420px\) \{ \.topology-stage \{ min-height: 0; \}/);
   assert.match(REPORT_CSS, /#topology-mode-selector button \{ flex: 0 0 auto; scroll-margin-inline: var\(--space-2\); white-space: nowrap;/);
   assert.match(REPORT_CSS, /#topology-mode-selector button, \.topology-controls button, \.topology-alternative summary, \.topology-graphic summary \{ min-height: 2\.75rem;/);
   assert.match(REPORT_CSS, /\.operations-filters, \.operations-view-toggle \{ width: 100%; flex-wrap: nowrap; overflow-x: auto;/);
@@ -370,10 +371,12 @@ test("Given topology modes and nodes, when using keyboard navigation or selectin
   assert.equal(activeMode?.getAttribute("aria-checked"), "true");
   assert.equal(document.query("[data-topology-mode]").length, 7);
   assert.equal(activeMode?.getAttribute("tabindex"), "0");
+  assert.equal(activeMode?.getAttribute("aria-checked"), "true");
   assert.equal(document.activeElement?.id, "topology-option-b");
   assert.equal(document.getElementById("operations-option-b")?.getAttribute("aria-selected"), "true");
   assert.match(OPERATIONS_CENTER_CONTROLLER, /topology-node .* selected/);
   assert.match(OPERATIONS_CENTER_CONTROLLER, /Selected .* at/);
+  assert.match(REPORT_CSS, /#topology-mode-selector button\[aria-checked="true"\] \{ border-color: var\(--border\); color: var\(--fg\); background: var\(--surface-raised\); \}/);
 });
 
 test("Given focusable operation rows, when keyboard selection rerenders the dashboard, then the listbox owns focus and exposes the selected option", () => {
@@ -498,11 +501,35 @@ test("Given dense observed worktree names, when rendering topology visuals, then
 
   // Then
   assert.match(OPERATIONS_CENTER_CONTROLLER, /topologyVisualLabel/);
-  assert.match(OPERATIONS_CENTER_CONTROLLER, /const labelEvery = Math\.max\(1, Math\.ceil\(items\.length \/ 12\)\)/);
+  assert.match(OPERATIONS_CENTER_CONTROLLER, /const topologyNode = \(viewport, items, worktree, x, y, labelOffset = 0, maxLabels = 12\)/);
+  assert.match(OPERATIONS_CENTER_CONTROLLER, /const labelEvery = Math\.max\(1, Math\.ceil\(items\.length \/ maxLabels\)\)/);
+  assert.match(OPERATIONS_CENTER_CONTROLLER, /const showLabel = labelIndex % labelEvery === 0/);
   assert.match(document.getElementById("topology-stage")?.textContent ?? "", /W1/);
   assert.match(document.getElementById("topology-stage")?.textContent ?? "", /W25/);
   assert.match(OPERATIONS_CENTER_CONTROLLER, /aria-label.*select observed worktree/);
   assert.doesNotMatch(OPERATIONS_CENTER_CONTROLLER, /label\(item\)\.replace\("guardian\//);
+});
+
+test("Given dense radial topologies, when rendering radar and sunburst, then short labels are capped while every node remains focusable and named", () => {
+  // Given
+  const { document } = runtime([], 25);
+
+  // When
+  for (const mode of ["radar", "sunburst"]) {
+    const control = document.query("[data-topology-mode]").find((button) => button.getAttribute("data-topology-mode") === mode);
+    assert.ok(control);
+    control.dispatch(new RuntimeEvent("click", control));
+    const nodes = document.query("[role]").filter((element) => element.id.startsWith("topology-option-") && element.getAttribute("role") === "button");
+    const labels = nodes.filter((node) => /^W\d+$/.test(node.textContent));
+
+    // Then
+    assert.equal(nodes.length, 25);
+    assert.ok(labels.length <= 8);
+    for (const node of nodes) assert.match(node.getAttribute("aria-label") ?? "", /guardian\/.*select observed worktree/);
+  }
+  assert.match(OPERATIONS_CENTER_CONTROLLER, /topologyNode = \(viewport, items, worktree, x, y, labelOffset = 0, maxLabels = 12\)/);
+  assert.match(OPERATIONS_CENTER_CONTROLLER, /topologyNode\(viewport, items, item, 400 \+ Math\.cos\(angle\) \* 105, 160 \+ Math\.sin\(angle\) \* 105, 0, 8\)/);
+  assert.match(OPERATIONS_CENTER_CONTROLLER, /topologyNode\(viewport, items, item, 400 \+ Math\.cos\(\(start \+ end\) \/ 2\) \* 74, 155 \+ Math\.sin\(\(start \+ end\) \/ 2\) \* 74, 0, 8\)/);
 });
 
 test("Given the Metro topology, when positioning node labels and the trunk, then their baselines remain separate", () => {
