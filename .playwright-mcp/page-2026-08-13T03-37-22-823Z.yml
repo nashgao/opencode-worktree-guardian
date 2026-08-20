@@ -1,0 +1,105 @@
+- generic [active] [ref=e1]:
+  - link "Skip to report" [ref=e2] [cursor=pointer]:
+    - /url: "#main-content"
+  - banner [ref=e3]:
+    - generic [ref=e4]:
+      - generic [ref=e5]: OpenCode Worktree Guardian
+      - text: Cached read-only evidence
+    - heading "Guardian Operations Center" [level=1] [ref=e6]
+    - paragraph [ref=e7]:
+      - text: Generated 2026-08-13T12:00:00.000Z for
+      - code [ref=e8]: /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-open-design-report
+    - paragraph [ref=e9]:
+      - text: "Offline file:"
+      - code [ref=e10]: /var/folders/tw/rrg4001s2bdg6m3ht0dz0j1h0000gn/T/guardian-operations-terminal-20260813/report.html
+  - main [ref=e11]:
+    - navigation "Operations Center views" [ref=e12]:
+      - tablist [ref=e13]:
+        - tab "Operations" [selected] [ref=e14]
+        - tab "Topology" [ref=e15]
+        - tab "Evidence" [ref=e16]
+        - tab "Raw Data" [ref=e17]
+    - tabpanel "Operations" [ref=e18]:
+      - region [ref=e19]:
+        - generic [ref=e20]:
+          - generic [ref=e21]:
+            - paragraph [ref=e22]: Observed Worktrees
+            - heading "Worktree Operations" [level=2] [ref=e23]
+            - paragraph [ref=e24]:
+              - code [ref=e25]: /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-open-design-report
+          - generic [ref=e26]:
+            - text: Search branch, path, state, or session
+            - searchbox "Search branch, path, state, or session" [ref=e27]
+        - generic "Observed worktree counts" [ref=e28]: 18 worktrees14 active4 terminal4 risk
+        - generic [ref=e29]:
+          - region "Observed worktree dashboard" [ref=e30]:
+            - generic [ref=e31]:
+              - generic "Worktree state filters" [ref=e32]:
+                - button "all 0" [pressed] [ref=e33]
+                - button "active 0" [ref=e34]
+                - button "terminal 0" [ref=e35]
+                - button "risk 0" [ref=e36]
+                - button "unmanaged 0" [ref=e37]
+              - generic [ref=e38]:
+                - text: Sort
+                - combobox "Sort" [ref=e39]:
+                  - option "Branch" [selected]
+                  - option "Path"
+                  - option "State"
+                  - option "Base distance"
+              - generic "View mode" [ref=e40]:
+                - button "List" [pressed] [ref=e41]
+                - button "Graph" [ref=e42]
+            - paragraph [ref=e43]: / search ArrowUpArrowDown select Enter inspect
+            - listbox "Observed worktrees" [ref=e44]:
+              - paragraph [ref=e45]: Loading observed worktrees.
+          - complementary [ref=e46]:
+            - generic [ref=e47]:
+              - paragraph [ref=e48]: Inspector
+              - heading "Selection pending" [level=2] [ref=e49]
+              - paragraph [ref=e50]: Select an observed worktree to inspect typed facts and read-only guidance.
+              - generic [ref=e51]:
+                - heading "Changed files" [level=3] [ref=e52]
+                - paragraph [ref=e53]: Unavailable. Guardian reports only repository-wide dirty-file inventory.
+              - generic [ref=e54]:
+                - heading "Commit messages" [level=3] [ref=e55]
+                - paragraph [ref=e56]: Unavailable. This report has no commit-message facts.
+              - generic [ref=e57]:
+                - heading "Activity and history" [level=3] [ref=e58]
+                - paragraph [ref=e59]: Unavailable. This dashboard does not infer lifecycle activity.
+              - complementary [ref=e60]:
+                - heading "Select an operation" [level=3] [ref=e61]
+                - paragraph [ref=e62]: Guidance remains selectable and no action is executed from this report.
+                - button "Copy guidance" [ref=e63]
+              - generic [ref=e64]:
+                - button "add" [ref=e65]
+                - button "sync" [ref=e66]
+                - button "fetch" [ref=e67]
+                - button "pull" [ref=e68]
+                - button "switch" [ref=e69]
+                - button "open" [ref=e70]
+                - button "terminal" [ref=e71]
+                - button "remove" [ref=e72]
+      - region [ref=e74]:
+        - text: Blocked
+        - heading "14 active sessions — 1 poisoned session on the primary or a protected branch (+3 more)." [level=2] [ref=e75]
+        - paragraph [ref=e76]: "Next: guardian_start createWorktree=true to repair"
+      - generic [ref=e77]:
+        - article [ref=e78]:
+          - text: Sessions
+          - strong [ref=e79]: "14"
+        - article [ref=e80]:
+          - text: Worktrees
+          - strong [ref=e81]: "18"
+        - article [ref=e82]:
+          - text: Risks
+          - strong [ref=e83]: "4"
+        - article [ref=e84]:
+          - text: Safety Refs
+          - strong [ref=e85]: "639"
+        - article [ref=e86]:
+          - text: Recovery Candidates
+          - strong [ref=e87]: "3534"
+        - article [ref=e88]:
+          - text: Dirty Files
+          - strong [ref=e89]: "21"

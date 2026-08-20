@@ -1,0 +1,426 @@
+- generic [ref=f1e1]:
+  - link "Skip to report" [ref=f1e2] [cursor=pointer]:
+    - /url: "#main-content"
+  - banner [ref=f1e3]:
+    - generic [ref=f1e4]:
+      - generic [ref=f1e5]: OpenCode Worktree Guardian
+      - generic [ref=f1e6]: Cached read-only evidence
+    - heading "Guardian Operations Center" [level=1] [ref=f1e7]
+    - paragraph [ref=f1e8]:
+      - text: Generated 2026-08-13T12:00:00.000Z for
+      - code [ref=f1e9]: /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-open-design-report
+    - paragraph [ref=f1e10]:
+      - text: "Offline file:"
+      - code [ref=f1e11]: /var/folders/tw/rrg4001s2bdg6m3ht0dz0j1h0000gn/T/guardian-operations-terminal-20260813/report.html
+  - main [ref=f1e12]:
+    - navigation "Operations Center views" [ref=f1e13]:
+      - tablist [ref=f1e14]:
+        - tab "Operations" [ref=f1e15] [cursor=pointer]
+        - tab "Topology" [active] [selected] [ref=f1e16] [cursor=pointer]
+        - tab "Evidence" [ref=f1e17] [cursor=pointer]
+        - tab "Raw Data" [ref=f1e18] [cursor=pointer]
+    - tabpanel "Topology" [ref=f1e215]:
+      - generic [ref=f1e216]:
+        - heading "Observed Topology" [level=2] [ref=f1e217]
+        - paragraph [ref=f1e218]: "Topology mode: metro"
+        - radiogroup "Topology mode" [ref=f1e219]:
+          - radio "metro" [checked] [ref=f1e220] [cursor=pointer]
+          - radio "radar" [ref=f1e221] [cursor=pointer]
+          - radio "timeline" [ref=f1e222] [cursor=pointer]
+          - radio "gittree" [ref=f1e223] [cursor=pointer]
+          - radio "sunburst" [ref=f1e224] [cursor=pointer]
+          - radio "swimlanes" [ref=f1e225] [cursor=pointer]
+          - radio "terminal" [ref=f1e226] [cursor=pointer]
+        - paragraph [ref=f1e227]: Unverified relationship. Terminal alternative below exposes the same observed facts.
+        - generic [ref=f1e228]:
+          - button "Zoom in topology" [ref=f1e229] [cursor=pointer]: +
+          - button "Zoom out topology" [ref=f1e230] [cursor=pointer]: "-"
+          - button "Reset topology view" [ref=f1e231] [cursor=pointer]: Reset
+        - group [ref=f1e232]:
+          - generic "Observed worktree and event records" [ref=f1e233] [cursor=pointer]
+          - generic [ref=f1e234]:
+            - table [ref=f1e235]:
+              - caption [ref=f1e236]: Observed worktree records
+              - rowgroup [ref=f1e237]:
+                - row [ref=f1e238]:
+                  - columnheader "State" [ref=f1e239]
+                  - columnheader "Branch" [ref=f1e240]
+                  - columnheader "Path" [ref=f1e241]
+                  - columnheader "HEAD" [ref=f1e242]
+                  - columnheader "Owner/activity" [ref=f1e243]
+                  - columnheader "Action" [ref=f1e244]
+              - rowgroup [ref=f1e245]:
+                - row [ref=f1e246]:
+                  - cell "State poisoned" [ref=f1e247]
+                  - cell "Branch guardian/open-design-report" [ref=f1e248]
+                  - cell "Path /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-open-design-report" [ref=f1e249]
+                  - cell "HEAD abcdef000000" [ref=f1e250]
+                  - cell "Owner/activity ses_observed_00" [ref=f1e251]
+                  - cell [ref=f1e252]:
+                    - text: Action
+                    - button "Selected" [pressed] [ref=f1e253] [cursor=pointer]
+                - row [ref=f1e254]:
+                  - cell "State active" [ref=f1e255]
+                  - cell "Branch guardian/observed-01" [ref=f1e256]
+                  - cell "Path /observed/guardian/worktree-01" [ref=f1e257]
+                  - cell "HEAD abcdef000001" [ref=f1e258]
+                  - cell "Owner/activity ses_observed_01" [ref=f1e259]
+                  - cell [ref=f1e260]:
+                    - text: Action
+                    - button "Select" [ref=f1e261] [cursor=pointer]
+                - row [ref=f1e262]:
+                  - cell "State active" [ref=f1e263]
+                  - cell "Branch guardian/observed-02" [ref=f1e264]
+                  - cell "Path /observed/guardian/worktree-02" [ref=f1e265]
+                  - cell "HEAD abcdef000002" [ref=f1e266]
+                  - cell "Owner/activity ses_observed_02" [ref=f1e267]
+                  - cell [ref=f1e268]:
+                    - text: Action
+                    - button "Select" [ref=f1e269] [cursor=pointer]
+                - row [ref=f1e270]:
+                  - cell "State active" [ref=f1e271]
+                  - cell "Branch guardian/observed-03" [ref=f1e272]
+                  - cell "Path /observed/guardian/worktree-03" [ref=f1e273]
+                  - cell "HEAD abcdef000003" [ref=f1e274]
+                  - cell "Owner/activity ses_observed_03" [ref=f1e275]
+                  - cell [ref=f1e276]:
+                    - text: Action
+                    - button "Select" [ref=f1e277] [cursor=pointer]
+                - row [ref=f1e278]:
+                  - cell "State active" [ref=f1e279]
+                  - cell "Branch guardian/observed-04" [ref=f1e280]
+                  - cell "Path /observed/guardian/worktree-04" [ref=f1e281]
+                  - cell "HEAD abcdef000004" [ref=f1e282]
+                  - cell "Owner/activity ses_observed_04" [ref=f1e283]
+                  - cell [ref=f1e284]:
+                    - text: Action
+                    - button "Select" [ref=f1e285] [cursor=pointer]
+                - row [ref=f1e286]:
+                  - cell "State terminal" [ref=f1e287]
+                  - cell "Branch guardian/observed-05" [ref=f1e288]
+                  - cell "Path /observed/guardian/worktree-05" [ref=f1e289]
+                  - cell "HEAD abcdef000005" [ref=f1e290]
+                  - cell "Owner/activity ses_observed_05" [ref=f1e291]
+                  - cell [ref=f1e292]:
+                    - text: Action
+                    - button "Select" [ref=f1e293] [cursor=pointer]
+                - row [ref=f1e294]:
+                  - cell "State active" [ref=f1e295]
+                  - cell "Branch guardian/observed-06" [ref=f1e296]
+                  - cell "Path /observed/guardian/worktree-06" [ref=f1e297]
+                  - cell "HEAD abcdef000006" [ref=f1e298]
+                  - cell "Owner/activity ses_observed_06" [ref=f1e299]
+                  - cell [ref=f1e300]:
+                    - text: Action
+                    - button "Select" [ref=f1e301] [cursor=pointer]
+                - row [ref=f1e302]:
+                  - cell "State active" [ref=f1e303]
+                  - cell "Branch guardian/observed-07" [ref=f1e304]
+                  - cell "Path /observed/guardian/worktree-07" [ref=f1e305]
+                  - cell "HEAD abcdef000007" [ref=f1e306]
+                  - cell "Owner/activity ses_observed_07" [ref=f1e307]
+                  - cell [ref=f1e308]:
+                    - text: Action
+                    - button "Select" [ref=f1e309] [cursor=pointer]
+                - row [ref=f1e310]:
+                  - cell "State active" [ref=f1e311]
+                  - cell "Branch guardian/observed-08" [ref=f1e312]
+                  - cell "Path /observed/guardian/worktree-08" [ref=f1e313]
+                  - cell "HEAD abcdef000008" [ref=f1e314]
+                  - cell "Owner/activity ses_observed_08" [ref=f1e315]
+                  - cell [ref=f1e316]:
+                    - text: Action
+                    - button "Select" [ref=f1e317] [cursor=pointer]
+                - row [ref=f1e318]:
+                  - cell "State active" [ref=f1e319]
+                  - cell "Branch guardian/observed-09" [ref=f1e320]
+                  - cell "Path /observed/guardian/worktree-09" [ref=f1e321]
+                  - cell "HEAD abcdef000009" [ref=f1e322]
+                  - cell "Owner/activity ses_observed_09" [ref=f1e323]
+                  - cell [ref=f1e324]:
+                    - text: Action
+                    - button "Select" [ref=f1e325] [cursor=pointer]
+                - row [ref=f1e326]:
+                  - cell "State terminal" [ref=f1e327]
+                  - cell "Branch guardian/observed-10" [ref=f1e328]
+                  - cell "Path /observed/guardian/worktree-10" [ref=f1e329]
+                  - cell "HEAD abcdef000010" [ref=f1e330]
+                  - cell "Owner/activity ses_observed_10" [ref=f1e331]
+                  - cell [ref=f1e332]:
+                    - text: Action
+                    - button "Select" [ref=f1e333] [cursor=pointer]
+                - row [ref=f1e334]:
+                  - cell "State active" [ref=f1e335]
+                  - cell "Branch guardian/observed-11" [ref=f1e336]
+                  - cell "Path /observed/guardian/worktree-11" [ref=f1e337]
+                  - cell "HEAD abcdef000011" [ref=f1e338]
+                  - cell "Owner/activity ses_observed_11" [ref=f1e339]
+                  - cell [ref=f1e340]:
+                    - text: Action
+                    - button "Select" [ref=f1e341] [cursor=pointer]
+                - row [ref=f1e342]:
+                  - cell "State active" [ref=f1e343]
+                  - cell "Branch guardian/observed-12" [ref=f1e344]
+                  - cell "Path /observed/guardian/worktree-12" [ref=f1e345]
+                  - cell "HEAD abcdef000012" [ref=f1e346]
+                  - cell "Owner/activity ses_observed_12" [ref=f1e347]
+                  - cell [ref=f1e348]:
+                    - text: Action
+                    - button "Select" [ref=f1e349] [cursor=pointer]
+                - row [ref=f1e350]:
+                  - cell "State active" [ref=f1e351]
+                  - cell "Branch guardian/observed-13" [ref=f1e352]
+                  - cell "Path /observed/guardian/worktree-13" [ref=f1e353]
+                  - cell "HEAD abcdef000013" [ref=f1e354]
+                  - cell "Owner/activity ses_observed_13" [ref=f1e355]
+                  - cell [ref=f1e356]:
+                    - text: Action
+                    - button "Select" [ref=f1e357] [cursor=pointer]
+                - row [ref=f1e358]:
+                  - cell "State active" [ref=f1e359]
+                  - cell "Branch guardian/observed-14" [ref=f1e360]
+                  - cell "Path /observed/guardian/worktree-14" [ref=f1e361]
+                  - cell "HEAD abcdef000014" [ref=f1e362]
+                  - cell "Owner/activity ses_observed_14" [ref=f1e363]
+                  - cell [ref=f1e364]:
+                    - text: Action
+                    - button "Select" [ref=f1e365] [cursor=pointer]
+                - row [ref=f1e366]:
+                  - cell "State terminal" [ref=f1e367]
+                  - cell "Branch guardian/observed-15" [ref=f1e368]
+                  - cell "Path /observed/guardian/worktree-15" [ref=f1e369]
+                  - cell "HEAD abcdef000015" [ref=f1e370]
+                  - cell "Owner/activity ses_observed_15" [ref=f1e371]
+                  - cell [ref=f1e372]:
+                    - text: Action
+                    - button "Select" [ref=f1e373] [cursor=pointer]
+                - row [ref=f1e374]:
+                  - cell "State active" [ref=f1e375]
+                  - cell "Branch guardian/observed-16" [ref=f1e376]
+                  - cell "Path /observed/guardian/worktree-16" [ref=f1e377]
+                  - cell "HEAD abcdef000016" [ref=f1e378]
+                  - cell "Owner/activity ses_observed_16" [ref=f1e379]
+                  - cell [ref=f1e380]:
+                    - text: Action
+                    - button "Select" [ref=f1e381] [cursor=pointer]
+                - row [ref=f1e382]:
+                  - cell "State active" [ref=f1e383]
+                  - cell "Branch guardian/observed-17" [ref=f1e384]
+                  - cell "Path /observed/guardian/worktree-17" [ref=f1e385]
+                  - cell "HEAD abcdef000017" [ref=f1e386]
+                  - cell "Owner/activity ses_observed_17" [ref=f1e387]
+                  - cell [ref=f1e388]:
+                    - text: Action
+                    - button "Select" [ref=f1e389] [cursor=pointer]
+            - table [ref=f1e390]:
+              - caption [ref=f1e391]: Observed events
+              - rowgroup [ref=f1e392]:
+                - row [ref=f1e393]:
+                  - columnheader "Session" [ref=f1e394]
+                  - columnheader "Kind" [ref=f1e395]
+                  - columnheader "Timestamp" [ref=f1e396]
+                  - columnheader "Action/availability" [ref=f1e397]
+              - rowgroup [ref=f1e398]:
+                - row [ref=f1e399]:
+                  - cell "Session ses_observed_00" [ref=f1e400]
+                  - cell "Kind terminal-recovery-action" [ref=f1e401]
+                  - cell "Timestamp Unavailable" [ref=f1e402]
+                  - cell "Action/availability Observed action available" [ref=f1e403]
+                - row [ref=f1e404]:
+                  - cell "Session ses_observed_05" [ref=f1e405]
+                  - cell "Kind terminal-recovery-action" [ref=f1e406]
+                  - cell "Timestamp Unavailable" [ref=f1e407]
+                  - cell "Action/availability Observed action available" [ref=f1e408]
+                - row [ref=f1e409]:
+                  - cell "Session ses_observed_10" [ref=f1e410]
+                  - cell "Kind terminal-recovery-action" [ref=f1e411]
+                  - cell "Timestamp Unavailable" [ref=f1e412]
+                  - cell "Action/availability Observed action available" [ref=f1e413]
+                - row [ref=f1e414]:
+                  - cell "Session ses_observed_15" [ref=f1e415]
+                  - cell "Kind terminal-recovery-action" [ref=f1e416]
+                  - cell "Timestamp Unavailable" [ref=f1e417]
+                  - cell "Action/availability Observed action available" [ref=f1e418]
+                - row [ref=f1e419]:
+                  - cell "Session ses_observed_00" [ref=f1e420]
+                  - cell "Kind created" [ref=f1e421]
+                  - cell "Timestamp 2026-08-01T00:00:00.000Z" [ref=f1e422]
+                  - cell "Action/availability Unavailable" [ref=f1e423]
+                - row [ref=f1e424]:
+                  - cell "Session ses_observed_09" [ref=f1e425]
+                  - cell "Kind created" [ref=f1e426]
+                  - cell "Timestamp 2026-08-01T00:00:00.000Z" [ref=f1e427]
+                  - cell "Action/availability Unavailable" [ref=f1e428]
+                - row [ref=f1e429]:
+                  - cell "Session ses_observed_00" [ref=f1e430]
+                  - cell "Kind updated" [ref=f1e431]
+                  - cell "Timestamp 2026-08-01T10:30:00.000Z" [ref=f1e432]
+                  - cell "Action/availability Unavailable" [ref=f1e433]
+                - row [ref=f1e434]:
+                  - cell "Session ses_observed_09" [ref=f1e435]
+                  - cell "Kind updated" [ref=f1e436]
+                  - cell "Timestamp 2026-08-01T10:30:00.000Z" [ref=f1e437]
+                  - cell "Action/availability Unavailable" [ref=f1e438]
+                - row [ref=f1e439]:
+                  - cell "Session ses_observed_01" [ref=f1e440]
+                  - cell "Kind created" [ref=f1e441]
+                  - cell "Timestamp 2026-08-02T01:00:00.000Z" [ref=f1e442]
+                  - cell "Action/availability Unavailable" [ref=f1e443]
+                - row [ref=f1e444]:
+                  - cell "Session ses_observed_10" [ref=f1e445]
+                  - cell "Kind created" [ref=f1e446]
+                  - cell "Timestamp 2026-08-02T01:00:00.000Z" [ref=f1e447]
+                  - cell "Action/availability Unavailable" [ref=f1e448]
+                - row [ref=f1e449]:
+                  - cell "Session ses_observed_01" [ref=f1e450]
+                  - cell "Kind updated" [ref=f1e451]
+                  - cell "Timestamp 2026-08-02T11:30:00.000Z" [ref=f1e452]
+                  - cell "Action/availability Unavailable" [ref=f1e453]
+                - row [ref=f1e454]:
+                  - cell "Session ses_observed_10" [ref=f1e455]
+                  - cell "Kind updated" [ref=f1e456]
+                  - cell "Timestamp 2026-08-02T11:30:00.000Z" [ref=f1e457]
+                  - cell "Action/availability Unavailable" [ref=f1e458]
+                - row [ref=f1e459]:
+                  - cell "Session ses_observed_02" [ref=f1e460]
+                  - cell "Kind created" [ref=f1e461]
+                  - cell "Timestamp 2026-08-03T02:00:00.000Z" [ref=f1e462]
+                  - cell "Action/availability Unavailable" [ref=f1e463]
+                - row [ref=f1e464]:
+                  - cell "Session ses_observed_11" [ref=f1e465]
+                  - cell "Kind created" [ref=f1e466]
+                  - cell "Timestamp 2026-08-03T02:00:00.000Z" [ref=f1e467]
+                  - cell "Action/availability Unavailable" [ref=f1e468]
+                - row [ref=f1e469]:
+                  - cell "Session ses_observed_02" [ref=f1e470]
+                  - cell "Kind updated" [ref=f1e471]
+                  - cell "Timestamp 2026-08-03T12:30:00.000Z" [ref=f1e472]
+                  - cell "Action/availability Unavailable" [ref=f1e473]
+                - row [ref=f1e474]:
+                  - cell "Session ses_observed_11" [ref=f1e475]
+                  - cell "Kind updated" [ref=f1e476]
+                  - cell "Timestamp 2026-08-03T12:30:00.000Z" [ref=f1e477]
+                  - cell "Action/availability Unavailable" [ref=f1e478]
+                - row [ref=f1e479]:
+                  - cell "Session ses_observed_03" [ref=f1e480]
+                  - cell "Kind created" [ref=f1e481]
+                  - cell "Timestamp 2026-08-04T03:00:00.000Z" [ref=f1e482]
+                  - cell "Action/availability Unavailable" [ref=f1e483]
+                - row [ref=f1e484]:
+                  - cell "Session ses_observed_12" [ref=f1e485]
+                  - cell "Kind created" [ref=f1e486]
+                  - cell "Timestamp 2026-08-04T03:00:00.000Z" [ref=f1e487]
+                  - cell "Action/availability Unavailable" [ref=f1e488]
+                - row [ref=f1e489]:
+                  - cell "Session ses_observed_03" [ref=f1e490]
+                  - cell "Kind updated" [ref=f1e491]
+                  - cell "Timestamp 2026-08-04T13:30:00.000Z" [ref=f1e492]
+                  - cell "Action/availability Unavailable" [ref=f1e493]
+                - row [ref=f1e494]:
+                  - cell "Session ses_observed_12" [ref=f1e495]
+                  - cell "Kind updated" [ref=f1e496]
+                  - cell "Timestamp 2026-08-04T13:30:00.000Z" [ref=f1e497]
+                  - cell "Action/availability Unavailable" [ref=f1e498]
+                - row [ref=f1e499]:
+                  - cell "Session ses_observed_04" [ref=f1e500]
+                  - cell "Kind created" [ref=f1e501]
+                  - cell "Timestamp 2026-08-05T04:00:00.000Z" [ref=f1e502]
+                  - cell "Action/availability Unavailable" [ref=f1e503]
+                - row [ref=f1e504]:
+                  - cell "Session ses_observed_13" [ref=f1e505]
+                  - cell "Kind created" [ref=f1e506]
+                  - cell "Timestamp 2026-08-05T04:00:00.000Z" [ref=f1e507]
+                  - cell "Action/availability Unavailable" [ref=f1e508]
+                - row [ref=f1e509]:
+                  - cell "Session ses_observed_04" [ref=f1e510]
+                  - cell "Kind updated" [ref=f1e511]
+                  - cell "Timestamp 2026-08-05T14:30:00.000Z" [ref=f1e512]
+                  - cell "Action/availability Unavailable" [ref=f1e513]
+                - row [ref=f1e514]:
+                  - cell "Session ses_observed_13" [ref=f1e515]
+                  - cell "Kind updated" [ref=f1e516]
+                  - cell "Timestamp 2026-08-05T14:30:00.000Z" [ref=f1e517]
+                  - cell "Action/availability Unavailable" [ref=f1e518]
+                - row [ref=f1e519]:
+                  - cell "Session ses_observed_05" [ref=f1e520]
+                  - cell "Kind created" [ref=f1e521]
+                  - cell "Timestamp 2026-08-06T05:00:00.000Z" [ref=f1e522]
+                  - cell "Action/availability Unavailable" [ref=f1e523]
+                - row [ref=f1e524]:
+                  - cell "Session ses_observed_14" [ref=f1e525]
+                  - cell "Kind created" [ref=f1e526]
+                  - cell "Timestamp 2026-08-06T05:00:00.000Z" [ref=f1e527]
+                  - cell "Action/availability Unavailable" [ref=f1e528]
+                - row [ref=f1e529]:
+                  - cell "Session ses_observed_05" [ref=f1e530]
+                  - cell "Kind updated" [ref=f1e531]
+                  - cell "Timestamp 2026-08-06T15:30:00.000Z" [ref=f1e532]
+                  - cell "Action/availability Unavailable" [ref=f1e533]
+                - row [ref=f1e534]:
+                  - cell "Session ses_observed_14" [ref=f1e535]
+                  - cell "Kind updated" [ref=f1e536]
+                  - cell "Timestamp 2026-08-06T15:30:00.000Z" [ref=f1e537]
+                  - cell "Action/availability Unavailable" [ref=f1e538]
+                - row [ref=f1e539]:
+                  - cell "Session ses_observed_06" [ref=f1e540]
+                  - cell "Kind created" [ref=f1e541]
+                  - cell "Timestamp 2026-08-07T06:00:00.000Z" [ref=f1e542]
+                  - cell "Action/availability Unavailable" [ref=f1e543]
+                - row [ref=f1e544]:
+                  - cell "Session ses_observed_15" [ref=f1e545]
+                  - cell "Kind created" [ref=f1e546]
+                  - cell "Timestamp 2026-08-07T06:00:00.000Z" [ref=f1e547]
+                  - cell "Action/availability Unavailable" [ref=f1e548]
+                - row [ref=f1e549]:
+                  - cell "Session ses_observed_06" [ref=f1e550]
+                  - cell "Kind updated" [ref=f1e551]
+                  - cell "Timestamp 2026-08-07T16:30:00.000Z" [ref=f1e552]
+                  - cell "Action/availability Unavailable" [ref=f1e553]
+                - row [ref=f1e554]:
+                  - cell "Session ses_observed_15" [ref=f1e555]
+                  - cell "Kind updated" [ref=f1e556]
+                  - cell "Timestamp 2026-08-07T16:30:00.000Z" [ref=f1e557]
+                  - cell "Action/availability Unavailable" [ref=f1e558]
+                - row [ref=f1e559]:
+                  - cell "Session ses_observed_07" [ref=f1e560]
+                  - cell "Kind created" [ref=f1e561]
+                  - cell "Timestamp 2026-08-08T07:00:00.000Z" [ref=f1e562]
+                  - cell "Action/availability Unavailable" [ref=f1e563]
+                - row [ref=f1e564]:
+                  - cell "Session ses_observed_16" [ref=f1e565]
+                  - cell "Kind created" [ref=f1e566]
+                  - cell "Timestamp 2026-08-08T07:00:00.000Z" [ref=f1e567]
+                  - cell "Action/availability Unavailable" [ref=f1e568]
+                - row [ref=f1e569]:
+                  - cell "Session ses_observed_07" [ref=f1e570]
+                  - cell "Kind updated" [ref=f1e571]
+                  - cell "Timestamp 2026-08-08T17:30:00.000Z" [ref=f1e572]
+                  - cell "Action/availability Unavailable" [ref=f1e573]
+                - row [ref=f1e574]:
+                  - cell "Session ses_observed_16" [ref=f1e575]
+                  - cell "Kind updated" [ref=f1e576]
+                  - cell "Timestamp 2026-08-08T17:30:00.000Z" [ref=f1e577]
+                  - cell "Action/availability Unavailable" [ref=f1e578]
+                - row [ref=f1e579]:
+                  - cell "Session ses_observed_08" [ref=f1e580]
+                  - cell "Kind created" [ref=f1e581]
+                  - cell "Timestamp 2026-08-09T08:00:00.000Z" [ref=f1e582]
+                  - cell "Action/availability Unavailable" [ref=f1e583]
+                - row [ref=f1e584]:
+                  - cell "Session ses_observed_17" [ref=f1e585]
+                  - cell "Kind created" [ref=f1e586]
+                  - cell "Timestamp 2026-08-09T08:00:00.000Z" [ref=f1e587]
+                  - cell "Action/availability Unavailable" [ref=f1e588]
+                - row [ref=f1e589]:
+                  - cell "Session ses_observed_08" [ref=f1e590]
+                  - cell "Kind updated" [ref=f1e591]
+                  - cell "Timestamp 2026-08-09T18:30:00.000Z" [ref=f1e592]
+                  - cell "Action/availability Unavailable" [ref=f1e593]
+                - row [ref=f1e594]:
+                  - cell "Session ses_observed_17" [ref=f1e595]
+                  - cell "Kind updated" [ref=f1e596]
+                  - cell "Timestamp 2026-08-09T18:30:00.000Z" [ref=f1e597]
+                  - cell "Action/availability Unavailable" [ref=f1e598]
+        - group [ref=f1e599]:
+          - generic "Show graphical metro view" [ref=f1e600] [cursor=pointer]
+    - text: State Base Ref Authority Ref Base Commit Effective Remote Source Effective Remote Freshness Local Branches Effective Remote Branches Session Status Branch Worktree Head Session Status Branch Worktree Head Session Status Branch Worktree Head Session Status Branch Worktree Head Session Status Branch Worktree Head Session Status Branch Worktree Head Session Status Branch Worktree Head Session Status Branch Worktree Head Session Status Branch Worktree Head Session Status Branch Worktree Head Session Status Branch Worktree Head Session Status Branch Worktree Head Session Status Branch Worktree Head Session Status Branch Worktree Head Session Status Branch Worktree Head Session Status Branch Worktree Head Session Status Branch Worktree Head Session Status Branch Worktree Head Branch Path Head Markers Branch Path Head Markers Branch Path Head Markers Branch Path Head Markers Branch Path Head Markers Branch Path Head Markers Branch Path Head Markers Branch Path Head Markers Branch Path Head Markers Branch Path Head Markers Branch Path Head Markers Branch Path Head Markers Branch Path Head Markers Branch Path Head Markers Branch Path Head Markers Branch Path Head Markers Branch Path Head Markers Branch Path Head Markers Status Path Reason Suggested Command Status Path Reason Suggested Command Status Path Reason Suggested Command Status Path Reason Suggested Command Status Path Reason Suggested Command Status Path Reason Suggested Command Status Path Reason Suggested Command Status Path Reason Suggested Command Status Path Reason Suggested Command

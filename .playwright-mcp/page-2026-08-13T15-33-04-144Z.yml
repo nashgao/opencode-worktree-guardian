@@ -1,0 +1,362 @@
+- generic [active] [ref=e1]:
+  - link "Skip to report" [ref=e2] [cursor=pointer]:
+    - /url: "#main-content"
+  - banner [ref=e3]:
+    - generic [ref=e4]:
+      - generic [ref=e5]: OpenCode Worktree Guardian
+      - generic [ref=e6]: Cached read-only evidence
+    - heading "Guardian Operations Center" [level=1] [ref=e7]
+    - paragraph [ref=e8]:
+      - text: Generated 2026-08-13T15:25:10.211Z for
+      - code [ref=e9]: /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian
+    - paragraph [ref=e10]:
+      - text: "Offline file:"
+      - code [ref=e11]: /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.git/opencode-guardian/report.html
+  - main [ref=e12]:
+    - navigation "Operations Center views" [ref=e13]:
+      - tablist [ref=e14]:
+        - tab "Operations" [selected] [ref=e15] [cursor=pointer]
+        - tab "Topology" [ref=e16] [cursor=pointer]
+        - tab "Evidence" [ref=e17] [cursor=pointer]
+        - tab "Raw Data" [ref=e18] [cursor=pointer]
+    - tabpanel "Operations" [ref=e19]:
+      - region [ref=e20]:
+        - generic [ref=e21]:
+          - generic [ref=e22]:
+            - paragraph [ref=e23]: Observed Worktrees
+            - heading "Worktree Operations" [level=2] [ref=e24]
+            - paragraph [ref=e25]:
+              - code [ref=e26]: /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian
+          - generic [ref=e27]:
+            - text: Search branch, path, state, or session
+            - searchbox "Search branch, path, state, or session" [ref=e28]
+        - generic "Observed worktree counts" [ref=e29]:
+          - generic [ref=e30]: 46 worktrees
+          - generic [ref=e31]: 44 active
+          - generic [ref=e32]: 287 terminal
+          - generic [ref=e33]: 4 risk
+        - generic [ref=e34]:
+          - region "Observed worktree dashboard" [ref=e35]:
+            - generic [ref=e36]:
+              - generic "Worktree state filters" [ref=e37]:
+                - button "all 46" [pressed] [ref=e38] [cursor=pointer]
+                - button "active 44" [ref=e39] [cursor=pointer]
+                - button "terminal 1" [ref=e40] [cursor=pointer]
+                - button "risk 0" [ref=e41] [cursor=pointer]
+                - button "unmanaged 0" [ref=e42] [cursor=pointer]
+              - generic [ref=e43]:
+                - text: Sort
+                - combobox "Sort" [ref=e44]:
+                  - option "Branch" [selected]
+                  - option "Path"
+                  - option "State"
+                  - option "Base distance"
+              - generic "View mode" [ref=e45]:
+                - button "List" [pressed] [ref=e46] [cursor=pointer]
+                - button "Graph" [ref=e47] [cursor=pointer]
+            - paragraph [ref=e48]: / search ArrowUpArrowDown select Enter inspect
+            - listbox "Observed worktrees" [ref=e49]:
+              - option "guardian/session-ses-0045 /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-0045 active ses_0045fbd0fffe3k4P0tvc2qA9Un" [ref=e50] [cursor=pointer]:
+                - strong [ref=e51]: guardian/session-ses-0045
+                - generic [ref=e52]: /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-0045
+                - generic [ref=e53]: active
+                - generic [ref=e54]: ses_0045fbd0fffe3k4P0tvc2qA9Un
+              - option "guardian/session-ses-0046 /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-0046 active ses_0046c488effevSu5GzFK2S9G5F" [ref=e55] [cursor=pointer]:
+                - strong [ref=e56]: guardian/session-ses-0046
+                - generic [ref=e57]: /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-0046
+                - generic [ref=e58]: active
+                - generic [ref=e59]: ses_0046c488effevSu5GzFK2S9G5F
+              - option "guardian/session-ses-0047 /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-0047 active ses_0047e4cb5ffeq0qFy55Nb4T2Kw" [ref=e60] [cursor=pointer]:
+                - strong [ref=e61]: guardian/session-ses-0047
+                - generic [ref=e62]: /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-0047
+                - generic [ref=e63]: active
+                - generic [ref=e64]: ses_0047e4cb5ffeq0qFy55Nb4T2Kw
+              - option "guardian/session-ses-0048 /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-0048 active ses_0048e1fdaffelSC3QS8gOAYOlM" [ref=e65] [cursor=pointer]:
+                - strong [ref=e66]: guardian/session-ses-0048
+                - generic [ref=e67]: /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-0048
+                - generic [ref=e68]: active
+                - generic [ref=e69]: ses_0048e1fdaffelSC3QS8gOAYOlM
+              - option "guardian/session-ses-0049 /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-0049 active ses_0049e5a49ffenxeImLV2Vlui6c" [ref=e70] [cursor=pointer]:
+                - strong [ref=e71]: guardian/session-ses-0049
+                - generic [ref=e72]: /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-0049
+                - generic [ref=e73]: active
+                - generic [ref=e74]: ses_0049e5a49ffenxeImLV2Vlui6c
+              - option "guardian/session-ses-004a /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-004a active ses_004a6723effe5MdWT1fjR32aGS" [ref=e75] [cursor=pointer]:
+                - strong [ref=e76]: guardian/session-ses-004a
+                - generic [ref=e77]: /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-004a
+                - generic [ref=e78]: active
+                - generic [ref=e79]: ses_004a6723effe5MdWT1fjR32aGS
+              - option "guardian/session-ses-0067 /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-0067 active ses_0067dc652ffer2UnLfMYDlQPxA" [ref=e80] [cursor=pointer]:
+                - strong [ref=e81]: guardian/session-ses-0067
+                - generic [ref=e82]: /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-0067
+                - generic [ref=e83]: active
+                - generic [ref=e84]: ses_0067dc652ffer2UnLfMYDlQPxA
+              - option "guardian/session-ses-0069 /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-0069 active ses_006975edbffe2hCz6hCwyxNZlE" [ref=e85] [cursor=pointer]:
+                - strong [ref=e86]: guardian/session-ses-0069
+                - generic [ref=e87]: /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-0069
+                - generic [ref=e88]: active
+                - generic [ref=e89]: ses_006975edbffe2hCz6hCwyxNZlE
+              - option "guardian/session-ses-006a /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-006a active ses_006ad4996ffe3tMRyMEOD2A9i9" [ref=e90] [cursor=pointer]:
+                - strong [ref=e91]: guardian/session-ses-006a
+                - generic [ref=e92]: /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-006a
+                - generic [ref=e93]: active
+                - generic [ref=e94]: ses_006ad4996ffe3tMRyMEOD2A9i9
+              - option "guardian/session-ses-006c /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-006c active ses_006ca899bffeIEMNm3KzOMwqLV" [ref=e95] [cursor=pointer]:
+                - strong [ref=e96]: guardian/session-ses-006c
+                - generic [ref=e97]: /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-006c
+                - generic [ref=e98]: active
+                - generic [ref=e99]: ses_006ca899bffeIEMNm3KzOMwqLV
+              - option "guardian/session-ses-006d /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-006d active ses_006dbedbaffeSfdw1CnJbgoCCp" [ref=e100] [cursor=pointer]:
+                - strong [ref=e101]: guardian/session-ses-006d
+                - generic [ref=e102]: /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-006d
+                - generic [ref=e103]: active
+                - generic [ref=e104]: ses_006dbedbaffeSfdw1CnJbgoCCp
+              - option "guardian/session-ses-006e /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-006e active ses_006e3864cffexC3UeNUIs4rRFY" [ref=e105] [cursor=pointer]:
+                - strong [ref=e106]: guardian/session-ses-006e
+                - generic [ref=e107]: /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-006e
+                - generic [ref=e108]: active
+                - generic [ref=e109]: ses_006e3864cffexC3UeNUIs4rRFY
+              - option "guardian/session-ses-007f /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-007f active ses_007fff23effeDfCacAOdVxZ10w" [ref=e110] [cursor=pointer]:
+                - strong [ref=e111]: guardian/session-ses-007f
+                - generic [ref=e112]: /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-007f
+                - generic [ref=e113]: active
+                - generic [ref=e114]: ses_007fff23effeDfCacAOdVxZ10w
+              - option "guardian/session-ses-0080 /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-0080 active ses_0080db6cdffe8r4k6Mo9RtP2wK" [ref=e115] [cursor=pointer]:
+                - strong [ref=e116]: guardian/session-ses-0080
+                - generic [ref=e117]: /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-0080
+                - generic [ref=e118]: active
+                - generic [ref=e119]: ses_0080db6cdffe8r4k6Mo9RtP2wK
+              - option "guardian/session-ses-0081 /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-0081 active ses_0081da58fffehU3307ByIu4GRc" [ref=e120] [cursor=pointer]:
+                - strong [ref=e121]: guardian/session-ses-0081
+                - generic [ref=e122]: /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-0081
+                - generic [ref=e123]: active
+                - generic [ref=e124]: ses_0081da58fffehU3307ByIu4GRc
+              - option "guardian/session-ses-0082 /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-0082 active ses_008269864ffeuym2x1m1WFArjj" [ref=e125] [cursor=pointer]:
+                - strong [ref=e126]: guardian/session-ses-0082
+                - generic [ref=e127]: /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-0082
+                - generic [ref=e128]: active
+                - generic [ref=e129]: ses_008269864ffeuym2x1m1WFArjj
+              - option "guardian/session-ses-0083 /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-0083 active ses_0083e890affeaVqbS7wVC2PC64" [ref=e130] [cursor=pointer]:
+                - strong [ref=e131]: guardian/session-ses-0083
+                - generic [ref=e132]: /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-0083
+                - generic [ref=e133]: active
+                - generic [ref=e134]: ses_0083e890affeaVqbS7wVC2PC64
+              - option "guardian/session-ses-0084 /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-0084 active ses_0084b3739ffe9HuPH4aBcicUuQ" [ref=e135] [cursor=pointer]:
+                - strong [ref=e136]: guardian/session-ses-0084
+                - generic [ref=e137]: /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-0084
+                - generic [ref=e138]: active
+                - generic [ref=e139]: ses_0084b3739ffe9HuPH4aBcicUuQ
+              - option "guardian/session-ses-0086 /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-0086 active ses_0086f67bdffeYWVzuqQxDkf1uT" [ref=e140] [cursor=pointer]:
+                - strong [ref=e141]: guardian/session-ses-0086
+                - generic [ref=e142]: /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-0086
+                - generic [ref=e143]: active
+                - generic [ref=e144]: ses_0086f67bdffeYWVzuqQxDkf1uT
+              - option "guardian/session-ses-0087 /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-0087 active ses_0087c91eeffeShq0cP0IhsM331" [ref=e145] [cursor=pointer]:
+                - strong [ref=e146]: guardian/session-ses-0087
+                - generic [ref=e147]: /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-0087
+                - generic [ref=e148]: active
+                - generic [ref=e149]: ses_0087c91eeffeShq0cP0IhsM331
+              - option "guardian/session-ses-0089 /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-0089 active ses_0089f48c4ffepRXH5C7r2Tf0I5" [ref=e150] [cursor=pointer]:
+                - strong [ref=e151]: guardian/session-ses-0089
+                - generic [ref=e152]: /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-0089
+                - generic [ref=e153]: active
+                - generic [ref=e154]: ses_0089f48c4ffepRXH5C7r2Tf0I5
+              - option "guardian/session-ses-008b /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-008b active ses_008bd19d3ffebntVRwq9ZOFFbA" [ref=e155] [cursor=pointer]:
+                - strong [ref=e156]: guardian/session-ses-008b
+                - generic [ref=e157]: /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-008b
+                - generic [ref=e158]: active
+                - generic [ref=e159]: ses_008bd19d3ffebntVRwq9ZOFFbA
+              - option "guardian/session-ses-008c /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-008c active ses_008cfb897ffeXxhmGtEZxmdyeg" [ref=e160] [cursor=pointer]:
+                - strong [ref=e161]: guardian/session-ses-008c
+                - generic [ref=e162]: /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-008c
+                - generic [ref=e163]: active
+                - generic [ref=e164]: ses_008cfb897ffeXxhmGtEZxmdyeg
+              - option "guardian/session-ses-008d /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-008d active ses_008dbad5cffelaMEjNEHXEOqCc" [ref=e165] [cursor=pointer]:
+                - strong [ref=e166]: guardian/session-ses-008d
+                - generic [ref=e167]: /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-008d
+                - generic [ref=e168]: active
+                - generic [ref=e169]: ses_008dbad5cffelaMEjNEHXEOqCc
+              - option "guardian/session-ses-008e /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-008e active ses_008ec832affeH021G9NmNbRrye" [ref=e170] [cursor=pointer]:
+                - strong [ref=e171]: guardian/session-ses-008e
+                - generic [ref=e172]: /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-008e
+                - generic [ref=e173]: active
+                - generic [ref=e174]: ses_008ec832affeH021G9NmNbRrye
+              - option "guardian/session-ses-008f /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-008f active ses_008faf2b8ffencoZ4MIpnYyKGT" [ref=e175] [cursor=pointer]:
+                - strong [ref=e176]: guardian/session-ses-008f
+                - generic [ref=e177]: /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-008f
+                - generic [ref=e178]: active
+                - generic [ref=e179]: ses_008faf2b8ffencoZ4MIpnYyKGT
+              - option "guardian/session-ses-0090 /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-0090 active ses_0090f9d7dffewc8qDPqO4fLh03" [ref=e180] [cursor=pointer]:
+                - strong [ref=e181]: guardian/session-ses-0090
+                - generic [ref=e182]: /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-0090
+                - generic [ref=e183]: active
+                - generic [ref=e184]: ses_0090f9d7dffewc8qDPqO4fLh03
+              - option "guardian/session-ses-0093 /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-0093 active ses_0093e7975ffeKMUVzJ0yrx91IJ" [ref=e185] [cursor=pointer]:
+                - strong [ref=e186]: guardian/session-ses-0093
+                - generic [ref=e187]: /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-0093
+                - generic [ref=e188]: active
+                - generic [ref=e189]: ses_0093e7975ffeKMUVzJ0yrx91IJ
+              - option "guardian/session-ses-0094 /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-0094 active ses_0094a7b3affeXsC2AozOOZ1NHS" [ref=e190] [cursor=pointer]:
+                - strong [ref=e191]: guardian/session-ses-0094
+                - generic [ref=e192]: /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-0094
+                - generic [ref=e193]: active
+                - generic [ref=e194]: ses_0094a7b3affeXsC2AozOOZ1NHS
+              - option "guardian/session-ses-0095 /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-0095 active ses_0095be8f2ffecjqbM63USPpu7i" [ref=e195] [cursor=pointer]:
+                - strong [ref=e196]: guardian/session-ses-0095
+                - generic [ref=e197]: /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-0095
+                - generic [ref=e198]: active
+                - generic [ref=e199]: ses_0095be8f2ffecjqbM63USPpu7i
+              - option "guardian/session-ses-0097 /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-0097 active ses_0097ffd80ffecFGVTp644tLJ2S" [ref=e200] [cursor=pointer]:
+                - strong [ref=e201]: guardian/session-ses-0097
+                - generic [ref=e202]: /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-0097
+                - generic [ref=e203]: active
+                - generic [ref=e204]: ses_0097ffd80ffecFGVTp644tLJ2S
+              - option "guardian/session-ses-0098 /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-0098 active ses_0098efec0ffeNVxcLTRgDwbaf5" [ref=e205] [cursor=pointer]:
+                - strong [ref=e206]: guardian/session-ses-0098
+                - generic [ref=e207]: /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-0098
+                - generic [ref=e208]: active
+                - generic [ref=e209]: ses_0098efec0ffeNVxcLTRgDwbaf5
+              - option "guardian/session-ses-0099 /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-0099 active ses_009901806ffeFbtkumpcgpxJ1d" [ref=e210] [cursor=pointer]:
+                - strong [ref=e211]: guardian/session-ses-0099
+                - generic [ref=e212]: /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-0099
+                - generic [ref=e213]: active
+                - generic [ref=e214]: ses_009901806ffeFbtkumpcgpxJ1d
+              - option "guardian/session-ses-009a /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-009a active ses_009a8f928ffe5W71mQLJWsbbu7" [ref=e215] [cursor=pointer]:
+                - strong [ref=e216]: guardian/session-ses-009a
+                - generic [ref=e217]: /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-009a
+                - generic [ref=e218]: active
+                - generic [ref=e219]: ses_009a8f928ffe5W71mQLJWsbbu7
+              - option "guardian/session-ses-00b5 /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-00b5 active ses_00b5ef880ffe6uN8GVF4TS1zxn" [ref=e220] [cursor=pointer]:
+                - strong [ref=e221]: guardian/session-ses-00b5
+                - generic [ref=e222]: /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-00b5
+                - generic [ref=e223]: active
+                - generic [ref=e224]: ses_00b5ef880ffe6uN8GVF4TS1zxn
+              - option "guardian/session-ses-00b6 /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-00b6 active ses_00b67c5c4ffeVtpTimt5nNb70H" [ref=e225] [cursor=pointer]:
+                - strong [ref=e226]: guardian/session-ses-00b6
+                - generic [ref=e227]: /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-00b6
+                - generic [ref=e228]: active
+                - generic [ref=e229]: ses_00b67c5c4ffeVtpTimt5nNb70H
+              - option "guardian/session-ses-00b7 /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-00b7 active ses_00b7af4c6ffdx7XRlrJWN0OCse" [ref=e230] [cursor=pointer]:
+                - strong [ref=e231]: guardian/session-ses-00b7
+                - generic [ref=e232]: /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-00b7
+                - generic [ref=e233]: active
+                - generic [ref=e234]: ses_00b7af4c6ffdx7XRlrJWN0OCse
+              - option "guardian/session-ses-00b8 /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-00b8 active ses_00b810478ffeKNwipPx42MR4n3" [ref=e235] [cursor=pointer]:
+                - strong [ref=e236]: guardian/session-ses-00b8
+                - generic [ref=e237]: /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-00b8
+                - generic [ref=e238]: active
+                - generic [ref=e239]: ses_00b810478ffeKNwipPx42MR4n3
+              - option "guardian/session-ses-00b9 /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-00b9 active ses_00b9ed871ffeCfWYUXKUPWYXPx" [ref=e240] [cursor=pointer]:
+                - strong [ref=e241]: guardian/session-ses-00b9
+                - generic [ref=e242]: /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-00b9
+                - generic [ref=e243]: active
+                - generic [ref=e244]: ses_00b9ed871ffeCfWYUXKUPWYXPx
+              - option "guardian/session-ses-00ba /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-00ba active ses_00baead72ffeZivRlIQyzJdBlr" [ref=e245] [cursor=pointer]:
+                - strong [ref=e246]: guardian/session-ses-00ba
+                - generic [ref=e247]: /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-00ba
+                - generic [ref=e248]: active
+                - generic [ref=e249]: ses_00baead72ffeZivRlIQyzJdBlr
+              - option "guardian/session-ses-00bb /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-00bb active ses_00bb71e66ffeKYUlUps6rMO82H" [ref=e250] [cursor=pointer]:
+                - strong [ref=e251]: guardian/session-ses-00bb
+                - generic [ref=e252]: /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-00bb
+                - generic [ref=e253]: active
+                - generic [ref=e254]: ses_00bb71e66ffeKYUlUps6rMO82H
+              - option "guardian/session-ses-00bc /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-00bc active ses_00bcabe7affeD518W6MX3dftMl" [ref=e255] [cursor=pointer]:
+                - strong [ref=e256]: guardian/session-ses-00bc
+                - generic [ref=e257]: /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-00bc
+                - generic [ref=e258]: active
+                - generic [ref=e259]: ses_00bcabe7affeD518W6MX3dftMl
+              - option "guardian/session-ses-00bd /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-00bd active ses_00bd63fbaffeHXyhMnG0B08mff" [ref=e260] [cursor=pointer]:
+                - strong [ref=e261]: guardian/session-ses-00bd
+                - generic [ref=e262]: /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-00bd
+                - generic [ref=e263]: active
+                - generic [ref=e264]: ses_00bd63fbaffeHXyhMnG0B08mff
+              - option "guardian/session-ses-00e8 /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-00e8 active ses_00e8e2c38ffeaOO3hyW6pIjHR1" [ref=e265] [cursor=pointer]:
+                - strong [ref=e266]: guardian/session-ses-00e8
+                - generic [ref=e267]: /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-00e8
+                - generic [ref=e268]: active
+                - generic [ref=e269]: ses_00e8e2c38ffeaOO3hyW6pIjHR1
+              - option "guardian/session-ses-0153 /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-0153 terminal ses_0153f58a9ffeWtEtTEQz5iQ1No" [ref=e270] [cursor=pointer]:
+                - strong [ref=e271]: guardian/session-ses-0153
+                - generic [ref=e272]: /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-session-ses-0153
+                - generic [ref=e273]: terminal
+                - generic [ref=e274]: ses_0153f58a9ffeWtEtTEQz5iQ1No
+              - option "main /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian primary ses_0325d39abffehlaGtARw6UgdPo" [selected] [ref=e275] [cursor=pointer]:
+                - strong [ref=e276]: main
+                - generic [ref=e277]: /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian
+                - generic [ref=e278]: primary
+                - generic [ref=e279]: ses_0325d39abffehlaGtARw6UgdPo
+          - complementary [ref=e280]:
+            - generic [ref=e281]:
+              - paragraph [ref=e282]: Selected worktree
+              - heading "main" [level=2] [ref=e283]
+              - generic [ref=e284]:
+                - heading "Path" [level=3] [ref=e285]
+                - paragraph [ref=e286]: /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian
+              - generic [ref=e287]:
+                - heading "Head" [level=3] [ref=e288]
+                - paragraph [ref=e289]: 766458122053abb797ec50262c7c39ed7cccfca9
+              - generic [ref=e290]:
+                - heading "State" [level=3] [ref=e291]
+                - paragraph [ref=e292]: primary | good
+              - generic [ref=e293]:
+                - heading "Owner session" [level=3] [ref=e294]
+                - paragraph [ref=e295]: ses_0325d39abffehlaGtARw6UgdPo
+              - generic [ref=e296]:
+                - heading "Owner status" [level=3] [ref=e297]
+                - paragraph [ref=e298]: deleted
+              - generic [ref=e299]:
+                - heading "Worktree flags" [level=3] [ref=e300]
+                - paragraph [ref=e301]: primary
+              - generic [ref=e302]:
+                - heading "Base distance" [level=3] [ref=e303]
+                - paragraph [ref=e304]: "Unavailable: not-an-active-session-worktree"
+              - generic [ref=e305]:
+                - heading "Risk flags" [level=3] [ref=e306]
+                - paragraph [ref=e307]: none observed
+              - generic [ref=e308]:
+                - heading "Changed files" [level=3] [ref=e309]
+                - paragraph [ref=e310]: Unavailable. Guardian reports only repository-wide dirty-file inventory.
+              - generic [ref=e311]:
+                - heading "Commit messages" [level=3] [ref=e312]
+                - paragraph [ref=e313]: Unavailable. This report has no commit-message facts.
+              - generic [ref=e314]:
+                - heading "Activity and history" [level=3] [ref=e315]
+                - paragraph [ref=e316]: Unavailable. This dashboard does not infer lifecycle activity.
+              - complementary [ref=e317]:
+                - heading "Select an operation" [level=3] [ref=e318]
+                - paragraph [ref=e319]: Guidance remains selectable and no action is executed from this report.
+                - button "Copy guidance" [ref=e320] [cursor=pointer]
+                - paragraph [ref=e321]
+              - generic [ref=e322]:
+                - button "add" [ref=e323] [cursor=pointer]
+                - button "sync" [ref=e324] [cursor=pointer]
+                - button "fetch" [ref=e325] [cursor=pointer]
+                - button "pull" [ref=e326] [cursor=pointer]
+                - button "switch" [ref=e327] [cursor=pointer]
+                - button "open" [ref=e328] [cursor=pointer]
+                - button "terminal" [ref=e329] [cursor=pointer]
+                - button "remove" [ref=e330] [cursor=pointer]
+      - region [ref=e332]:
+        - generic [ref=e333]: Needs attention
+        - heading "44 active sessions — 38 active sessions stale behind the cached base (+3 more)." [level=2] [ref=e334]
+        - paragraph [ref=e335]: "Next: update the session from the cached base before guardian_finish"
+      - generic [ref=e336]:
+        - article [ref=e337]:
+          - generic [ref=e338]: Sessions
+          - strong [ref=e339]: "44"
+        - article [ref=e340]:
+          - generic [ref=e341]: Worktrees
+          - strong [ref=e342]: "46"
+        - article [ref=e343]:
+          - generic [ref=e344]: Risks
+          - strong [ref=e345]: "4"
+        - article [ref=e346]:
+          - generic [ref=e347]: Safety Refs
+          - strong [ref=e348]: "640"
+        - article [ref=e349]:
+          - generic [ref=e350]: Recovery Candidates
+          - strong [ref=e351]: "3742"
+        - article [ref=e352]:
+          - generic [ref=e353]: Dirty Files
+          - strong [ref=e354]: "144"
