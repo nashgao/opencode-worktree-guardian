@@ -1,0 +1,223 @@
+- generic [active] [ref=f4e1]:
+  - link "Skip to report" [ref=f4e2] [cursor=pointer]:
+    - /url: "#main-content"
+  - banner [ref=f4e3]:
+    - generic [ref=f4e4]:
+      - generic [ref=f4e5]: OpenCode Worktree Guardian
+      - generic [ref=f4e6]: Cached read-only evidence
+    - heading "Guardian Operations Center" [level=1] [ref=f4e7]
+    - paragraph [ref=f4e8]:
+      - text: Generated 2026-08-13T12:00:00.000Z for
+      - code [ref=f4e9]: /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-open-design-report
+    - paragraph [ref=f4e10]:
+      - text: "Offline file:"
+      - code [ref=f4e11]: /var/folders/tw/rrg4001s2bdg6m3ht0dz0j1h0000gn/T/guardian-operations-terminal-20260813/report.html
+  - main [ref=f4e12]:
+    - navigation "Operations Center views" [ref=f4e13]:
+      - tablist [ref=f4e14]:
+        - tab "Operations" [selected] [ref=f4e15] [cursor=pointer]
+        - tab "Topology" [ref=f4e16] [cursor=pointer]
+        - tab "Evidence" [ref=f4e17] [cursor=pointer]
+        - tab "Raw Data" [ref=f4e18] [cursor=pointer]
+    - tabpanel "Operations" [ref=f4e19]:
+      - region [ref=f4e20]:
+        - generic [ref=f4e21]:
+          - generic [ref=f4e22]:
+            - paragraph [ref=f4e23]: Observed Worktrees
+            - heading "Worktree Operations" [level=2] [ref=f4e24]
+            - paragraph [ref=f4e25]:
+              - code [ref=f4e26]: /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-open-design-report
+          - generic [ref=f4e27]:
+            - text: Search branch, path, state, or session
+            - searchbox "Search branch, path, state, or session" [ref=f4e28]
+        - generic "Observed worktree counts" [ref=f4e29]:
+          - generic [ref=f4e30]: 18 worktrees
+          - generic [ref=f4e31]: 14 active
+          - generic [ref=f4e32]: 4 terminal
+          - generic [ref=f4e33]: 4 risk
+        - generic [ref=f4e34]:
+          - region "Observed worktree dashboard" [ref=f4e35]:
+            - generic [ref=f4e36]:
+              - generic "Worktree state filters" [ref=f4e37]:
+                - button "all 18" [pressed] [ref=f4e38] [cursor=pointer]
+                - button "active 14" [ref=f4e39] [cursor=pointer]
+                - button "terminal 3" [ref=f4e40] [cursor=pointer]
+                - button "risk 1" [ref=f4e41] [cursor=pointer]
+                - button "unmanaged 0" [ref=f4e42] [cursor=pointer]
+              - generic [ref=f4e43]:
+                - text: Sort
+                - combobox "Sort" [ref=f4e44]:
+                  - option "Branch" [selected]
+                  - option "Path"
+                  - option "State"
+                  - option "Base distance"
+              - generic "View mode" [ref=f4e45]:
+                - button "List" [pressed] [ref=f4e46] [cursor=pointer]
+                - button "Graph" [ref=f4e47] [cursor=pointer]
+            - paragraph [ref=f4e48]: / search ArrowUpArrowDown select Enter inspect
+            - listbox "Observed worktrees" [ref=f4e49]:
+              - option "guardian/observed-01 /observed/guardian/worktree-01 active ses_observed_01" [ref=f4e50] [cursor=pointer]:
+                - strong [ref=f4e51]: guardian/observed-01
+                - generic [ref=f4e52]: /observed/guardian/worktree-01
+                - generic [ref=f4e53]: active
+                - generic [ref=f4e54]: ses_observed_01
+              - option "guardian/observed-02 /observed/guardian/worktree-02 active ses_observed_02" [ref=f4e55] [cursor=pointer]:
+                - strong [ref=f4e56]: guardian/observed-02
+                - generic [ref=f4e57]: /observed/guardian/worktree-02
+                - generic [ref=f4e58]: active
+                - generic [ref=f4e59]: ses_observed_02
+              - option "guardian/observed-03 /observed/guardian/worktree-03 active ses_observed_03" [ref=f4e60] [cursor=pointer]:
+                - strong [ref=f4e61]: guardian/observed-03
+                - generic [ref=f4e62]: /observed/guardian/worktree-03
+                - generic [ref=f4e63]: active
+                - generic [ref=f4e64]: ses_observed_03
+              - option "guardian/observed-04 /observed/guardian/worktree-04 active ses_observed_04" [ref=f4e65] [cursor=pointer]:
+                - strong [ref=f4e66]: guardian/observed-04
+                - generic [ref=f4e67]: /observed/guardian/worktree-04
+                - generic [ref=f4e68]: active
+                - generic [ref=f4e69]: ses_observed_04
+              - option "guardian/observed-05 /observed/guardian/worktree-05 terminal ses_observed_05" [ref=f4e70] [cursor=pointer]:
+                - strong [ref=f4e71]: guardian/observed-05
+                - generic [ref=f4e72]: /observed/guardian/worktree-05
+                - generic [ref=f4e73]: terminal
+                - generic [ref=f4e74]: ses_observed_05
+              - option "guardian/observed-06 /observed/guardian/worktree-06 active ses_observed_06" [ref=f4e75] [cursor=pointer]:
+                - strong [ref=f4e76]: guardian/observed-06
+                - generic [ref=f4e77]: /observed/guardian/worktree-06
+                - generic [ref=f4e78]: active
+                - generic [ref=f4e79]: ses_observed_06
+              - option "guardian/observed-07 /observed/guardian/worktree-07 active ses_observed_07" [ref=f4e80] [cursor=pointer]:
+                - strong [ref=f4e81]: guardian/observed-07
+                - generic [ref=f4e82]: /observed/guardian/worktree-07
+                - generic [ref=f4e83]: active
+                - generic [ref=f4e84]: ses_observed_07
+              - option "guardian/observed-08 /observed/guardian/worktree-08 active ses_observed_08" [ref=f4e85] [cursor=pointer]:
+                - strong [ref=f4e86]: guardian/observed-08
+                - generic [ref=f4e87]: /observed/guardian/worktree-08
+                - generic [ref=f4e88]: active
+                - generic [ref=f4e89]: ses_observed_08
+              - option "guardian/observed-09 /observed/guardian/worktree-09 active ses_observed_09" [ref=f4e90] [cursor=pointer]:
+                - strong [ref=f4e91]: guardian/observed-09
+                - generic [ref=f4e92]: /observed/guardian/worktree-09
+                - generic [ref=f4e93]: active
+                - generic [ref=f4e94]: ses_observed_09
+              - option "guardian/observed-10 /observed/guardian/worktree-10 terminal ses_observed_10" [ref=f4e95] [cursor=pointer]:
+                - strong [ref=f4e96]: guardian/observed-10
+                - generic [ref=f4e97]: /observed/guardian/worktree-10
+                - generic [ref=f4e98]: terminal
+                - generic [ref=f4e99]: ses_observed_10
+              - option "guardian/observed-11 /observed/guardian/worktree-11 active ses_observed_11" [ref=f4e100] [cursor=pointer]:
+                - strong [ref=f4e101]: guardian/observed-11
+                - generic [ref=f4e102]: /observed/guardian/worktree-11
+                - generic [ref=f4e103]: active
+                - generic [ref=f4e104]: ses_observed_11
+              - option "guardian/observed-12 /observed/guardian/worktree-12 active ses_observed_12" [ref=f4e105] [cursor=pointer]:
+                - strong [ref=f4e106]: guardian/observed-12
+                - generic [ref=f4e107]: /observed/guardian/worktree-12
+                - generic [ref=f4e108]: active
+                - generic [ref=f4e109]: ses_observed_12
+              - option "guardian/observed-13 /observed/guardian/worktree-13 active ses_observed_13" [ref=f4e110] [cursor=pointer]:
+                - strong [ref=f4e111]: guardian/observed-13
+                - generic [ref=f4e112]: /observed/guardian/worktree-13
+                - generic [ref=f4e113]: active
+                - generic [ref=f4e114]: ses_observed_13
+              - option "guardian/observed-14 /observed/guardian/worktree-14 active ses_observed_14" [ref=f4e115] [cursor=pointer]:
+                - strong [ref=f4e116]: guardian/observed-14
+                - generic [ref=f4e117]: /observed/guardian/worktree-14
+                - generic [ref=f4e118]: active
+                - generic [ref=f4e119]: ses_observed_14
+              - option "guardian/observed-15 /observed/guardian/worktree-15 terminal ses_observed_15" [ref=f4e120] [cursor=pointer]:
+                - strong [ref=f4e121]: guardian/observed-15
+                - generic [ref=f4e122]: /observed/guardian/worktree-15
+                - generic [ref=f4e123]: terminal
+                - generic [ref=f4e124]: ses_observed_15
+              - option "guardian/observed-16 /observed/guardian/worktree-16 active ses_observed_16" [ref=f4e125] [cursor=pointer]:
+                - strong [ref=f4e126]: guardian/observed-16
+                - generic [ref=f4e127]: /observed/guardian/worktree-16
+                - generic [ref=f4e128]: active
+                - generic [ref=f4e129]: ses_observed_16
+              - option "guardian/observed-17 /observed/guardian/worktree-17 active ses_observed_17" [ref=f4e130] [cursor=pointer]:
+                - strong [ref=f4e131]: guardian/observed-17
+                - generic [ref=f4e132]: /observed/guardian/worktree-17
+                - generic [ref=f4e133]: active
+                - generic [ref=f4e134]: ses_observed_17
+              - option "guardian/open-design-report /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-open-design-report poisoned ses_observed_00" [selected] [ref=f4e135] [cursor=pointer]:
+                - strong [ref=f4e136]: guardian/open-design-report
+                - generic [ref=f4e137]: /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-open-design-report
+                - generic [ref=f4e138]: poisoned
+                - generic [ref=f4e139]: ses_observed_00
+          - complementary [ref=f4e140]:
+            - generic [ref=f4e141]:
+              - paragraph [ref=f4e142]: Selected worktree
+              - heading "guardian/open-design-report" [level=2] [ref=f4e143]
+              - generic [ref=f4e144]:
+                - heading "Path" [level=3] [ref=f4e145]
+                - paragraph [ref=f4e146]: /Users/nashgao/Desktop/claude/opencode/plugins/opencode-worktree-guardian/.worktrees/opencode-worktree-guardian/guardian-open-design-report
+              - generic [ref=f4e147]:
+                - heading "Head" [level=3] [ref=f4e148]
+                - paragraph [ref=f4e149]: abcdef000000
+              - generic [ref=f4e150]:
+                - heading "State" [level=3] [ref=f4e151]
+                - paragraph [ref=f4e152]: poisoned | bad
+              - generic [ref=f4e153]:
+                - heading "Owner session" [level=3] [ref=f4e154]
+                - paragraph [ref=f4e155]: ses_observed_00
+              - generic [ref=f4e156]:
+                - heading "Owner status" [level=3] [ref=f4e157]
+                - paragraph [ref=f4e158]: preserved
+              - generic [ref=f4e159]:
+                - heading "Worktree flags" [level=3] [ref=f4e160]
+                - paragraph [ref=f4e161]: primary
+              - generic [ref=f4e162]:
+                - heading "Base distance" [level=3] [ref=f4e163]
+                - paragraph [ref=f4e164]: "Unavailable: not-an-active-session-worktree"
+              - generic [ref=f4e165]:
+                - heading "Risk flags" [level=3] [ref=f4e166]
+                - paragraph [ref=f4e167]: poisoned
+              - generic [ref=f4e168]:
+                - heading "Changed files" [level=3] [ref=f4e169]
+                - paragraph [ref=f4e170]: Unavailable. Guardian reports only repository-wide dirty-file inventory.
+              - generic [ref=f4e171]:
+                - heading "Commit messages" [level=3] [ref=f4e172]
+                - paragraph [ref=f4e173]: Unavailable. This report has no commit-message facts.
+              - generic [ref=f4e174]:
+                - heading "Activity and history" [level=3] [ref=f4e175]
+                - paragraph [ref=f4e176]: Unavailable. This dashboard does not infer lifecycle activity.
+              - complementary [ref=f4e177]:
+                - heading "Select an operation" [level=3] [ref=f4e178]
+                - paragraph [ref=f4e179]: Guidance remains selectable and no action is executed from this report.
+                - button "Copy guidance" [ref=f4e180] [cursor=pointer]
+                - paragraph [ref=f4e181]
+              - generic [ref=f4e182]:
+                - button "add" [ref=f4e183] [cursor=pointer]
+                - button "sync" [ref=f4e184] [cursor=pointer]
+                - button "fetch" [ref=f4e185] [cursor=pointer]
+                - button "pull" [ref=f4e186] [cursor=pointer]
+                - button "switch" [ref=f4e187] [cursor=pointer]
+                - button "open" [ref=f4e188] [cursor=pointer]
+                - button "terminal" [ref=f4e189] [cursor=pointer]
+                - button "remove" [ref=f4e190] [cursor=pointer]
+      - region [ref=f4e192]:
+        - generic [ref=f4e193]: Blocked
+        - heading "14 active sessions — 1 poisoned session on the primary or a protected branch (+3 more)." [level=2] [ref=f4e194]
+        - paragraph [ref=f4e195]: "Next: guardian_start createWorktree=true to repair"
+      - generic [ref=f4e196]:
+        - article [ref=f4e197]:
+          - generic [ref=f4e198]: Sessions
+          - strong [ref=f4e199]: "14"
+        - article [ref=f4e200]:
+          - generic [ref=f4e201]: Worktrees
+          - strong [ref=f4e202]: "18"
+        - article [ref=f4e203]:
+          - generic [ref=f4e204]: Risks
+          - strong [ref=f4e205]: "4"
+        - article [ref=f4e206]:
+          - generic [ref=f4e207]: Safety Refs
+          - strong [ref=f4e208]: "639"
+        - article [ref=f4e209]:
+          - generic [ref=f4e210]: Recovery Candidates
+          - strong [ref=f4e211]: "3534"
+        - article [ref=f4e212]:
+          - generic [ref=f4e213]: Dirty Files
+          - strong [ref=f4e214]: "21"
+    - text: State Branch Path HEAD Owner/activity Action State Branch Path HEAD Owner/activity Action State Branch Path HEAD Owner/activity Action State Branch Path HEAD Owner/activity Action State Branch Path HEAD Owner/activity Action State Branch Path HEAD Owner/activity Action State Branch Path HEAD Owner/activity Action State Branch Path HEAD Owner/activity Action State Branch Path HEAD Owner/activity Action State Branch Path HEAD Owner/activity Action State Branch Path HEAD Owner/activity Action State Branch Path HEAD Owner/activity Action State Branch Path HEAD Owner/activity Action State Branch Path HEAD Owner/activity Action State Branch Path HEAD Owner/activity Action State Branch Path HEAD Owner/activity Action State Branch Path HEAD Owner/activity Action State Branch Path HEAD Owner/activity Action Session Kind Timestamp Action/availability Session Kind Timestamp Action/availability Session Kind Timestamp Action/availability Session Kind Timestamp Action/availability Session Kind Timestamp Action/availability Session Kind Timestamp Action/availability Session Kind Timestamp Action/availability Session Kind Timestamp Action/availability Session Kind Timestamp Action/availability Session Kind Timestamp Action/availability Session Kind Timestamp Action/availability Session Kind Timestamp Action/availability Session Kind Timestamp Action/availability Session Kind Timestamp Action/availability Session Kind Timestamp Action/availability Session Kind Timestamp Action/availability Session Kind Timestamp Action/availability Session Kind Timestamp Action/availability Session Kind Timestamp Action/availability Session Kind Timestamp Action/availability Session Kind Timestamp Action/availability Session Kind Timestamp Action/availability Session Kind Timestamp Action/availability Session Kind Timestamp Action/availability Session Kind Timestamp Action/availability Session Kind Timestamp Action/availability Session Kind Timestamp Action/availability Session Kind Timestamp Action/availability Session Kind Timestamp Action/availability Session Kind Timestamp Action/availability Session Kind Timestamp Action/availability Session Kind Timestamp Action/availability Session Kind Timestamp Action/availability Session Kind Timestamp Action/availability Session Kind Timestamp Action/availability Session Kind Timestamp Action/availability Session Kind Timestamp Action/availability Session Kind Timestamp Action/availability Session Kind Timestamp Action/availability Session Kind Timestamp Action/availability State Base Ref Authority Ref Base Commit Effective Remote Source Effective Remote Freshness Local Branches Effective Remote Branches Session Status Branch Worktree Head Session Status Branch Worktree Head Session Status Branch Worktree Head Session Status Branch Worktree Head Session Status Branch Worktree Head Session Status Branch Worktree Head Session Status Branch Worktree Head Session Status Branch Worktree Head Session Status Branch Worktree Head Session Status Branch Worktree Head Session Status Branch Worktree Head Session Status Branch Worktree Head Session Status Branch Worktree Head Session Status Branch Worktree Head Session Status Branch Worktree Head Session Status Branch Worktree Head Session Status Branch Worktree Head Session Status Branch Worktree Head Branch Path Head Markers Branch Path Head Markers Branch Path Head Markers Branch Path Head Markers Branch Path Head Markers Branch Path Head Markers Branch Path Head Markers Branch Path Head Markers Branch Path Head Markers Branch Path Head Markers Branch Path Head Markers Branch Path Head Markers Branch Path Head Markers Branch Path Head Markers Branch Path Head Markers Branch Path Head Markers Branch Path Head Markers Branch Path Head Markers Status Path Reason Suggested Command Status Path Reason Suggested Command Status Path Reason Suggested Command Status Path Reason Suggested Command Status Path Reason Suggested Command Status Path Reason Suggested Command Status Path Reason Suggested Command Status Path Reason Suggested Command Status Path Reason Suggested Command

@@ -1,0 +1,114 @@
+- generic [ref=f18e3]:
+  - navigation "Main navigation" [ref=f18e4]:
+    - generic [ref=f18e5]: Dashboard
+    - navigation [ref=f18e14]:
+      - list [ref=f18e15]:
+        - listitem [ref=f18e16]:
+          - button "At a Glance" [ref=f18e17] [cursor=pointer]
+        - listitem [ref=f18e24]:
+          - button "Tools" [ref=f18e25] [cursor=pointer]
+        - listitem [ref=f18e29]:
+          - button "Integrations" [ref=f18e30] [cursor=pointer]
+    - button "Collapse sidebar" [ref=f18e36] [cursor=pointer]
+  - main [ref=f18e40]:
+    - generic [ref=f18e41]:
+      - generic [ref=f18e43]:
+        - heading "At a Glance" [level=1] [ref=f18e44]
+        - generic [ref=f18e45]: 5 widgets
+      - generic [ref=f18e46]:
+        - generic [ref=f18e47]: 01:09:41
+        - generic [ref=f18e48]: New York
+      - generic [ref=f18e49]:
+        - button "Toggle activity feed" [ref=f18e50] [cursor=pointer]:
+          - generic [ref=f18e53]: Activity
+        - button "Open settings" [ref=f18e54] [cursor=pointer]:
+          - generic [ref=f18e58]: Settings
+    - generic [ref=f18e60]:
+      - listitem "Clock widget" [ref=f18e63]:
+        - generic [ref=f18e65]:
+          - generic "Drag to reorder" [ref=f18e66]
+          - generic [ref=f18e74]: Clock
+          - generic [ref=f18e75]:
+            - button "Open in focus mode" [ref=f18e76] [cursor=pointer]
+            - button "Pin widget" [ref=f18e82] [cursor=pointer]
+            - button "Resize widget" [ref=f18e85] [cursor=pointer]
+        - generic [ref=f18e91]:
+          - heading "Time" [level=3] [ref=f18e98]
+          - generic [ref=f18e101]:
+            - generic [ref=f18e102]: 1:09 AM
+            - generic [ref=f18e103]: Friday, August 14, 2026
+      - listitem "Weather widget" [ref=f18e106]:
+        - generic [ref=f18e108]:
+          - generic "Drag to reorder" [ref=f18e109]
+          - generic [ref=f18e117]: Weather
+          - generic [ref=f18e118]:
+            - button "Open in focus mode" [ref=f18e119] [cursor=pointer]
+            - button "Pin widget" [ref=f18e125] [cursor=pointer]
+            - button "Resize widget" [ref=f18e128] [cursor=pointer]
+        - generic [ref=f18e133]:
+          - generic:
+            - generic:
+              - generic:
+                - heading "Weather" [level=3]
+            - generic:
+              - generic:
+                - status "Loading"
+      - listitem "Crypto widget" [ref=f18e136]:
+        - generic [ref=f18e138]:
+          - generic "Drag to reorder" [ref=f18e139]
+          - generic [ref=f18e147]: Crypto
+          - generic [ref=f18e148]:
+            - button "Open in focus mode" [ref=f18e149] [cursor=pointer]
+            - button "Pin widget" [ref=f18e155] [cursor=pointer]
+            - button "Resize widget" [ref=f18e158] [cursor=pointer]
+        - generic [ref=f18e163]:
+          - generic:
+            - generic:
+              - generic:
+                - heading "Crypto" [level=3]
+              - generic:
+                - button "Refresh" [disabled]
+            - generic:
+              - generic:
+                - status "Loading"
+      - listitem "Quote widget" [ref=f18e166]:
+        - generic [ref=f18e168]:
+          - generic "Drag to reorder" [ref=f18e169]
+          - generic [ref=f18e177]: Quote
+          - generic [ref=f18e178]:
+            - button "Open in focus mode" [ref=f18e179] [cursor=pointer]
+            - button "Pin widget" [ref=f18e185] [cursor=pointer]
+            - button "Resize widget" [ref=f18e188] [cursor=pointer]
+        - generic [ref=f18e193]:
+          - generic [ref=f18e195]:
+            - heading "Daily Quote" [level=3] [ref=f18e201]
+            - button "Get new quote" [ref=f18e203] [cursor=pointer]
+          - generic [ref=f18e209]:
+            - blockquote [ref=f18e210]: "\"The future belongs to those who believe in the beauty of their dreams.\""
+            - paragraph [ref=f18e211]: — Eleanor Roosevelt
+      - listitem "System widget" [ref=f18e214]:
+        - generic [ref=f18e216]:
+          - generic "Drag to reorder" [ref=f18e217]
+          - generic [ref=f18e225]: System
+          - generic [ref=f18e226]:
+            - button "Open in focus mode" [ref=f18e227] [cursor=pointer]
+            - button "Pin widget" [ref=f18e233] [cursor=pointer]
+            - button "Resize widget" [ref=f18e236] [cursor=pointer]
+        - generic [ref=f18e242]:
+          - heading "System" [level=3] [ref=f18e249]
+          - generic [ref=f18e252]:
+            - generic [ref=f18e253]:
+              - generic [ref=f18e254]:
+                - generic [ref=f18e255]: CPU
+                - generic [ref=f18e256]: 0.0%
+              - generic [ref=f18e258]:
+                - progressbar
+            - generic [ref=f18e259]:
+              - generic [ref=f18e260]:
+                - generic [ref=f18e261]: Memory
+                - generic [ref=f18e262]: 0.0 / 0 GB
+              - generic [ref=f18e264]:
+                - progressbar
+            - generic [ref=f18e265]:
+              - generic [ref=f18e266]: Battery
+              - generic [ref=f18e270]: 0%
