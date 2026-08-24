@@ -135,7 +135,7 @@ export type RunResult = {
   readonly exitCode: number;
 };
 
-const coverageEnvNames = ["NODE_V8_COVERAGE", "OPENCODE_WORKTREE_GUARDIAN_COVERAGE_RUN", "NODE_COMPILE_CACHE"] as const;
+const coverageEnvNames = ["NODE_V8_COVERAGE", "OPENCODE_WORKTREE_GUARDIAN_COVERAGE_RUN", "OPENCODE_WORKTREE_GUARDIAN_COVERAGE_CAPABILITY", "NODE_COMPILE_CACHE"] as const;
 
 function outputText(value: unknown): string {
   if (typeof value === "string") return value.trim();

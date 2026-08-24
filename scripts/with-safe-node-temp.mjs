@@ -1,155 +1,202 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
+import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-const safeTempDirectoryName = "opencode-worktree-guardian-node";
-const coverageRunEnvName = "OPENCODE_WORKTREE_GUARDIAN_COVERAGE_RUN";
-const fallbackTempBases = [
-  path.join("/tmp", "opencode"),
-  path.join(os.homedir(), ".cache", "opencode", "tmp"),
-];
+const coverageRunName = "OPENCODE_WORKTREE_GUARDIAN_COVERAGE_RUN";
+const capabilityName = "OPENCODE_WORKTREE_GUARDIAN_COVERAGE_CAPABILITY";
+const markerName = ".owg-coverage-capability";
+const safeRootName = "opencode-worktree-guardian-node";
+const shutdownSignals = ["SIGTERM", "SIGINT", "SIGHUP"];
+const fallbackTempRoots = ["/tmp/opencode", path.join(os.homedir(), ".cache", "opencode", "tmp")];
 
 function isSameOrInside(candidate, root) {
   const relative = path.relative(root, candidate);
-  return relative === "" || Boolean(relative) && !relative.startsWith("..") && !path.isAbsolute(relative);
+  return relative === "" || (Boolean(relative) && !relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
-function findExistingSafeTempRoot(candidate) {
-  const matches = [];
+function isMissing(error) {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+}
+
+async function nearestExistingAncestor(candidate) {
   let current = path.resolve(candidate);
   while (true) {
-    if (path.basename(current) === safeTempDirectoryName) matches.push(current);
-    const parent = path.dirname(current);
-    if (parent === current) break;
-    current = parent;
+    try {
+      return await fs.realpath(current);
+    } catch (error) {
+      if (!isMissing(error)) throw error;
+      const parent = path.dirname(current);
+      if (parent === current) throw error;
+      current = parent;
+    }
   }
-  return matches.at(-1);
 }
 
 async function isInsideGitWorktree(candidate) {
-  let current = path.resolve(candidate);
+  let current = await nearestExistingAncestor(candidate);
   while (true) {
     try {
       await fs.lstat(path.join(current, ".git"));
       return true;
     } catch (error) {
-      if (error?.code !== "ENOENT") throw error;
+      if (!isMissing(error)) throw error;
+      const parent = path.dirname(current);
+      if (parent === current) return false;
+      current = parent;
     }
+  }
+}
+
+async function isExternalPath(candidate, projectRoot) {
+  if (!candidate) return false;
+  const ancestor = await nearestExistingAncestor(candidate);
+  return !isSameOrInside(ancestor, projectRoot) && !await isInsideGitWorktree(ancestor);
+}
+
+function findSafeRootAncestor(candidate) {
+  let current = candidate;
+  while (true) {
+    if (path.basename(current) === safeRootName) return current;
     const parent = path.dirname(current);
-    if (parent === current) return false;
+    if (parent === current) return undefined;
     current = parent;
   }
 }
 
-async function resolveSafeTempRoot(projectRoot) {
-  for (const candidate of [os.tmpdir(), ...fallbackTempBases]) {
+async function safeTempRoot(projectRoot) {
+  for (const candidate of [os.tmpdir(), ...fallbackTempRoots]) {
     try {
-      const candidatePath = path.resolve(candidate);
-      await fs.mkdir(candidatePath, { recursive: true });
-      const realCandidate = await fs.realpath(candidatePath);
-      if (isSameOrInside(realCandidate, projectRoot)) continue;
-      if (await isInsideGitWorktree(realCandidate)) continue;
-      const existingSafeRoot = findExistingSafeTempRoot(realCandidate);
-      if (existingSafeRoot && !isSameOrInside(existingSafeRoot, projectRoot)) return existingSafeRoot;
-      const safeRoot = path.join(realCandidate, safeTempDirectoryName);
-      await fs.mkdir(safeRoot, { recursive: true });
-      return fs.realpath(safeRoot);
-    } catch {}
+      await fs.mkdir(candidate, { recursive: true });
+      const canonicalCandidate = await fs.realpath(candidate);
+      if (isSameOrInside(canonicalCandidate, projectRoot) || await isInsideGitWorktree(canonicalCandidate)) continue;
+      const root = findSafeRootAncestor(canonicalCandidate) ?? path.join(canonicalCandidate, safeRootName);
+      await fs.mkdir(root, { recursive: true });
+      if ((await fs.lstat(root)).isSymbolicLink()) continue;
+      const canonicalRoot = await fs.realpath(root);
+      if (!isSameOrInside(canonicalRoot, projectRoot) && !await isInsideGitWorktree(canonicalRoot)) return canonicalRoot;
+    } catch (error) {
+      if (error instanceof Error) continue;
+      throw error;
+    }
   }
   throw new Error("Unable to resolve an external temp directory for Node test scripts");
 }
 
-function envPathInsideProject(value, projectRoot) {
-  if (!value) return false;
-  return isSameOrInside(path.resolve(value), projectRoot);
+async function createCoverageContext(root) {
+  const runRoot = await fs.mkdtemp(path.join(root, "coverage-run-"));
+  try {
+    const capability = crypto.randomBytes(32).toString("hex");
+    await fs.writeFile(path.join(runRoot, markerName), capability, { encoding: "utf8", flag: "wx", mode: 0o600 });
+    const coverage = path.join(runRoot, "coverage");
+    const compile = path.join(runRoot, "compile-cache");
+    await Promise.all([fs.mkdir(coverage), fs.mkdir(compile)]);
+    return { capability, compile, coverage, root: runRoot };
+  } catch (error) {
+    await fs.rm(runRoot, { recursive: true, force: true });
+    throw error;
+  }
 }
 
-function envPathInsideCoverageRun(value, coverageRunRoot) {
-  if (!value || !coverageRunRoot) return false;
-  const runRoot = path.resolve(coverageRunRoot);
-  if (!path.basename(runRoot).startsWith("coverage-run-")) return false;
-  const relative = path.relative(runRoot, path.resolve(value));
-  if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) return false;
-  const [coverageDirectory, ...rest] = relative.split(path.sep);
-  return Boolean(coverageDirectory) && coverageDirectory.startsWith("node-coverage-") && rest.length === 0;
+async function validateCoverageContext(root, capability, coverage, compile, projectRoot, tempRoot) {
+  if (!root || !capability || !coverage || !compile) return undefined;
+  try {
+    const [rootStat, coverageStat, compileStat] = await Promise.all([fs.lstat(root), fs.lstat(coverage), fs.lstat(compile)]);
+    if (!rootStat.isDirectory() || rootStat.isSymbolicLink() || !coverageStat.isDirectory() || coverageStat.isSymbolicLink() || !compileStat.isDirectory() || compileStat.isSymbolicLink()) return undefined;
+    const [canonicalRoot, canonicalCoverage, canonicalCompile] = await Promise.all([fs.realpath(root), fs.realpath(coverage), fs.realpath(compile)]);
+    if (!isSameOrInside(canonicalRoot, tempRoot) || isSameOrInside(canonicalRoot, projectRoot) || await isInsideGitWorktree(canonicalRoot)) return undefined;
+    if (path.dirname(canonicalRoot) !== tempRoot || !path.basename(canonicalRoot).startsWith("coverage-run-")) return undefined;
+    if (canonicalCoverage !== path.join(canonicalRoot, "coverage") || canonicalCompile !== path.join(canonicalRoot, "compile-cache")) return undefined;
+    const marker = path.join(canonicalRoot, markerName);
+    const [stat, markerValue] = await Promise.all([fs.lstat(marker), fs.readFile(marker, "utf8")]);
+    if (!stat.isFile() || stat.nlink !== 1 || (stat.mode & 0o777) !== 0o600 || markerValue !== capability) return undefined;
+    return { capability, compile: canonicalCompile, coverage: canonicalCoverage, root: canonicalRoot };
+  } catch (error) {
+    if (isMissing(error)) return undefined;
+    throw error;
+  }
 }
 
-function envPathInsideNodeTestCoverage(value, safeTempRoot, coverageRunRoot) {
-  if (!value || !coverageRunRoot) return false;
-  const runRoot = path.resolve(coverageRunRoot);
-  if (!path.basename(runRoot).startsWith("coverage-run-")) return false;
-  const coveragePath = path.resolve(value);
-  return path.dirname(coveragePath) === safeTempRoot && path.basename(coveragePath).startsWith("node-coverage-");
+async function inheritedCoverageContext(projectRoot, tempRoot) {
+  return validateCoverageContext(
+    process.env[coverageRunName],
+    process.env[capabilityName],
+    process.env.NODE_V8_COVERAGE,
+    process.env.NODE_COMPILE_CACHE,
+    projectRoot,
+    tempRoot,
+  );
 }
 
-function envPathMatchesCoverageCompileCache(value, coverageRunRoot, safeTempRoot) {
-  if (!value || !coverageRunRoot) return false;
-  const runRoot = path.resolve(coverageRunRoot);
-  if (!path.basename(runRoot).startsWith("coverage-run-")) return false;
-  const compileCache = path.resolve(value);
-  return path.dirname(compileCache) === path.dirname(safeTempRoot)
-    && path.basename(compileCache).startsWith(`node-compile-cache-${path.basename(runRoot)}-`);
+async function removeOwnedCoverageContext(context, projectRoot, tempRoot) {
+  const validated = await validateCoverageContext(context.root, context.capability, context.coverage, context.compile, projectRoot, tempRoot);
+  if (!validated || validated.root !== context.root) throw new Error("Refusing to remove an altered coverage context");
+  await fs.rm(validated.root, { recursive: true, force: true });
 }
 
-const separatorIndex = process.argv.indexOf("--");
-const command = separatorIndex >= 0 ? process.argv[separatorIndex + 1] : process.argv[2];
-const args = separatorIndex >= 0 ? process.argv.slice(separatorIndex + 2) : process.argv.slice(3);
+function waitForChild(child) {
+  return new Promise((resolve) => {
+    child.once("error", (error) => resolve({ kind: "error", error }));
+    child.once("close", (code, signal) => resolve({ kind: "close", code, signal }));
+  });
+}
 
+const separator = process.argv.indexOf("--");
+const command = separator >= 0 ? process.argv[separator + 1] : process.argv[2];
+const args = separator >= 0 ? process.argv.slice(separator + 2) : process.argv.slice(3);
 if (!command) {
   console.error("Usage: node scripts/with-safe-node-temp.mjs -- <command> [...args]");
   process.exit(2);
 }
 
 const projectRoot = await fs.realpath(process.cwd());
-const safeTempRoot = await resolveSafeTempRoot(projectRoot);
-const explicitCoverageRequested = args.includes("--experimental-test-coverage");
-const coverageRequested = explicitCoverageRequested || envPathInsideProject(process.env.NODE_V8_COVERAGE, projectRoot);
-const inheritedCoverageRun = process.env[coverageRunEnvName];
-const existingCoverage = process.env.NODE_V8_COVERAGE;
-const coverageInheritedFromWrapper = envPathInsideCoverageRun(existingCoverage, inheritedCoverageRun);
-const coverageInheritedFromNodeTest = envPathInsideNodeTestCoverage(existingCoverage, safeTempRoot, inheritedCoverageRun);
-const coverageTempRoot = coverageRequested && (coverageInheritedFromWrapper || coverageInheritedFromNodeTest)
-  ? path.resolve(inheritedCoverageRun)
-  : coverageRequested
-    ? await fs.mkdtemp(path.join(safeTempRoot, "coverage-run-"))
-    : safeTempRoot;
-const activeCoverageRoot = coverageInheritedFromWrapper || coverageInheritedFromNodeTest ? path.resolve(inheritedCoverageRun) : coverageRequested ? coverageTempRoot : undefined;
-const defaultNodeCompileCache = activeCoverageRoot
-  ? await fs.mkdtemp(path.join(path.dirname(safeTempRoot), `node-compile-cache-${path.basename(activeCoverageRoot)}-`))
-  : path.join(safeTempRoot, "node-compile-cache");
-const existingCompileCache = process.env.NODE_COMPILE_CACHE;
-const existingCompileCacheMatchesCoverageRun = envPathMatchesCoverageCompileCache(existingCompileCache, activeCoverageRoot, safeTempRoot);
-const nodeCompileCache = existingCompileCache && !envPathInsideProject(existingCompileCache, projectRoot) && (!activeCoverageRoot || existingCompileCacheMatchesCoverageRun)
-  ? existingCompileCache
-  : defaultNodeCompileCache;
-await fs.mkdir(nodeCompileCache, { recursive: true });
-
-const env = {
-  ...process.env,
-  TMPDIR: safeTempRoot,
-  TMP: safeTempRoot,
-  TEMP: safeTempRoot,
-  NODE_COMPILE_CACHE: nodeCompileCache,
-};
-
-if (coverageRequested) {
-  env[coverageRunEnvName] = coverageTempRoot;
-  env.NODE_V8_COVERAGE = existingCoverage && (coverageInheritedFromWrapper || coverageInheritedFromNodeTest || !explicitCoverageRequested && !envPathInsideProject(existingCoverage, projectRoot))
-    ? existingCoverage
-    : await fs.mkdtemp(path.join(coverageTempRoot, "node-coverage-"));
-}
-
-const child = spawn(command, args, { stdio: "inherit", env });
-child.on("error", (error) => {
-  console.error(error.message);
-  process.exit(1);
-});
-child.on("exit", (code, signal) => {
-  if (signal) {
-    console.error(`${command} exited with signal ${signal}`);
-    process.exit(1);
+const tempRoot = await safeTempRoot(projectRoot);
+const explicitlyRequestsCoverage = args.includes("--experimental-test-coverage");
+const callerCoverageIsExternal = await isExternalPath(process.env.NODE_V8_COVERAGE, projectRoot);
+const coverageRequested = explicitlyRequestsCoverage || Boolean(process.env.NODE_V8_COVERAGE) && !callerCoverageIsExternal;
+let ownedContext;
+try {
+  const inheritedContext = coverageRequested ? await inheritedCoverageContext(projectRoot, tempRoot) : undefined;
+  ownedContext = coverageRequested && !inheritedContext ? await createCoverageContext(tempRoot) : undefined;
+  const context = inheritedContext ?? ownedContext;
+  const callerCompileIsExternal = await isExternalPath(process.env.NODE_COMPILE_CACHE, projectRoot);
+  const sharedCompile = path.join(tempRoot, "node-compile-cache");
+  if (!context && !callerCompileIsExternal) await fs.mkdir(sharedCompile, { recursive: true });
+  const env = {
+    ...process.env,
+    TMPDIR: context?.root ?? tempRoot,
+    TMP: context?.root ?? tempRoot,
+    TEMP: context?.root ?? tempRoot,
+    NODE_COMPILE_CACHE: context?.compile ?? (callerCompileIsExternal ? process.env.NODE_COMPILE_CACHE : sharedCompile),
+    NODE_V8_COVERAGE: context?.coverage ?? (callerCoverageIsExternal ? process.env.NODE_V8_COVERAGE : ""),
+    [coverageRunName]: context?.root ?? "",
+    [capabilityName]: context?.capability ?? "",
+  };
+  const child = spawn(command, args, { env, stdio: "inherit" });
+  const listeners = new Map();
+  let forwardedSignal;
+  for (const signal of shutdownSignals) {
+    const listener = () => {
+      if (forwardedSignal) return;
+      forwardedSignal = signal;
+      child.kill(signal);
+    };
+    listeners.set(signal, listener);
+    process.on(signal, listener);
   }
-  process.exit(code ?? 1);
-});
+  const outcome = await waitForChild(child);
+  for (const [signal, listener] of listeners) process.removeListener(signal, listener);
+  const contextToClean = ownedContext;
+  ownedContext = undefined;
+  if (contextToClean) await removeOwnedCoverageContext(contextToClean, projectRoot, tempRoot);
+  if (forwardedSignal) process.kill(process.pid, forwardedSignal);
+  if (outcome.kind === "error") throw outcome.error;
+  process.exitCode = outcome.signal ? 1 : (outcome.code ?? 1);
+} catch (error) {
+  const contextToClean = ownedContext;
+  ownedContext = undefined;
+  if (contextToClean) await removeOwnedCoverageContext(contextToClean, projectRoot, tempRoot);
+  throw error;
+}
