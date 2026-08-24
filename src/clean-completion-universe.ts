@@ -5,7 +5,7 @@ import { guardianMetadataSnapshot } from "./clean-completion-metadata.ts";
 import { expandWorktreeRoot } from "./config.ts";
 import { realPathOrResolved } from "./done-shared.ts";
 import { getGuardianPaths } from "./guardian-paths.ts";
-import { listRefs, listWorktrees, runGitNullSeparated } from "./git.ts";
+import { isAncestor, listRefs, listWorktrees, runGitNullSeparated } from "./git.ts";
 import { listIncompleteQuarantineOperations, listQuarantineItems } from "./quarantine-journal.ts";
 import { readState } from "./state.ts";
 import type { GuardianConfig, GuardianPaths, GuardianStateRecord } from "./types.ts";
@@ -65,12 +65,18 @@ function recordedGuardianRefs(state: GuardianStateRecord): ReadonlySet<string> {
   return refs;
 }
 
-function isRemoteBranchCleanupSafetyRef(entry: { readonly name: string; readonly commit: string }): boolean {
+async function isRemoteBranchCleanupSafetyRef(repoRoot: string, entry: { readonly name: string; readonly commit: string }): Promise<boolean> {
   const prefix = "refs/opencode-guardian/remote-branch-cleanup/";
   if (!entry.name.startsWith(prefix)) return false;
   const segments = entry.name.slice(prefix.length).split("/").filter(Boolean);
-  const recordedCommit = segments.at(-1);
-  return segments.length >= 3 && recordedCommit === entry.commit && /^[0-9a-f]{40,64}$/.test(recordedCommit);
+  const recordedHead = segments.at(-1);
+  if (segments.length < 3 || !recordedHead || !/^[0-9a-f]{40,64}$/.test(recordedHead) || !/^[0-9a-f]{40,64}$/.test(entry.commit)) return false;
+  try {
+    return await isAncestor(repoRoot, entry.commit, recordedHead);
+  } catch (error) {
+    if (!(error instanceof Error)) throw error;
+    return false;
+  }
 }
 
 async function guardianRefSnapshot(repoRoot: string, allowedRefs: ReadonlySet<string>): Promise<{ readonly refs: readonly string[]; readonly reason?: string }> {
@@ -78,8 +84,9 @@ async function guardianRefSnapshot(repoRoot: string, allowedRefs: ReadonlySet<st
     const refs = await listRefs(repoRoot, "refs/opencode-guardian");
     const activeLock = refs.find((entry) => entry.name === "refs/opencode-guardian/locks/state");
     if (activeLock) return { refs: [], reason: "Guardian state lock is active during clean-completion proof" };
-    const unknown = refs.find((entry) => !allowedRefs.has(entry.name) && !isRemoteBranchCleanupSafetyRef(entry));
-    if (unknown) return { refs: [], reason: `unknown Guardian safety ref: ${unknown.name}` };
+    for (const entry of refs) {
+      if (!allowedRefs.has(entry.name) && !await isRemoteBranchCleanupSafetyRef(repoRoot, entry)) return { refs: [], reason: `unknown Guardian safety ref: ${entry.name}` };
+    }
     return { refs: refs.map((entry) => `${entry.name}:${entry.commit}`).sort() };
   } catch (error) {
     return { refs: [], reason: `Guardian safety ref inventory failed: ${error instanceof Error ? error.message : String(error)}` };
