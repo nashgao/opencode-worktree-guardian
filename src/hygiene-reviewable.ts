@@ -100,7 +100,11 @@ export async function buildReviewableCandidates(repoRoot: string, candidates: re
     remainingEntries = Math.max(0, remainingEntries - measurement.visited);
     measured.push({ ...candidate, bytes: measurement.bytes, bytesTruncated: measurement.truncated });
   }
-  measured.sort((left, right) => (left.bytesTruncated || right.bytesTruncated ? 0 : right.bytes - left.bytes) || right.fileCount - left.fileCount || compareCodeUnits(left.path, right.path));
+  measured.sort((left, right) =>
+    Number(right.bytesTruncated) - Number(left.bytesTruncated)
+    || (left.bytesTruncated ? 0 : right.bytes - left.bytes)
+    || right.fileCount - left.fileCount
+    || compareCodeUnits(left.path, right.path));
   const visible = visibleLimit === null ? measured : measured.slice(0, visibleLimit);
   const reviewableCandidates: ReviewableCandidate[] = [];
   for (const candidate of visible) {

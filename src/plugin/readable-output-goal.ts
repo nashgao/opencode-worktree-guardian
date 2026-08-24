@@ -78,7 +78,7 @@ function appendHygienePostcondition(lines: string[], value: unknown, complete: b
       },
     });
     lines.push(`[INFO] reviewable digest: ${sanitizeGoalResidualText(postcondition.reviewableDigest)}`);
-    lines.push("[INFO] reviewable resolution: add intentional paths to protectedPaths, move retained evidence under .omo/evidence, or use the exact guardian_delete_paths mode=plan command above");
+    lines.push("[INFO] reviewable resolution: add intentional paths to protectedPaths, move retained evidence under a configured protected path (.omo/evidence when .omo is protected), or use the exact guardian_delete_paths mode=plan command above");
   }
   if (postcondition.reviewableInventoryComplete === false) lines.push("[WARN] hygiene inventory coverage is incomplete; strict residue completion remains partial");
   lines.push(`[INFO] hygiene exclusions: ${Number(postcondition.protectedExclusionCount ?? 0)} | reviewable inventory: ${reviewableCount}`);
