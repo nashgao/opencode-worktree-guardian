@@ -346,7 +346,7 @@ Terminal recovery plans are also read-only handoffs. When Guardian can prove a t
 ```text
 [WARN] guardian_hygiene scan
 [INFO] repoRoot: /repo
-[INFO] findings: 3 | warn: 2 | fail: 1 | exclusions: 1 | candidates: 8 | reviewable: 4
+[INFO] findings: 3 | warn: 2 | fail: 1 | exclusions: 1 | candidates: 8 | reviewable: 2
 [WARN] top findings:
   - warn known-cleanable librarian-react: known librarian scratch artifact
   - fail nested-git test-hyperf-kafka: nested Git repository has uncommitted changes
