@@ -217,13 +217,14 @@ test("tui goal prompt distinguishes authorized cleanup from strict completion", 
   assert.match(prompt.parts[0].text, /complete.*hygienePostcondition/s);
   assert.match(prompt.parts[0].text, /planned-partial.*complete=null/s);
   assert.match(prompt.parts[0].text, /do not treat ok as desired-state completion/);
-  assert.match(prompt.parts[0].text, /no-unprotected-findings.*ok=true, complete=false, status=partial.*post-apply hygiene rescan/s);
-  assert.match(prompt.parts[0].text, /Strict mode does not broaden deletion/);
+  assert.match(prompt.parts[0].text, /no-unprotected-findings blocks residual findings/);
+  assert.match(prompt.parts[0].text, /no-unprotected-residue.*unresolved reviewableCandidates.*incomplete inventory coverage/s);
+  assert.match(prompt.parts[0].text, /Strict modes do not broaden deletion/);
   assert.match(prompt.parts[0].text, /only token-bound known-cleanable findings/);
   assert.match(prompt.parts[0].text, /nested-git and suspicious findings require direct explicit review/);
   assert.match(prompt.parts[0].text, /dirty nested Git requires allowDirtyNestedGit/);
   assert.match(prompt.parts[0].text, /protectedPaths are intentional retention/);
-  assert.match(prompt.parts[0].text, /reviewableCandidates are inventory rather than strict failures/);
+  assert.match(prompt.parts[0].text, /Resolve reviewables.*protecting intentional paths.*protected path.*guardian_delete_paths/s);
 });
 
 test("tui hygiene prompt preserves the reviewable exact-path boundary", async () => {

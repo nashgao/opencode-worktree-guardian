@@ -45,7 +45,9 @@ function appendHygienePostcondition(lines: string[], value: unknown, complete: b
   if (Object.keys(postcondition).length === 0) return;
   const counts = recordValue(postcondition.residualByCategory);
   const shownFindings = arrayValue(postcondition.residualFindingsShown);
+  const shownReviewables = arrayValue(postcondition.reviewableCandidatesShown);
   const residualCount = Number(postcondition.residualCount ?? 0);
+  const reviewableCount = Number(postcondition.reviewableCandidateCount ?? 0);
   const completeText = complete === null ? "pending" : String(complete);
   lines.push(`[INFO] hygiene mode=${sanitizeGoalResidualText(postcondition.mode)} phase=${sanitizeGoalResidualText(postcondition.phase)} status=${sanitizeGoalResidualText(postcondition.status)} complete=${completeText}`);
   lines.push(`[${residualCount > 0 ? "WARN" : "INFO"}] hygiene residuals: ${residualCount} | known-cleanable=${Number(counts["known-cleanable"] ?? 0)} | nested-git=${Number(counts["nested-git"] ?? 0)} | suspicious=${Number(counts.suspicious ?? 0)}`);
@@ -61,7 +63,25 @@ function appendHygienePostcondition(lines: string[], value: unknown, complete: b
       },
     });
   }
-  lines.push(`[INFO] hygiene exclusions: ${Number(postcondition.protectedExclusionCount ?? 0)} | reviewable inventory: ${Number(postcondition.reviewableCandidateCount ?? 0)}`);
+  if (reviewableCount > 0) {
+    appendBoundedList({
+      lines,
+      heading: "[WARN] hygiene reviewable candidates",
+      entries: shownReviewables,
+      count: reviewableCount,
+      format: (entry) => {
+        const candidate = recordValue(entry);
+        const fileCount = Number(candidate.fileCount ?? 0);
+        const bytes = Number(candidate.bytes ?? 0);
+        const bytesSuffix = candidate.bytesTruncated === true ? `${bytes}+` : String(bytes);
+        return `  - ${sanitizeGoalResidualText(candidate.status)} ${sanitizeGoalResidualText(candidate.path)} (${fileCount} file${fileCount === 1 ? "" : "s"}, ${bytesSuffix} bytes): ${sanitizeGoalResidualText(candidate.reason)}\n    next: ${sanitizeGoalResidualText(candidate.suggestedDeletePathCommand)}`;
+      },
+    });
+    lines.push(`[INFO] reviewable digest: ${sanitizeGoalResidualText(postcondition.reviewableDigest)}`);
+    lines.push("[INFO] reviewable resolution: add intentional paths to protectedPaths, move retained evidence under .omo/evidence, or use the exact guardian_delete_paths mode=plan command above");
+  }
+  if (postcondition.reviewableInventoryComplete === false) lines.push("[WARN] hygiene inventory coverage is incomplete; strict residue completion remains partial");
+  lines.push(`[INFO] hygiene exclusions: ${Number(postcondition.protectedExclusionCount ?? 0)} | reviewable inventory: ${reviewableCount}`);
 }
 
 export function formatGuardianGoalOutput(rawResult: unknown): string {

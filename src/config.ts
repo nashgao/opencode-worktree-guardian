@@ -21,7 +21,7 @@ const DEFAULT_CONFIG_TEMPLATE = readFileSync(DEFAULT_CONFIG_TEMPLATE_URL, "utf8"
 export const FINISH_MODES = new Set(["preserve-only", "push-branch", "create-pr", "merge-to-base"]);
 export const AUTO_START_MODES = new Set(["eager", "lazy"]);
 export const COMMAND_INTERCEPTION_MODES = new Set(["audit", "strict"]);
-export const GOAL_HYGIENE_COMPLETIONS = new Set(["authorized-cleanup", "no-unprotected-findings"]);
+export const GOAL_HYGIENE_COMPLETIONS = new Set(["authorized-cleanup", "no-unprotected-findings", "no-unprotected-residue"]);
 
 export type ConfigErrorKind =
   | "invalid_config_root"

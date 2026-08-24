@@ -55,6 +55,12 @@ test("goal hygiene completion accepts strict unprotected-finding policy", () => 
   assert.equal(config.goal.hygieneCompletion, "no-unprotected-findings");
 });
 
+test("goal hygiene completion accepts strict unprotected-residue policy", () => {
+  const config = normalizeConfig({ goal: { hygieneCompletion: "no-unprotected-residue" } });
+
+  assert.equal(config.goal.hygieneCompletion, "no-unprotected-residue");
+});
+
 test("invalid goal hygiene completion fails closed", () => {
   assert.throws(
     () => normalizeConfig({ goal: { hygieneCompletion: "delete-everything" } }),
