@@ -1,7 +1,9 @@
+import { execFile } from "node:child_process";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
+import { promisify } from "node:util";
 import { DEFAULT_CONFIG } from "../src/config.ts";
 import { runCleanupSweep, finalPostflightCommitsFromCleanupSweep } from "../src/done-cleanup-sweep.ts";
 import { postFinishMaintenance } from "../src/done-land-clean-maintenance.ts";
@@ -10,11 +12,25 @@ import { createSafetyRef } from "../src/git.ts";
 import { getGuardianPaths, readState, updateState } from "../src/state.ts";
 import { isRecordLike } from "../src/types.ts";
 import { guardianFinishWorkflow } from "../src/workflow.ts";
-import { createRepoWithOrigin, git } from "./helpers.ts";
+import { createRepoWithOrigin, createTempDir, git } from "./helpers.ts";
 import { createMergedBranch, remoteBranchExists } from "./workflow-test-support.ts";
 
 function records(value: unknown): Record<string, unknown>[] {
   return Array.isArray(value) ? value.filter(isRecordLike) : [];
+}
+
+const execFileAsync = promisify(execFile);
+
+async function advanceRemoteConfig(remote: string) {
+  const publisher = await createTempDir("guardian-maintenance-order-publisher-");
+  await execFileAsync("git", ["clone", "--quiet", "--branch", "main", remote, publisher]);
+  await git(publisher, ["config", "user.email", "guardian@example.test"]);
+  await git(publisher, ["config", "user.name", "Guardian Test"]);
+  await fs.writeFile(path.join(publisher, ".opencode/worktree-guardian.json"), "incoming config\n");
+  await git(publisher, ["add", ".opencode/worktree-guardian.json"]);
+  await git(publisher, ["commit", "-m", "advance config"]);
+  await git(publisher, ["push", "origin", "main"]);
+  return (await git(publisher, ["rev-parse", "HEAD"])).stdout;
 }
 
 async function createAdvancedReservation(repo: string, name: string, phase: "active" | "pending-proof" = "pending-proof") {
@@ -87,16 +103,45 @@ test("runCleanupSweep reports retirement-only work without adding final-postflig
   await assert.rejects(git(repo, ["rev-parse", "--verify", reservation.safetyRef]));
 });
 
-test("postFinishMaintenance stops after retirement-only cleanup and omits sync and final postflight", async (t) => {
+test("postFinishMaintenance syncs before retirement-only cleanup and omits final postflight", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
   await createAdvancedReservation(repo, "maintenance-pending-proof-retirement");
 
   const maintenance = await postFinishMaintenance({ input: {}, repoRoot: repo, sessionId: "ses_maintenance_retirement", config: DEFAULT_CONFIG }, []);
 
-  assert.deepEqual(Object.keys(maintenance).sort(), ["cleanupSweep", "freshPlanRequired"]);
+  assert.deepEqual(Object.keys(maintenance).sort(), ["cleanupSweep", "freshPlanRequired", "mainSync"]);
   assert.equal(maintenance.freshPlanRequired, true);
+  assert.equal((maintenance.mainSync as Record<string, unknown>).ok, true);
   assert.equal((maintenance.cleanupSweep as Record<string, unknown>).retiredCount, 1);
+});
+
+test("postFinishMaintenance syncs incoming-identical primary changes before its cleanup sweep", async (t) => {
+  const { base, remote, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  await fs.mkdir(path.join(repo, ".opencode"), { recursive: true });
+  await fs.writeFile(path.join(repo, ".opencode/worktree-guardian.json"), "old config\n");
+  await git(repo, ["add", ".opencode/worktree-guardian.json"]);
+  await git(repo, ["commit", "-m", "track config"]);
+  await git(repo, ["push", "origin", "main"]);
+  const branch = "guardian/maintenance-order-candidate";
+  await createMergedBranch(repo, branch, "maintenance-order.txt");
+  const remoteHead = await advanceRemoteConfig(remote);
+  await fs.writeFile(path.join(repo, ".opencode/worktree-guardian.json"), "incoming config\n");
+
+  const maintenance = await postFinishMaintenance({ input: {}, repoRoot: repo, sessionId: "ses_maintenance_order", config: DEFAULT_CONFIG }, []);
+  const mainSync = maintenance.mainSync as Record<string, unknown>;
+  const cleanupSweep = maintenance.cleanupSweep as Record<string, unknown>;
+  const finalPostflight = maintenance.finalPostflight as Record<string, unknown>;
+
+  assert.equal(mainSync.ok, true, JSON.stringify(mainSync));
+  assert.deepEqual(mainSync.reconciledDirtyFiles, [".opencode/worktree-guardian.json"]);
+  assert.equal(cleanupSweep.ok, true, JSON.stringify(cleanupSweep));
+  assert.equal(cleanupSweep.status, "cleaned");
+  assert.equal(finalPostflight.ok, true, JSON.stringify(finalPostflight));
+  assert.equal((await git(repo, ["rev-parse", "HEAD"])).stdout, remoteHead);
+  assert.equal((await git(repo, ["status", "--short"])).stdout, "");
+  await assert.rejects(git(repo, ["rev-parse", "--verify", `refs/heads/${branch}`]));
 });
 
 test("guardian_done primary publish stops after retiring an advanced active reservation", async (t) => {
