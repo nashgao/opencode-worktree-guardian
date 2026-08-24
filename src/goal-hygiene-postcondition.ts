@@ -19,10 +19,20 @@ export type GoalResidualFinding = {
   readonly severity: string;
 };
 
+export type GoalReviewableCandidate = {
+  readonly path: string;
+  readonly status: string;
+  readonly fileCount: number;
+  readonly bytes: number;
+  readonly bytesTruncated: boolean;
+  readonly reason: string;
+  readonly suggestedDeletePathCommand: string;
+};
+
 export type GoalHygienePostcondition = {
   readonly mode: GuardianGoalHygieneCompletion;
   readonly phase: "not-required" | "plan" | "apply";
-  readonly status: "not-required" | "pending" | "satisfied" | "residual-unprotected" | "scan-failed";
+  readonly status: "not-required" | "pending" | "satisfied" | "residual-unprotected" | "scan-incomplete" | "scan-failed";
   readonly residualCount: number;
   readonly residualByCategory: Readonly<Record<HygieneCategory, number>>;
   readonly residualFindingCount: number;
@@ -32,6 +42,11 @@ export type GoalHygienePostcondition = {
   readonly residualFindingsTruncated: boolean;
   readonly protectedExclusionCount: number;
   readonly reviewableCandidateCount: number;
+  readonly reviewableDigest: string;
+  readonly reviewableCandidatesShown: readonly GoalReviewableCandidate[];
+  readonly reviewableCandidatesOmittedCount: number;
+  readonly reviewableCandidatesTruncated: boolean;
+  readonly reviewableInventoryComplete: boolean;
 };
 
 type GoalHygienePostconditionOptions = {
@@ -103,12 +118,36 @@ function residualDigest(findings: readonly RecordLike[]): string {
   return crypto.createHash("sha256").update(JSON.stringify(identities)).digest("hex");
 }
 
+function reviewableDigest(candidates: readonly RecordLike[]): string {
+  const identities = candidates.map((candidate) => JSON.stringify({
+    path: textValue(candidate.path),
+    status: textValue(candidate.status),
+    fileCount: numericValue(candidate.fileCount),
+    bytes: numericValue(candidate.bytes),
+    bytesTruncated: candidate.bytesTruncated === true,
+    reason: textValue(candidate.reason),
+  })).sort(compareCodeUnits);
+  return crypto.createHash("sha256").update(JSON.stringify(identities)).digest("hex");
+}
+
 function shownResidualFinding(finding: RecordLike): GoalResidualFinding {
   return {
     category: sanitizeGoalResidualText(finding.category),
     path: sanitizeGoalResidualText(finding.path),
     reason: sanitizeGoalResidualText(finding.reason),
     severity: sanitizeGoalResidualText(finding.severity),
+  };
+}
+
+function shownReviewableCandidate(candidate: RecordLike): GoalReviewableCandidate {
+  return {
+    path: sanitizeGoalResidualText(candidate.path),
+    status: sanitizeGoalResidualText(candidate.status),
+    fileCount: numericValue(candidate.fileCount),
+    bytes: numericValue(candidate.bytes),
+    bytesTruncated: candidate.bytesTruncated === true,
+    reason: sanitizeGoalResidualText(candidate.reason),
+    suggestedDeletePathCommand: sanitizeGoalResidualText(candidate.suggestedDeletePathCommand),
   };
 }
 
@@ -121,7 +160,7 @@ function categoryCounts(findings: readonly RecordLike[]): Record<HygieneCategory
   return counts;
 }
 
-function noResiduals(mode: GuardianGoalHygieneCompletion, phase: "not-required" | "plan" | "apply", status: GoalHygienePostcondition["status"], protectedExclusionCount = 0, reviewableCandidateCount = 0): GoalHygienePostcondition {
+function noResiduals(mode: GuardianGoalHygieneCompletion, phase: "not-required" | "plan" | "apply", status: GoalHygienePostcondition["status"], protectedExclusionCount = 0, reviewableCandidateCount = 0, reviewableInventoryComplete = true): GoalHygienePostcondition {
   return {
     mode,
     phase,
@@ -135,7 +174,26 @@ function noResiduals(mode: GuardianGoalHygieneCompletion, phase: "not-required" 
     residualFindingsTruncated: false,
     protectedExclusionCount,
     reviewableCandidateCount,
+    reviewableDigest: reviewableDigest([]),
+    reviewableCandidatesShown: [],
+    reviewableCandidatesOmittedCount: reviewableCandidateCount,
+    reviewableCandidatesTruncated: reviewableCandidateCount > 0,
+    reviewableInventoryComplete,
   };
+}
+
+function postconditionStatus(input: {
+  readonly mode: GuardianGoalHygieneCompletion;
+  readonly phase: "plan" | "apply";
+  readonly residualCount: number;
+  readonly reviewableCandidateCount: number;
+  readonly reviewableInventoryComplete: boolean;
+  readonly approvedTargetCount: number;
+}): GoalHygienePostcondition["status"] {
+  if (input.mode === "no-unprotected-residue" && !input.reviewableInventoryComplete) return "scan-incomplete";
+  const hasReviewableResidue = input.mode === "no-unprotected-residue" && input.reviewableCandidateCount > 0;
+  if (input.residualCount > 0 || hasReviewableResidue) return "residual-unprotected";
+  return input.phase === "plan" && input.approvedTargetCount > 0 ? "pending" : "satisfied";
 }
 
 export function approvedHygieneTargetPaths(result: unknown): readonly string[] {
@@ -148,22 +206,25 @@ export function approvedHygieneTargetPaths(result: unknown): readonly string[] {
 
 export async function scanGoalHygienePostcondition(options: GoalHygienePostconditionOptions): Promise<GoalHygienePostcondition> {
   const mode = options.config.goal.hygieneCompletion;
-  if (!options.config.goal.cleanupHygiene) return noResiduals(mode, "not-required", "not-required");
+  if (!options.config.goal.cleanupHygiene && mode !== "no-unprotected-residue") return noResiduals(mode, "not-required", "not-required");
   const runner = scanRunner(options.input);
-  const scan = await scanWorkspaceHygiene({ repoRoot: options.repoRoot, cwd: options.cwd, config: options.config, ...(runner ? { runGitNullSeparated: runner } : {}) });
+  const scan = await scanWorkspaceHygiene({ repoRoot: options.repoRoot, cwd: options.cwd, config: options.config, ...(runner ? { runGitNullSeparated: runner } : {}), ...(options.input?.emptyDirectoryMaxDepth !== undefined ? { emptyDirectoryMaxDepth: options.input.emptyDirectoryMaxDepth } : {}), ...(options.input?.emptyDirectoryMaxEntries !== undefined ? { emptyDirectoryMaxEntries: options.input.emptyDirectoryMaxEntries } : {}) });
   const summary: RecordLike = isRecordLike(scan.summary) ? scan.summary : {};
   const protectedExclusionCount = numericValue(summary.exclusionCount);
   const reviewableCandidateCount = numericValue(summary.reviewableCandidateCount);
   if (scan.ok === false || summary.scanFailed === true) {
-    return noResiduals(mode, options.phase, "scan-failed", protectedExclusionCount, reviewableCandidateCount);
+    return noResiduals(mode, options.phase, "scan-failed", protectedExclusionCount, reviewableCandidateCount, false);
   }
   const approvedTargets = new Set(options.approvedTargetPaths ?? []);
   const residualFindings = records(scan.findings).filter((finding) => typeof finding.path !== "string" || !approvedTargets.has(finding.path));
   const residualFindingsShown = residualFindings.slice(0, RESIDUAL_FINDING_LIMIT).map(shownResidualFinding);
+  const reviewableCandidates = records(scan.reviewableCandidates);
+  const reviewableCandidatesShown = reviewableCandidates.slice(0, RESIDUAL_FINDING_LIMIT).map(shownReviewableCandidate);
+  const reviewableInventoryComplete = summary.filesystemOnlyEmptyDirectoryScanComplete === true && summary.reviewableTruncated !== true && reviewableCandidates.length === reviewableCandidateCount;
   return {
     mode,
     phase: options.phase,
-    status: residualFindings.length === 0 && options.phase === "plan" && approvedTargets.size > 0 ? "pending" : residualFindings.length === 0 ? "satisfied" : "residual-unprotected",
+    status: postconditionStatus({ mode, phase: options.phase, residualCount: residualFindings.length, reviewableCandidateCount, reviewableInventoryComplete, approvedTargetCount: approvedTargets.size }),
     residualCount: residualFindings.length,
     residualByCategory: categoryCounts(residualFindings),
     residualFindingCount: residualFindings.length,
@@ -173,20 +234,29 @@ export async function scanGoalHygienePostcondition(options: GoalHygienePostcondi
     residualFindingsTruncated: residualFindings.length > residualFindingsShown.length,
     protectedExclusionCount,
     reviewableCandidateCount,
+    reviewableDigest: reviewableDigest(reviewableCandidates),
+    reviewableCandidatesShown,
+    reviewableCandidatesOmittedCount: Math.max(0, reviewableCandidateCount - reviewableCandidatesShown.length),
+    reviewableCandidatesTruncated: reviewableCandidateCount > reviewableCandidatesShown.length,
+    reviewableInventoryComplete,
   };
 }
 
 export function postconditionBlocksCompletion(postcondition: GoalHygienePostcondition): boolean {
-  return postcondition.status === "scan-failed" || (postcondition.mode === "no-unprotected-findings" && postcondition.status === "residual-unprotected");
+  return postcondition.status === "scan-failed" || postcondition.status === "scan-incomplete" || ((postcondition.mode === "no-unprotected-findings" || postcondition.mode === "no-unprotected-residue") && postcondition.status === "residual-unprotected");
 }
 
 export function postconditionIsComplete(postcondition: GoalHygienePostcondition): boolean {
-  if (postcondition.status === "pending" || postcondition.status === "scan-failed") return false;
+  if (postcondition.status === "pending" || postcondition.status === "scan-failed" || postcondition.status === "scan-incomplete") return false;
   return postcondition.mode === "authorized-cleanup" || postcondition.status !== "residual-unprotected";
 }
 
 export function postconditionReason(postcondition: GoalHygienePostcondition): string | undefined {
   if (postcondition.status === "scan-failed") return "guardian_goal hygiene postcondition scan failed";
+  if (postcondition.status === "scan-incomplete") return "guardian_goal strict residue completion hygiene inventory is incomplete";
+  if (postcondition.mode === "no-unprotected-residue" && postcondition.status === "residual-unprotected") {
+    return "guardian_goal strict residue completion has unprotected residue";
+  }
   if (postcondition.mode === "no-unprotected-findings" && postcondition.status === "residual-unprotected") {
     return "guardian_goal strict hygiene completion has unprotected residual findings";
   }
