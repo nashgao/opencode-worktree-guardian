@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { compareCodeUnits } from "./code-unit-order.ts";
 import { tryGit } from "./git.ts";
 import { isEnoent } from "./filesystem-boundaries.ts";
 import type { HygieneCandidateStatus, ReviewableCandidateInput } from "./hygiene-candidates.ts";
@@ -99,7 +100,7 @@ export async function buildReviewableCandidates(repoRoot: string, candidates: re
     remainingEntries = Math.max(0, remainingEntries - measurement.visited);
     measured.push({ ...candidate, bytes: measurement.bytes, bytesTruncated: measurement.truncated });
   }
-  measured.sort((left, right) => (left.bytesTruncated || right.bytesTruncated ? 0 : right.bytes - left.bytes) || right.fileCount - left.fileCount || left.path.localeCompare(right.path));
+  measured.sort((left, right) => (left.bytesTruncated || right.bytesTruncated ? 0 : right.bytes - left.bytes) || right.fileCount - left.fileCount || compareCodeUnits(left.path, right.path));
   const visible = visibleLimit === null ? measured : measured.slice(0, visibleLimit);
   const reviewableCandidates: ReviewableCandidate[] = [];
   for (const candidate of visible) {

@@ -50,6 +50,20 @@ test("guardian_status readable output treats hygiene-only findings as review war
   assert.doesNotMatch(output, /fail-severity/);
 });
 
+test("guardian_status readable output never renders incomplete hygiene coverage as clean", () => {
+  const output = formatGuardianStatusOutput("guardian_status", {
+    ok: true,
+    repoRoot: "/repo",
+    activeSessions: [],
+    worktrees: [],
+    hygiene: { ok: true, summary: { filesystemOnlyEmptyDirectoryScanComplete: false, findingCount: 0, reviewableCandidateCount: 0, bySeverity: { fail: 0, warn: 0 } } },
+  });
+
+  assert.match(output, /^\[WARN\] Guardian Status: Needs review/m);
+  assert.match(output, /hygiene inventory is incomplete.*cleanliness unknown/);
+  assert.doesNotMatch(output, /^\[GOOD\] Guardian Status: Clean/m);
+});
+
 test("guardian_recover readable output preserves reflog and unreachable recovery provenance", () => {
   const output = formatGuardianStatusOutput("guardian_recover", {
     ok: true,

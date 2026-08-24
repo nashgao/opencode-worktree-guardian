@@ -112,6 +112,7 @@ function collectSignals(status: LooseRecord): VerdictSignal[] {
   const hygieneReviewable = numberValue(hygieneSummary.reviewableCandidateCount);
   // A failed scan zeroes every hygiene count, so silence here must read as unknown, not clean.
   const hygieneScanFailed = hygiene.ok === false || hygieneSummary.scanFailed === true;
+  const hygieneScanIncomplete = !hygieneScanFailed && hygieneSummary.filesystemOnlyEmptyDirectoryScanComplete === false;
 
   const dirty = arrayValue(status.dirtyFiles).length;
   const stashes = arrayValue(status.stashes).length;
@@ -149,6 +150,8 @@ function collectSignals(status: LooseRecord): VerdictSignal[] {
   }
   if (hygieneScanFailed) {
     signals.push({ tone: "warn", fragment: "workspace hygiene scan failed — cleanliness unknown", nextAction: "guardian_hygiene to re-run the scan" });
+  } else if (hygieneScanIncomplete) {
+    signals.push({ tone: "warn", fragment: "workspace hygiene inventory is incomplete; cleanliness unknown", nextAction: "guardian_hygiene to inspect incomplete coverage" });
   }
   if (hygieneFail > 0) {
     const findingCount = hygieneFindings > 0 ? hygieneFindings : hygieneFail;
@@ -168,7 +171,7 @@ function collectSignals(status: LooseRecord): VerdictSignal[] {
     signals.push({ tone: "warn", fragment: `${hygieneFindings} workspace hygiene finding${plural(hygieneFindings)}`, nextAction: "guardian_hygiene to review" });
   }
   if (hygieneReviewable > 0) {
-    signals.push({ tone: "warn", fragment: `${hygieneReviewable} unreviewed workspace path${plural(hygieneReviewable)} outside Guardian cleanup rules`, nextAction: "guardian_hygiene includeAllReviewableCandidates=true to enumerate" });
+    signals.push({ tone: "warn", fragment: `${hygieneReviewable} unreviewed workspace path${plural(hygieneReviewable)} outside Guardian cleanup rules`, nextAction: "guardian_hygiene to enumerate and review exact paths" });
   }
 
   return signals;

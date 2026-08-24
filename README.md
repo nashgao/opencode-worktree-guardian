@@ -351,8 +351,7 @@ Terminal recovery plans are also read-only handoffs. When Guardian can prove a t
   - warn known-cleanable librarian-react: known librarian scratch artifact
   - fail nested-git test-hyperf-kafka: nested Git repository has uncommitted changes
   - warn suspicious research-dump: untracked path resembles a clone, research dump, or scratch workspace
-[WARN] reviewable candidates: 4 | omitted: 2 | files covered: 6
-[WARN] the 2 rows below are the largest of 4 by file count; run guardian_hygiene includeAllReviewableCandidates=true to enumerate all 4
+[WARN] reviewable candidates: 2 | files covered: 4 | bytes covered: 128
 [INFO] reviewable entries require exact-path guardian_delete_paths planning if cleanup is intended
   - ignored logs (3 files): not matched by Guardian hygiene cleanup rules
     guardian_delete_paths mode=plan paths=["logs"] allowRecursive=true
@@ -363,9 +362,9 @@ Terminal recovery plans are also read-only handoffs. When Guardian can prove a t
   - guardian_status
 ```
 
-The structured scan result exposes the same split as `summary.candidateCount`, `summary.findingCount`, `summary.exclusionCount`, `summary.bySeverity`, `summary.byCategory`, `summary.reviewableCandidateCount`, `summary.reviewableShownCount`, `summary.reviewableOmittedCount`, `summary.reviewableTotalFileCount`, `summary.reviewableTruncated`, and `reviewableCandidates`. That is the complete set of `summary` keys; a failed scan adds `summary.scanFailed`.
+The structured scan result exposes the same split through candidate, finding, exclusion, severity, category, reviewable-count, reviewable-byte, and filesystem-only empty-directory coverage fields. In particular, `summary.filesystemOnlyEmptyDirectoryScanComplete` reports whether bounded filesystem coverage completed; failed scans additionally set `summary.scanFailed`. Neither an incomplete nor a failed scan is rendered as clean.
 
-Reviewable candidates are ordered by descending `fileCount` — the number of scanned paths that collapsed into each entry — so a truncated view shows the largest entries rather than the alphabetically first. `summary.reviewableTotalFileCount` is summed over every candidate, not only the visible ones, so it stays accurate regardless of the display limit; pass `includeAllReviewableCandidates: true` to receive the untruncated list. Reviewable entries are not cleanup findings, are not included in hygiene plan targets, and are not accepted by `guardian_hygiene` cleanup preflight. If a reviewable file should be deleted intentionally, plan exact-path deletion with `guardian_delete_paths mode=plan paths=["..."]`; for a reviewable directory, add `allowRecursive=true`.
+Reviewable candidates prioritize larger measured entries, then higher collapsed file counts, with deterministic code-unit path ordering as the final tie-breaker; truncated byte measurements do not decide a pair's order. `summary.reviewableTotalFileCount` and `summary.reviewableTotalBytes` cover the full inventory. Reviewable entries are not cleanup findings, are not included in hygiene plan targets, and are not accepted by `guardian_hygiene` cleanup preflight. If a reviewable file should be deleted intentionally, plan exact-path deletion with `guardian_delete_paths mode=plan paths=["..."]`; for a reviewable directory, add `allowRecursive=true`.
 
 `guardian_hygiene mode=plan|apply` uses a two-step confirmed cleanup flow for approved hygiene findings:
 

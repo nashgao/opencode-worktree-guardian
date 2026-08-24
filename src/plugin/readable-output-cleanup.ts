@@ -28,9 +28,11 @@ export function formatGuardianHygieneOutput(rawResult: unknown) {
   const failCount = Number(recordValue(summary.bySeverity).fail ?? 0);
   const warnCount = Number(recordValue(summary.bySeverity).warn ?? 0);
   const scanFailed = result.ok === false || summary.scanFailed === true;
-  const lines = [`${scanFailed ? "[FAIL]" : findings.length > 0 || reviewableCount > 0 ? "[WARN]" : "[GOOD]"} guardian_hygiene scan`, `[INFO] repoRoot: ${textValue(result.repoRoot)}`];
+  const inventoryIncomplete = summary.filesystemOnlyEmptyDirectoryScanComplete === false;
+  const lines = [`${scanFailed ? "[FAIL]" : findings.length > 0 || reviewableCount > 0 || inventoryIncomplete ? "[WARN]" : "[GOOD]"} guardian_hygiene scan`, `[INFO] repoRoot: ${textValue(result.repoRoot)}`];
   if (scanFailed) lines.push("[WARN] scan incomplete: findings and candidate counts are not trustworthy");
   else lines.push(`[INFO] findings: ${Number(summary.findingCount ?? findings.length)} | warn: ${warnCount} | fail: ${failCount} | exclusions: ${Number(summary.exclusionCount ?? exclusions.length)} | candidates: ${Number(summary.candidateCount ?? 0)} | reviewable: ${reviewableCount}`);
+  if (!scanFailed && inventoryIncomplete) lines.push("[WARN] inventory coverage is incomplete: filesystem-only empty-directory scan was truncated");
   const reason = textValue(result.reason, "");
   if (result.ok === false || reason) lines.push(`[FAIL] ${reason || "guardian_hygiene scan failed"}`);
   if (findings.length > 0) {
@@ -42,7 +44,6 @@ export function formatGuardianHygieneOutput(rawResult: unknown) {
   }
   if (reviewableCount > 0) {
     lines.push(`[WARN] reviewable candidates: ${reviewableCount}${reviewableOmittedCount > 0 ? ` | omitted: ${reviewableOmittedCount}` : ""} | files covered: ${reviewableTotalFileCount} | bytes covered: ${reviewableTotalBytes}${reviewableBytesTruncated ? " (lower bound; measurement truncated)" : ""}`);
-    if (reviewableOmittedCount > 0) lines.push(`[WARN] the ${visibleReviewableCandidates.length} rows below are the largest of ${reviewableCount} by file count; run guardian_hygiene includeAllReviewableCandidates=true to enumerate all ${reviewableCount}`);
     lines.push("[INFO] reviewable entries require exact-path guardian_delete_paths planning if cleanup is intended");
     for (const entry of visibleReviewableCandidates) {
       const candidate = recordValue(entry);

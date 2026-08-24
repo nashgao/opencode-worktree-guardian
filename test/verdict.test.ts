@@ -119,7 +119,8 @@ test("reviewable candidates alone produce a warn verdict, never a clean headline
   });
   assert.equal(verdict.tone, "warn");
   assert.match(verdict.headline, /65 unreviewed workspace paths outside Guardian cleanup rules/);
-  assert.match(verdict.nextAction ?? "", /includeAllReviewableCandidates=true/);
+  assert.match(verdict.nextAction ?? "", /guardian_hygiene/);
+  assert.doesNotMatch(verdict.nextAction ?? "", /includeAllReviewableCandidates/);
 });
 
 test("a failed hygiene scan reports unknown cleanliness rather than a clean verdict", () => {
@@ -131,6 +132,18 @@ test("a failed hygiene scan reports unknown cleanliness rather than a clean verd
   });
   assert.equal(verdict.tone, "warn");
   assert.match(verdict.headline, /cleanliness unknown/);
+  assert.match(verdict.nextAction ?? "", /guardian_hygiene/);
+});
+
+test("an incomplete hygiene inventory reports unknown cleanliness rather than a clean verdict", () => {
+  const verdict = computeGuardianVerdict({
+    ok: true,
+    repoRoot: "/repo",
+    activeSessions: [],
+    hygiene: { ok: true, summary: { filesystemOnlyEmptyDirectoryScanComplete: false, findingCount: 0, reviewableCandidateCount: 0, bySeverity: { fail: 0, warn: 0 } } },
+  });
+  assert.equal(verdict.tone, "warn");
+  assert.match(verdict.headline, /hygiene inventory is incomplete.*cleanliness unknown/);
   assert.match(verdict.nextAction ?? "", /guardian_hygiene/);
 });
 
