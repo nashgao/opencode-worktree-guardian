@@ -173,7 +173,7 @@ export async function guardianDoneLandClean(context: LandCleanContext): Promise<
   if (!currentBaseLineage.baseIsAncestorOfHead) {
     return blocked("fresh remote base is not an ancestor of the session commit", { branch: preflight.branch, head, baseRef, baseRefOid: currentBaseRefOid, ...stashInventory(preflight) });
   }
-  await pushBranchWithLease(context.repoRoot, preflight.remote, preflight.branch, head, preflight.remoteBranchOid);
+  await pushBranchWithLease(context.cwd, preflight.remote, preflight.branch, head, preflight.remoteBranchOid);
   await fetchRemote(context.repoRoot, preflight.remote);
   const baseBeforePullRequestOid = await getRefCommit(context.repoRoot, baseAuthorityRef);
   const baseBeforePullRequest = await observeBaseLineage(context.repoRoot, baseBeforePullRequestOid, head);
