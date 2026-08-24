@@ -4,6 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { DEFAULT_CONFIG } from "../src/config.ts";
 import { guardianHygiene, scanWorkspaceHygiene } from "../src/hygiene.ts";
+import { isRecordLike } from "../src/types.ts";
 import { createRepo, git } from "./helpers.ts";
 
 async function writeArtifact(repo: string, relative: string) {
@@ -12,8 +13,16 @@ async function writeArtifact(repo: string, relative: string) {
   await fs.writeFile(target, "artifact\n");
 }
 
-function findingPaths(result: Record<string, unknown>) {
-  return (result.findings as Array<Record<string, unknown>>).map((finding) => finding.path).sort();
+function pathValue(entry: Record<string, unknown>): string {
+  return typeof entry.path === "string" ? entry.path : "";
+}
+
+function records(value: unknown): readonly Record<string, unknown>[] {
+  return Array.isArray(value) ? value.filter(isRecordLike) : [];
+}
+
+function findingPaths(result: Awaited<ReturnType<typeof scanWorkspaceHygiene>>) {
+  return result.findings.map(pathValue).sort();
 }
 
 test("hygiene protects Beads state and matches suspicious directory segments despite config overrides", async () => {
@@ -49,7 +58,7 @@ test("hygiene scanner excludes protected dependency and build directories", asyn
 
   const result = await scanWorkspaceHygiene({ repoRoot: repo, config: DEFAULT_CONFIG });
   assert.equal(result.summary.findingCount, 0);
-  assert.deepEqual((result.exclusions as Array<Record<string, unknown>>).map((entry) => entry.path).sort(), ["node_modules", "target", "vendor"]);
+  assert.deepEqual(result.exclusions.map(pathValue).sort(), ["node_modules", "target", "vendor"]);
 });
 
 test("hygiene scanner excludes agent and local tooling state directories from cleanup findings", async () => {
@@ -70,8 +79,8 @@ test("hygiene scanner excludes agent and local tooling state directories from cl
 
   assert.equal(result.ok, true);
   assert.equal(result.summary.findingCount, 0);
-  assert.deepEqual((result.exclusions as Array<Record<string, unknown>>).map((entry) => entry.path).sort(), [".codegraph", ".milestones", ".omc", ".omo", ".omx", ".opencode", ".sisyphus", ".worktrees"]);
-  assert.deepEqual((result as Record<string, unknown>).reviewableCandidates, []);
+  assert.deepEqual(result.exclusions.map(pathValue).sort(), [".codegraph", ".milestones", ".omc", ".omo", ".omx", ".opencode", ".sisyphus", ".worktrees"]);
+  assert.deepEqual(result.reviewableCandidates, []);
 });
 
 test("hygiene scanner excludes configured protected paths from cleanup findings", async () => {
@@ -84,8 +93,8 @@ test("hygiene scanner excludes configured protected paths from cleanup findings"
 
   assert.equal(result.ok, true);
   assert.equal(result.summary.findingCount, 0);
-  assert.deepEqual((result.exclusions as Array<Record<string, unknown>>).map((entry) => entry.path).sort(), [".agent-state"]);
-  assert.deepEqual((result as Record<string, unknown>).reviewableCandidates, []);
+  assert.deepEqual(result.exclusions.map(pathValue).sort(), [".agent-state"]);
+  assert.deepEqual(result.reviewableCandidates, []);
 });
 
 test("hygiene scanner collapses known residue names to cleanup roots", async () => {
@@ -133,7 +142,7 @@ test("hygiene scanner recognizes nested Guardian residue without weakening prote
 
   assert.equal(findingPaths(scan).includes("test-fixtures/guardian-origin-nested"), true);
   assert.equal(findingPaths(scan).includes(".beads/guardian-origin-protected"), false);
-  assert.equal((scan.exclusions as Array<Record<string, unknown>>).some((entry) => entry.path === ".beads"), true);
+  assert.equal(scan.exclusions.some((entry) => pathValue(entry) === ".beads"), true);
   assert.equal(plan.ok, false);
-  assert.equal((plan.blockers as Array<Record<string, unknown>>).some((blocker) => String(blocker.reason).includes("tracked files")), true);
+  assert.equal(records(plan.blockers).some((blocker) => String(blocker.reason).includes("tracked files")), true);
 });
