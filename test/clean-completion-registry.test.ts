@@ -223,3 +223,37 @@ test("Codex quarantine cache persists the exact core binding and rejects cross-a
   assert.match(restored, /guardian_quarantine restored/);
   assert.equal(await fs.readFile(fixture.restoredPath, "utf8"), "adapter-bound residue\n");
 });
+
+test("Codex goal cache does not invalidate its own clean-completion plan", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const config = {
+    ...DEFAULT_CONFIG,
+    worktreeRoot: path.join(base, "worktrees", "$REPO"),
+    goal: {
+      ...DEFAULT_CONFIG.goal,
+      commitDirty: false,
+      landToBase: false,
+      pushBase: false,
+      cleanupWorktrees: false,
+      cleanupBranches: false,
+      hygieneCompletion: "no-unprotected-residue" as const,
+      quarantineSessionResidue: true,
+    },
+  };
+  await fs.mkdir(path.join(repo, path.dirname(CONFIG_PATH)), { recursive: true });
+  await fs.writeFile(path.join(repo, CONFIG_PATH), `${JSON.stringify(config)}\n`);
+  await git(repo, ["add", CONFIG_PATH]);
+  await git(repo, ["commit", "-m", "enable clean completion"]);
+  const sessionId = "ses_codex_goal_clean_completion_cache";
+  await guardianStart({ repoRoot: repo, cwd: repo, sessionId, taskName: "goal cache stability", createWorktree: true, config });
+
+  const planned = await runCodexCli(["tool", "guardian_goal", JSON.stringify({ repoRoot: repo, cwd: repo, sessionId, mode: "plan" })]);
+  assert.match(planned, /guardian_goal planned/);
+  const applied = await runCodexCli(["tool", "guardian_goal", JSON.stringify({ repoRoot: repo, cwd: repo, sessionId, mode: "apply", confirm: true })]);
+  const primaryStatus = await git(repo, ["status", "--short"]);
+
+  assert.equal(primaryStatus.stdout, "");
+  assert.match(applied, /guardian_goal complete/);
+  assert.doesNotMatch(applied, /confirm token mismatch/);
+});

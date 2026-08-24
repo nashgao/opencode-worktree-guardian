@@ -15,6 +15,7 @@ type MetadataEntry = {
 
 const ROOT_FILES = new Set(["state.json", "events.jsonl", "report.html", "project-report.html", "codex-plan-cache.json"]);
 const ROOT_DIRECTORIES = new Set(["lock-tmp", "lock-tombstones", "provenance", "journal", "quarantine"]);
+const STABILITY_EXCLUDED_ROOT_FILES = new Set(["codex-plan-cache.json"]);
 
 function isEnoent(error: unknown): error is NodeJS.ErrnoException {
   return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
@@ -168,7 +169,7 @@ export async function guardianMetadataSnapshot(input: {
     await validateProvenance(entries, input.state, input.paths);
     validateJournal(entries);
     await validateQuarantine(entries, input.paths, input.quarantineItems);
-    return { entries };
+    return { entries: entries.filter((entry) => !STABILITY_EXCLUDED_ROOT_FILES.has(entry.path)) };
   } catch (error) {
     return { entries: [], reason: `Guardian metadata inventory failed: ${error instanceof Error ? error.message : String(error)}` };
   }
