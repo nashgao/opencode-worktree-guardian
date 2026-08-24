@@ -123,6 +123,30 @@ test("lazy auto-start leaves read-only commands on the primary worktree", async 
   assert.equal(state.sessions[sessionID], undefined);
 });
 
+test("lazy auto-start routes Git output writers away from the primary worktree", async (t) => {
+  // Given
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  await enableLazyAutoStart(repo);
+  const sessionID = "ses_lazy_git_output";
+  const hooks = await plugin.server({ directory: repo, worktree: repo, client: createClient([]) });
+  const output: { args: { command: string; workdir?: string } } = { args: { command: "git log --output=history.txt" } };
+
+  // When
+  await hooks["tool.execute.before"]({ tool: "bash", sessionID, callID: "call_lazy_git_output" }, output);
+
+  // Then
+  const paths = await getGuardianPaths(repo);
+  const state = await readState(paths, { repoRoot: repo, config: { ...DEFAULT_CONFIG, autoStartMode: "lazy" } });
+  const session = requireSession(state.sessions[sessionID]);
+  const worktree = String(session.worktree_path);
+  assert.notEqual(worktree, repo);
+  assert.equal(output.args.workdir, worktree);
+  await git(worktree, ["log", "--output=history.txt"]);
+  await assert.rejects(fs.access(path.join(repo, "history.txt")));
+  assert.equal((await fs.readFile(path.join(worktree, "history.txt"), "utf8")).length > 0, true);
+});
+
 test("lazy auto-start creates ownership before direct file mutation routing", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));

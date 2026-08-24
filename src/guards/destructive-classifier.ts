@@ -1,5 +1,5 @@
 import type { GuardOptions } from "../types.ts";
-import { hasDynamicShellArgument, isReadOnlyStashInvocation } from "./allowlists.ts";
+import { hasDynamicShellArgument, hasUnsafeDiffOption, isReadOnlyStashInvocation } from "./allowlists.ts";
 import type { CommandSegment, GuardBlockDecision } from "./guard-types.ts";
 import { checkoutRestoresPaths, isRecursiveForce, restoreIsDestructive, targetsKnownWorktreePath, targetsRepoManagedPath, rmTargets } from "./destructive-inputs.ts";
 import { effectiveGitPolicyReason } from "./effective-git-policy.ts";
@@ -80,6 +80,12 @@ function classifyGit(segment: CommandSegment, options: GuardOptions = {}): Guard
   if (bypass) return bypass;
   const effectivePolicy = effectiveGitPolicyReason(parsed, options);
   if (effectivePolicy) return block(effectivePolicy, normalized);
+  if (subcommand === "init") {
+    return block("git init is blocked because it can create or replace repository metadata", normalized);
+  }
+  if (["diff", "log", "show"].includes(subcommand) && hasUnsafeDiffOption(rest)) {
+    return block("Git diff/log/show write-capable options are blocked", normalized);
+  }
   if (subcommand === "reset") {
     return block("raw git reset is blocked because it can discard or hide session work; use Guardian-native cleanup", normalized);
   }

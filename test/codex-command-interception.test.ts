@@ -122,6 +122,22 @@ test("Codex fails closed when the root Guardian config is not an object", async 
   assertBlocked(await runPreToolUse(payload(repo, "ses_invalid_config", "git merge untrusted-feature")));
 });
 
+test("Codex strict interception blocks Git-native writers before they can touch the primary worktree", async (t) => {
+  const repo = await createRepo();
+  t.after(() => fs.rm(repo, { recursive: true, force: true }));
+  await writeConfig(repo, { commandInterceptionMode: "strict", autoStart: false });
+
+  for (const command of [
+    "git log --output=history.txt",
+    "git show --ext-diff HEAD",
+    "git show --textconv HEAD",
+    "git init",
+  ]) {
+    assertBlocked(await runPreToolUse(payload(repo, "ses_codex_git_native_write", command)));
+  }
+  assert.equal(await fs.access(path.join(repo, "history.txt")).then(() => true, () => false), false);
+});
+
 test("Codex blocks a recorded Guardian branch merged into a protected worktree", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
