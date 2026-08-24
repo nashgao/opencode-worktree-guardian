@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { compareCodeUnits } from "./code-unit-order.ts";
 import { scanWorkspaceHygiene } from "./hygiene.ts";
 import type { NullSeparatedRunner } from "./hygiene-candidates.ts";
 import type { GuardianGoalHygieneCompletion, RecordLike } from "./types.ts";
@@ -99,14 +100,7 @@ export function sanitizeGoalResidualText(value: unknown, fallback = "-"): string
     .replace(/(^|[^A-Za-z0-9_]|\\n)git\s+clean\b/gi, "$1git <redacted>");
 }
 
-export function compareCodeUnits(left: string, right: string): number {
-  const sharedLength = Math.min(left.length, right.length);
-  for (let index = 0; index < sharedLength; index += 1) {
-    const difference = left.charCodeAt(index) - right.charCodeAt(index);
-    if (difference !== 0) return difference;
-  }
-  return left.length - right.length;
-}
+export { compareCodeUnits } from "./code-unit-order.ts";
 
 function residualDigest(findings: readonly RecordLike[]): string {
   const identities = findings.map((finding) => JSON.stringify({
