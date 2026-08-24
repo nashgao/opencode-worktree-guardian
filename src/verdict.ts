@@ -97,6 +97,9 @@ function unavailableBaseDistanceCount(status: LooseRecord): number {
 
 function collectSignals(status: LooseRecord): VerdictSignal[] {
   const signals: VerdictSignal[] = [];
+  const cleanCompletionProof = recordValue(status.cleanCompletionProof);
+  const cleanCompletionProofStatus = textValue(cleanCompletionProof.status);
+  const incompleteQuarantineOperations = arrayValue(status.incompleteQuarantineOperations).length;
 
   const orphaned = arrayValue(status.orphanedSessions).length;
   const poisoned = arrayValue(status.poisonedSessions).length;
@@ -116,6 +119,15 @@ function collectSignals(status: LooseRecord): VerdictSignal[] {
   const behind = baseDistanceCount(status, "behind");
   const diverged = baseDistanceCount(status, "diverged");
   const unavailableBaseDistance = unavailableBaseDistanceCount(status);
+
+  if (cleanCompletionProofStatus === "invalid") {
+    signals.push({ tone: "bad", fragment: "clean-completion proof metadata is invalid", nextAction: "guardian_status after repairing Guardian metadata" });
+  } else if (cleanCompletionProofStatus === "stale") {
+    signals.push({ tone: "warn", fragment: "clean-completion proof is stale after a Guardian state change", nextAction: "guardian_goal mode=plan to obtain a fresh proof" });
+  }
+  if (incompleteQuarantineOperations > 0) {
+    signals.push({ tone: "bad", fragment: `${incompleteQuarantineOperations} incomplete quarantine operation${plural(incompleteQuarantineOperations)} requires recovery`, nextAction: "guardian_recover to inspect, then guardian_goal mode=apply to resume" });
+  }
 
   if (orphaned > 0) {
     signals.push({ tone: "bad", fragment: `${orphaned} orphaned session${plural(orphaned)} (worktree missing)`, nextAction: "guardian_recover, then guardian_delete_worktree" });
@@ -175,6 +187,11 @@ export function computeGuardianVerdict(rawStatus: unknown): GuardianVerdict {
   const failSignals = signals.filter((signal) => signal.tone === "bad");
   const dominant = failSignals[0] ?? signals[0];
   if (!dominant) {
+    const cleanCompletionProof = recordValue(status.cleanCompletionProof);
+    if (cleanCompletionProof.status === "proven") {
+      const provenAt = textValue(cleanCompletionProof.provenAt, "the recorded completion time");
+      return { tone: "good", headline: `Project clean — stable clean-completion proof recorded at ${provenAt}.`, nextAction: null };
+    }
     return { tone: "good", headline: `${descriptor} — no Guardian risk signals (Guardian scope only; not a repo-cleanliness claim).`, nextAction: null };
   }
 

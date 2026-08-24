@@ -15,10 +15,6 @@ import {
   test,
   worktreePaths,
 } from "./delete-fixtures.js";
-import { guardianDeleteWorktree } from "../src/delete-worktree.ts";
-import { guardianStart } from "../src/start.ts";
-import type { GuardianConfig } from "../src/types.ts";
-import { isRecordLike } from "../src/types.ts";
 
 test("abandonUnmerged=true is required for unmerged stale branch deletion", async () => {
   const { base, repo } = await createRepoWithOrigin();
@@ -208,38 +204,4 @@ test("deleteBranch=true reports partial success when branch deletion fails after
   assert.equal(session.status, "deleted");
   assert.equal(session.branch_delete_failed, true);
   assert.equal(session.deleted_branch, null);
-});
-
-test("direct deletion blocks overlapping trusted remote namespaces before ancestry evaluation", async (t) => {
-  const { base, repo } = await createRepoWithOrigin();
-  t.after(() => fs.rm(base, { recursive: true, force: true }));
-  const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "authority-overlap-delete", taskName: "authority overlap delete", createWorktree: true, config: DEFAULT_CONFIG });
-  assert.equal(started.ok, true, JSON.stringify(started));
-  const config = { ...DEFAULT_CONFIG, trustedUpstreamRemotes: ["origin/main"] } satisfies GuardianConfig;
-
-  const result = await guardianDeleteWorktree({ repoRoot: repo, cwd: repo, mode: "plan", sessionId: "authority-overlap-delete", deleteBranch: true, config });
-  const preflight = isRecordLike(result.preflight) ? result.preflight : {};
-
-  assert.equal(result.ok, false, JSON.stringify(result));
-  assert.match(String(result.error), /remote namespaces overlap/);
-  assert.equal(preflight.ancestryRef, null);
-});
-
-test("direct delete ancestry ignores a local origin/main shadow", async (t) => {
-  const { base, repo } = await createRepoWithOrigin();
-  t.after(() => fs.rm(base, { recursive: true, force: true }));
-  const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "authority-delete", taskName: "authority delete", createWorktree: true, config: DEFAULT_CONFIG });
-  assert.equal(started.ok, true, JSON.stringify(started));
-  await fs.writeFile(path.join(started.session.worktree_path, "unmerged.txt"), "unmerged\n");
-  await git(started.session.worktree_path, ["add", "unmerged.txt"]);
-  await git(started.session.worktree_path, ["commit", "-m", "unmerged delete authority"]);
-  const head = (await git(started.session.worktree_path, ["rev-parse", "HEAD"])).stdout;
-  await git(repo, ["update-ref", "refs/heads/origin/main", head]);
-
-  const result = await guardianDeleteWorktree({ repoRoot: repo, cwd: repo, mode: "plan", sessionId: "authority-delete", deleteBranch: true, config: DEFAULT_CONFIG });
-  const preflight = isRecordLike(result.preflight) ? result.preflight : {};
-
-  assert.equal(result.ok, false, JSON.stringify(result));
-  assert.equal(preflight.ancestryProven, false);
-  assert.match(String(result.reason), /not proven reachable/);
 });

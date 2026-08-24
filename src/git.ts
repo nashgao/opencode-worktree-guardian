@@ -157,10 +157,19 @@ export function buildPreservedRef(sessionId: string, branch: string, timestamp: 
   return `refs/opencode-guardian/preserved/${safeRefSegment(sessionId)}/${safeRefSegment(branch)}/${stamp}`;
 }
 
+async function nullObjectId(repoRoot: string): Promise<string> {
+  const objectFormat = (await runGit(repoRoot, ["rev-parse", "--show-object-format"])).stdout;
+  switch (objectFormat) {
+    case "sha1": return "0".repeat(40);
+    case "sha256": return "0".repeat(64);
+    default: throw new Error(`Unsupported Git object format: ${objectFormat}`);
+  }
+}
+
 export async function createRef(repoRoot: string, refName: string, commit = "HEAD") {
   validateGitRef(refName);
   validateGitRef(commit);
-  await runGit(repoRoot, ["update-ref", "--no-deref", refName, commit, "0000000000000000000000000000000000000000"]);
+  await runGit(repoRoot, ["update-ref", "--no-deref", refName, commit, await nullObjectId(repoRoot)]);
   return refName;
 }
 
@@ -168,7 +177,7 @@ export async function createSafetyRef(repoRoot: string, { sessionId, branch, com
   const ref = explicitRef ?? buildSafetyRef(String(sessionId ?? ""), String(branch ?? ""), timestamp);
   validateGitRef(ref);
   validateGitRef(commit);
-  await runGit(repoRoot, ["update-ref", "--no-deref", ref, commit, "0000000000000000000000000000000000000000"]);
+  await runGit(repoRoot, ["update-ref", "--no-deref", ref, commit, await nullObjectId(repoRoot)]);
   return ref;
 }
 

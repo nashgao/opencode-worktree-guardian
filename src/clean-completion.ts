@@ -1,11 +1,11 @@
 import path from "node:path";
 import type { CleanCompletionCandidateFacts, CleanCompletionDisposition } from "./clean-completion-disposition.ts";
 import { classifyCleanCompletionDisposition } from "./clean-completion-disposition.ts";
+import { proveCleanCompletionUniverse } from "./clean-completion-universe.ts";
 import { inspectDirtySessionDoneIntent } from "./done-intent.ts";
 import { getGuardianPaths } from "./guardian-paths.ts";
 import { protectedPathMatch, protectedPathsFromConfig } from "./protected-paths.ts";
 import { readProvenanceManifest } from "./provenance.ts";
-import { listIncompleteQuarantineOperations } from "./quarantine-journal.ts";
 import { buildQuarantinePathPreflight } from "./quarantine-path-preflight.ts";
 import { isProvenanceEnabled } from "./session-provenance.ts";
 import type { GuardianConfig, GuardianPaths, GuardianSession } from "./types.ts";
@@ -22,6 +22,10 @@ export type CleanCompletionFinalProof = {
   readonly status: CleanCompletionFinalProofStatus;
   readonly reason?: string;
   readonly candidates: readonly CleanCompletionCandidateResult[];
+  readonly inventoryDigest?: string;
+  readonly stateVersion?: number;
+  readonly worktreeCount?: number;
+  readonly quarantineItemCount?: number;
 };
 
 export type CleanCompletionPlan = {
@@ -80,7 +84,8 @@ async function buildProvenanceFacts(input: BuildFactsInput): Promise<CleanComple
     const manifest = await readProvenanceManifest({ repoRoot: input.repoRoot, worktreePath: input.worktreePath, sessionId, lineageId, reference });
     const baselineContainsPath = manifest.inventory.some((entry) => entry.relativePath === input.relativePath);
     return { enabled: true, captured: true, verified: true, lineageMatches: true, binding: "current", baselineComplete: true, baselineContainsPath };
-  } catch {
+  } catch (error) {
+    if (!(error instanceof Error)) throw error;
     return { enabled: true, captured: true, verified: false, lineageMatches: false, binding: "ambiguous", baselineComplete: false, baselineContainsPath: false };
   }
 }
@@ -138,19 +143,18 @@ export async function planCleanCompletion(input: { readonly repoRoot: string; re
   if (!isProvenanceEnabled(input.config)) return { applicable: false, finalProof: { status: "not-applicable", candidates: [] }, incompleteOperationCount: 0 };
   const worktreePath = typeof input.session.worktree_path === "string" ? input.session.worktree_path : input.cwd;
   const paths = await getGuardianPaths(input.repoRoot);
-
-  const incomplete = await listIncompleteQuarantineOperations({ paths });
-  if (incomplete.length > 0) {
-    return {
-      applicable: true,
-      finalProof: { status: "unstable", reason: `${incomplete.length} incomplete quarantine operation(s) require guardian_goal mode=apply to resume before new completion is stable`, candidates: [] },
-      incompleteOperationCount: incomplete.length,
-    };
-  }
+  const universe = await proveCleanCompletionUniverse({ repoRoot: input.repoRoot, config: input.config });
+  if (universe.status !== "stable") return { applicable: true, finalProof: { status: "unstable", reason: universe.reason, candidates: [] }, incompleteOperationCount: universe.incompleteOperationCount };
+  const proofEvidence = {
+    inventoryDigest: universe.inventoryDigest,
+    stateVersion: universe.stateVersion,
+    worktreeCount: universe.worktreeCount,
+    quarantineItemCount: universe.quarantineItemCount,
+  };
 
   const inspection = await inspectDirtySessionDoneIntent({ cwd: worktreePath, worktreePath });
   const candidates = inspection.ignoredFiles;
-  if (candidates.length === 0) return { applicable: true, finalProof: { status: "stable", candidates: [] }, incompleteOperationCount: 0 };
+  if (candidates.length === 0) return { applicable: true, finalProof: { status: "stable", candidates: [], ...proofEvidence }, incompleteOperationCount: 0 };
 
   const buildAllFacts = () => Promise.all(candidates.map((relativePath) => buildCandidateFacts({ repoRoot: input.repoRoot, worktreePath, config: input.config, session: input.session, paths, relativePath, commitPaths: inspection.commitPaths })));
   const firstPass = await buildAllFacts();
@@ -167,6 +171,6 @@ export async function planCleanCompletion(input: { readonly repoRoot: string; re
     results.push(candidateResult(relativePath, classifyCleanCompletionDisposition(factsB)));
   }
 
-  const finalProof: CleanCompletionFinalProof = unstableReason ? { status: "unstable", reason: unstableReason, candidates: results } : { status: "stable", candidates: results };
+  const finalProof: CleanCompletionFinalProof = unstableReason ? { status: "unstable", reason: unstableReason, candidates: results } : { status: "stable", candidates: results, ...proofEvidence };
   return { applicable: true, finalProof, incompleteOperationCount: 0 };
 }

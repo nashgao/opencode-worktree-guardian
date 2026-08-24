@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { CONFIG_PATH, DEFAULT_CONFIG, initializeConfig, loadConfig, normalizeConfig } from "../src/config.ts";
-import { scanWorkspaceHygiene } from "../src/hygiene.ts";
+import { guardianHygiene, scanWorkspaceHygiene } from "../src/hygiene.ts";
 import { readState, STATE_SCHEMA_VERSION } from "../src/state.ts";
 import { isRecordLike, type GuardianPaths } from "../src/types.ts";
 import { createRepo, createTempDir, git } from "./helpers.ts";
@@ -208,6 +208,33 @@ test("hygiene scanner collapses known residue names to cleanup roots", async () 
   assert.equal(findingPaths(result).includes("guardian-residue/.opencode/worktree-guardian.json"), false);
   assert.equal(findingPaths(result).includes("opencode-temp-abc123"), true);
   assert.equal(findingPaths(result).includes("opencode-temp-abc123/checkout"), false);
+});
+
+test("hygiene scanner recognizes nested Guardian residue without weakening protected or tracked-path guards", async () => {
+  const repo = await createRepo();
+  const nestedResidue = "test-fixtures/guardian-origin-nested/remote.git/objects/pack";
+  const trackedResidue = "tracked-parent/guardian-origin-tracked/remote.git/objects/pack";
+  await writeArtifact(repo, nestedResidue);
+  await writeArtifact(repo, ".beads/guardian-origin-protected/remote.git/objects/pack");
+  await writeArtifact(repo, "tracked-parent/guardian-origin-tracked/.keep");
+  await git(repo, ["add", "tracked-parent/guardian-origin-tracked/.keep"]);
+  await git(repo, ["commit", "-m", "track nested residue guard"]);
+  await writeArtifact(repo, trackedResidue);
+
+  const scan = await scanWorkspaceHygiene({ repoRoot: repo, config: DEFAULT_CONFIG });
+  const plan = await guardianHygiene({
+    repoRoot: repo,
+    config: DEFAULT_CONFIG,
+    mode: "plan",
+    cleanupPaths: ["tracked-parent/guardian-origin-tracked"],
+    allowCategories: ["suspicious"],
+  });
+
+  assert.equal(findingPaths(scan).includes("test-fixtures/guardian-origin-nested"), true);
+  assert.equal(findingPaths(scan).includes(".beads/guardian-origin-protected"), false);
+  assert.equal((scan.exclusions as Array<Record<string, unknown>>).some((entry) => entry.path === ".beads"), true);
+  assert.equal(plan.ok, false);
+  assert.equal((plan.blockers as Array<Record<string, unknown>>).some((blocker) => String(blocker.reason).includes("tracked files")), true);
 });
 
 test("command interception defaults to audit", () => {

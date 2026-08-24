@@ -53,7 +53,7 @@ test("hygiene cleanup blocks an explicit finding parent that contains a scan exc
   assert.equal(await fs.access(path.join(repo, parent)).then(() => true, () => false), true);
 });
 
-test("guardian_hygiene readable scan output shows reviewable candidates when scan is truncated", async () => {
+test("guardian_hygiene readable scan output shows the full reviewable inventory", async () => {
   const path = await import("node:path");
   const repo = await createRepo();
   const specialPath = "alpha 00; quote's.txt";
@@ -92,19 +92,19 @@ test("guardian_hygiene readable scan output shows reviewable candidates when sca
 
   const summary = metadataRecord(result.metadata, "summary");
   assert.equal(summary.reviewableCandidateCount, 15);
-  assert.equal(summary.reviewableShownCount, 12);
-  assert.equal(summary.reviewableOmittedCount, 3);
+  assert.equal(summary.reviewableShownCount, 15);
+  assert.equal(summary.reviewableOmittedCount, 0);
   assert.equal(summary.reviewableTotalFileCount, 19);
-  assert.equal(summary.reviewableTruncated, true);
-  assert.match(result.output, /reviewable candidates: 15 \| omitted: 3 \| files covered: 19/);
-  assert.match(result.output, /the 12 rows below are the largest of 15 by file count/);
-  assert.match(result.output, /untracked zzz-bulk \(5 files\):/);
+  assert.equal(summary.reviewableTotalBytes, 209);
+  assert.equal(summary.reviewableBytesTruncated, false);
+  assert.equal(summary.reviewableTruncated, false);
+  assert.match(result.output, /reviewable candidates: 15 \| files covered: 19 \| bytes covered: 209/);
+  assert.match(result.output, /untracked zzz-bulk \(5 files, 55 bytes\):/);
   assert.match(result.output, /reviewable entries require exact-path guardian_delete_paths planning if cleanup is intended/);
   assert.equal(result.output.includes(specialPath), true);
   assert.equal(result.output.includes(`guardian_delete_paths mode=plan paths=${JSON.stringify([specialPath])}`), true);
   assert.equal(result.output.includes("alpha-10.txt"), true);
-  assert.equal(result.output.includes("alpha-11.txt"), false);
-  assert.equal(result.output.indexOf("[WARN] reviewable candidates:") > result.output.indexOf("[WARN] top findings:"), true);
+  assert.equal(result.output.includes("alpha-11.txt"), true);
   assert.doesNotMatch(result.output, /mode=apply|rm -rf|git clean|confirmDelete|confirmToken|CONFIRM_DELETE|<token>|\[token\]/);
 });
 

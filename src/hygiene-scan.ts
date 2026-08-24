@@ -1,16 +1,21 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { expandWorktreeRoot, loadConfig } from "./config.ts";
+import { knownCleanableMatch } from "./hygiene-classification.ts";
+import type { HygieneCategory, HygieneSeverity } from "./hygiene-classification.ts";
 import { getRepoRoot, listWorktrees, runGitNullSeparated, tryGit } from "./git.ts";
 import { isEnoent, isSameOrInside, relativePath } from "./filesystem-boundaries.ts";
 import { listCandidatePaths } from "./hygiene-candidates.ts";
 import type { NullSeparatedRunner, ReviewableCandidateInput } from "./hygiene-candidates.ts";
 import { buildReviewableCandidates } from "./hygiene-reviewable.ts";
+import type { ReviewableCandidate } from "./hygiene-reviewable.ts";
+import type { FilesystemOnlyEmptyDirectory, HygieneScanResult, HygieneSummary } from "./hygiene-scan-result.ts";
+import { DEFAULT_EMPTY_DIRECTORY_MAX_DEPTH, DEFAULT_EMPTY_DIRECTORY_MAX_ENTRIES, scanEmptyDirectories } from "./hygiene-empty-directories.ts";
 import { HYGIENE_OPERATIONAL_SCOPE } from "./operational-scope.ts";
 import { protectedPathMatch, protectedPathsFromConfig } from "./protected-paths.ts";
 
-export type HygieneSeverity = "warn" | "fail";
-export type HygieneCategory = "known-cleanable" | "nested-git" | "suspicious";
+export type { HygieneCategory, HygieneSeverity } from "./hygiene-classification.ts";
+export type { FilesystemOnlyEmptyDirectory, HygieneScanResult, HygieneSummary } from "./hygiene-scan-result.ts";
 
 const PROTECTED_DIR_NAMES = new Set([
   "node_modules", "vendor", "target", "dist", "build", "coverage",
@@ -20,14 +25,14 @@ const PROTECTED_DIR_NAMES = new Set([
 
 const SUSPICIOUS_NAME_PATTERN = /(^|[-_.])(clone|clones|research|dump|dumps|scratch|sandbox|experiment|prototype|poc|checkout|repo)([-_.]|$)/i;
 const RESIDUE_ROOT_PATTERN = /^(guardian-[^/]+|guardian-origin-[^/]+|opencode-temp-[^/]+|omo-research-[^/]+|opencode-research-[^/]+|git-docs-research)$/;
-const DEFAULT_REVIEWABLE_CANDIDATE_LIMIT = 12;
 
 
 export function protectedDirReason(relative: string, protectedPaths: readonly string[] = []) {
   const parts = relative.split("/").filter(Boolean);
-  if (relative === ".git" || relative.startsWith(".git/")) {
+  if (parts[0] === ".git") {
     return relative === ".git/worktrees" || relative.startsWith(".git/worktrees/") ? "git worktree metadata" : "git metadata";
   }
+  if (parts.includes(".git")) return "nested Git metadata";
   const protectedPath = protectedPathMatch(relative, protectedPaths);
   if (protectedPath) return protectedPath.reason;
   const protectedPart = parts.find((part) => PROTECTED_DIR_NAMES.has(part));
@@ -41,23 +46,6 @@ function protectedDirExclusionPath(relative: string, protectedPaths: readonly st
   return parts.slice(0, parts.findIndex((part) => PROTECTED_DIR_NAMES.has(part)) + 1).join("/") || parts[0] || relative;
 }
 
-function knownCleanableMatch(relative: string) {
-  const parts = relative.split("/").filter(Boolean);
-  if (parts.length === 1 && /^[^/]+\.tsv$/i.test(parts[0] ?? "")) return { path: parts[0], reason: "generated TSV artifact" };
-  if (parts[0] === "data" && /^test-wal-[^/]+$/.test(parts[1] ?? "")) return { path: `data/${parts[1]}`, reason: "known test WAL scratch artifact" };
-  for (const [index, part] of parts.entries()) {
-    const artifactPath = parts.slice(0, index + 1).join("/");
-    if (part === "node-compile-cache") return { path: artifactPath, reason: "generated Node compile cache" };
-    if (/^node-coverage-[^/]+$/.test(part)) return { path: artifactPath, reason: "generated Node coverage cache" };
-    if (/^tsx-\d+$/.test(part)) return { path: artifactPath, reason: "generated tsx runtime cache" };
-    if (/^librarian-[^/]+$/.test(part)) return { path: artifactPath, reason: "known librarian scratch artifact" };
-    if (/^[^/]+-librarian$/.test(part)) return { path: artifactPath, reason: "known librarian scratch artifact" };
-    if (/^hyperf-[^/]+$/.test(part)) return { path: artifactPath, reason: "known Hyperf scratch artifact" };
-    if (part === "test-phpkafka") return { path: artifactPath, reason: "known phpkafka test scratch artifact" };
-    if (part === "test-hyperf-kafka") return { path: artifactPath, reason: "known Hyperf Kafka test scratch artifact" };
-  }
-  return null;
-}
 
 function suspiciousPath(relative: string) {
   const parts = relative.split("/").filter(Boolean); if (RESIDUE_ROOT_PATTERN.test(parts[0] ?? "")) return parts[0];
@@ -66,8 +54,11 @@ function suspiciousPath(relative: string) {
 }
 
 export function residueRoot(relative: string) {
-  const root = relative.split("/").filter(Boolean)[0] ?? "";
-  return RESIDUE_ROOT_PATTERN.test(root) ? root : null;
+  const parts = relative.split("/").filter(Boolean);
+  for (let index = parts.length - 1; index >= 0; index -= 1) {
+    if (RESIDUE_ROOT_PATTERN.test(parts[index] ?? "")) return parts.slice(0, index + 1).join("/");
+  }
+  return null;
 }
 
 function shellQuote(value: string) {
@@ -109,7 +100,29 @@ async function nestedGitMetadata(gitRoot: string) {
   return { dirty, manualReview: true, hardDeny: dirty, statusAvailable: status.ok };
 }
 
-export async function scanWorkspaceHygiene(input: Record<string, unknown> = {}) {
+function emptyDirectoryLimit(input: Record<string, unknown>, key: "emptyDirectoryMaxDepth" | "emptyDirectoryMaxEntries", fallback: number): number {
+  const value = input[key];
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : fallback;
+}
+
+function emptyDirectoryFinding(directory: string): FilesystemOnlyEmptyDirectory {
+  const known = knownCleanableMatch(directory);
+  return known
+    ? { path: directory, classification: "known-cleanable", reason: known.reason, source: "filesystem empty-directory scan" }
+    : { path: directory, classification: "reviewable", reason: "filesystem-only empty directory requires review", source: "filesystem empty-directory scan" };
+}
+
+function emptyDirectorySummary(scan: Awaited<ReturnType<typeof scanEmptyDirectories>>) {
+  return {
+    filesystemOnlyEmptyDirectoryCount: scan.directories.length,
+    filesystemOnlyEmptyDirectoryMaxDepth: scan.maximumDepth,
+    filesystemOnlyEmptyDirectoryMaxEntries: scan.maximumEntries,
+    filesystemOnlyEmptyDirectoryScanComplete: scan.complete,
+    filesystemOnlyEmptyDirectoryScannedEntryCount: scan.scannedEntryCount,
+  };
+}
+
+export async function scanWorkspaceHygiene(input: Record<string, unknown> = {}): Promise<HygieneScanResult> {
   const scannedAt = input.scannedAt instanceof Date ? input.scannedAt.toISOString() : new Date().toISOString();
   try {
     const cwd = typeof input.cwd === "string" ? input.cwd : typeof input.repoRoot === "string" ? input.repoRoot : process.cwd();
@@ -129,6 +142,20 @@ export async function scanWorkspaceHygiene(input: Record<string, unknown> = {}) 
       repoRoot,
       typeof input.runGitNullSeparated === "function" ? input.runGitNullSeparated as NullSeparatedRunner : runGitNullSeparated,
     );
+    const emptyDirectoryScan = await scanEmptyDirectories({
+      repoRoot,
+      maximumDepth: emptyDirectoryLimit(input, "emptyDirectoryMaxDepth", DEFAULT_EMPTY_DIRECTORY_MAX_DEPTH),
+      maximumEntries: emptyDirectoryLimit(input, "emptyDirectoryMaxEntries", DEFAULT_EMPTY_DIRECTORY_MAX_ENTRIES),
+      exclude: (relative) => {
+        const protectedReason = protectedDirReason(relative, protectedPaths);
+        if (protectedReason) return protectedReason;
+        const absolutePath = path.resolve(repoRoot, relative);
+        return protectedRoots.some((root) => isSameOrInside(absolutePath, root)) ? "configured or registered Git worktree path" : null;
+      },
+    });
+    for (const exclusion of emptyDirectoryScan.excluded) {
+      if (exclusion.reason !== "git metadata" && exclusion.reason !== "git worktree metadata" && exclusion.reason !== "nested Git metadata") exclusionsByPath.set(exclusion.path, exclusion);
+    }
     for (const candidate of candidates) {
       const absolutePath = path.resolve(repoRoot, candidate.path);
       const relative = relativePath(repoRoot, absolutePath);
@@ -179,22 +206,29 @@ export async function scanWorkspaceHygiene(input: Record<string, unknown> = {}) 
       }
       reviewableCandidateInputs.push({ path: relative, status: candidate.status });
     }
+    const filesystemOnlyEmptyDirectories = emptyDirectoryScan.directories.map(emptyDirectoryFinding);
+    for (const directory of filesystemOnlyEmptyDirectories) {
+      const key = `filesystem-only-empty-directory:${directory.path}`;
+      if (!seenFindings.has(key)) {
+        findings.push({ path: directory.path, category: "filesystem-only-empty-directory" satisfies HygieneCategory, classification: directory.classification, severity: "warn" satisfies HygieneSeverity, reason: directory.reason, source: directory.source });
+        seenFindings.add(key);
+      }
+    }
     findings.sort((left, right) => String(left.path).localeCompare(String(right.path)) || String(left.category).localeCompare(String(right.category)));
     const exclusions = [...exclusionsByPath.values()].sort((left, right) => String(left.path).localeCompare(String(right.path)));
     const blockedReviewableRoots = new Set([...findings.map((finding) => String(finding.path)), ...exclusions.map((exclusion) => String(exclusion.path))]);
-    const reviewableLimit = input.includeAllReviewableCandidates === true ? null : DEFAULT_REVIEWABLE_CANDIDATE_LIMIT;
-    const reviewableSummary = await buildReviewableCandidates(repoRoot, reviewableCandidateInputs, blockedReviewableRoots, reviewableLimit);
-    const summary = { candidateCount: candidates.length, findingCount: findings.length, exclusionCount: exclusions.length, reviewableCandidateCount: reviewableSummary.reviewableCandidateCount, reviewableShownCount: reviewableSummary.reviewableShownCount, reviewableOmittedCount: reviewableSummary.reviewableOmittedCount, reviewableTotalFileCount: reviewableSummary.reviewableTotalFileCount, reviewableTruncated: reviewableSummary.reviewableTruncated, bySeverity: { warn: 0, fail: 0 } as Record<string, number>, byCategory: { "known-cleanable": 0, "nested-git": 0, suspicious: 0 } as Record<string, number> };
+    const reviewableSummary = await buildReviewableCandidates(repoRoot, reviewableCandidateInputs, blockedReviewableRoots, null);
+    const summary: HygieneSummary = { candidateCount: candidates.length, findingCount: findings.length, exclusionCount: exclusions.length, ...emptyDirectorySummary(emptyDirectoryScan), reviewableCandidateCount: reviewableSummary.reviewableCandidateCount, reviewableShownCount: reviewableSummary.reviewableShownCount, reviewableOmittedCount: reviewableSummary.reviewableOmittedCount, reviewableTotalFileCount: reviewableSummary.reviewableTotalFileCount, reviewableTotalBytes: reviewableSummary.reviewableTotalBytes, reviewableBytesTruncated: reviewableSummary.reviewableBytesTruncated, reviewableTruncated: reviewableSummary.reviewableTruncated, bySeverity: { warn: 0, fail: 0 }, byCategory: { "known-cleanable": 0, "nested-git": 0, suspicious: 0, "filesystem-only-empty-directory": 0 } };
     for (const finding of findings) {
       const severity = String(finding.severity);
       const category = String(finding.category);
-      summary.bySeverity[severity] = (summary.bySeverity[severity] ?? 0) + 1;
-      summary.byCategory[category] = (summary.byCategory[category] ?? 0) + 1;
+      if (severity === "warn" || severity === "fail") summary.bySeverity[severity] += 1;
+      if (category === "known-cleanable" || category === "nested-git" || category === "suspicious" || category === "filesystem-only-empty-directory") summary.byCategory[category] += 1;
     }
     const nestedCommands = findings.filter((finding) => finding.category === "nested-git").map((finding) => `git -C ${shellQuote(String(finding.path))} status --short`);
-    return { ok: true, repoRoot, summary, findings, exclusions, reviewableCandidates: reviewableSummary.reviewableCandidates, operationalScope: HYGIENE_OPERATIONAL_SCOPE, scannedAt, suggestedCommands: ["guardian_hygiene", "guardian_status", "git status --short --ignored", ...nestedCommands] };
+    return { ok: true, repoRoot, summary, findings, exclusions, filesystemOnlyEmptyDirectories, reviewableCandidates: [...reviewableSummary.reviewableCandidates], operationalScope: { ...HYGIENE_OPERATIONAL_SCOPE, emptyDirectories: emptyDirectoryScan.complete ? "bounded-filesystem-empty-directory-scan" : "bounded-filesystem-empty-directory-scan-incomplete" }, scannedAt, suggestedCommands: ["guardian_hygiene", "guardian_status", "git status --short --ignored", ...nestedCommands] };
   } catch (error) {
     if (!(error instanceof Error)) throw error;
-    return { ok: false, status: "failed", reason: error.message, failureReason: error.message, summary: { scanFailed: true, candidateCount: 0, findingCount: 0, exclusionCount: 0, reviewableCandidateCount: 0, reviewableShownCount: 0, reviewableOmittedCount: 0, reviewableTotalFileCount: 0, reviewableTruncated: false, bySeverity: { warn: 0, fail: 0 }, byCategory: { "known-cleanable": 0, "nested-git": 0, suspicious: 0 } }, findings: [], exclusions: [], reviewableCandidates: [], operationalScope: HYGIENE_OPERATIONAL_SCOPE, scannedAt, suggestedCommands: ["guardian_hygiene", "guardian_status"] };
+    return { ok: false, status: "failed", reason: error.message, failureReason: error.message, summary: { scanFailed: true, candidateCount: 0, findingCount: 0, exclusionCount: 0, filesystemOnlyEmptyDirectoryCount: 0, filesystemOnlyEmptyDirectoryMaxDepth: 0, filesystemOnlyEmptyDirectoryMaxEntries: 0, filesystemOnlyEmptyDirectoryScanComplete: false, filesystemOnlyEmptyDirectoryScannedEntryCount: 0, reviewableCandidateCount: 0, reviewableShownCount: 0, reviewableOmittedCount: 0, reviewableTotalFileCount: 0, reviewableTotalBytes: 0, reviewableBytesTruncated: false, reviewableTruncated: false, bySeverity: { warn: 0, fail: 0 }, byCategory: { "known-cleanable": 0, "nested-git": 0, suspicious: 0, "filesystem-only-empty-directory": 0 } }, findings: [], exclusions: [], filesystemOnlyEmptyDirectories: [], reviewableCandidates: [], operationalScope: HYGIENE_OPERATIONAL_SCOPE, scannedAt, suggestedCommands: ["guardian_hygiene", "guardian_status"] };
   }
 }

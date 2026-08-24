@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import fs from "node:fs/promises";
 import test from "node:test";
 import { formatGuardianOutput } from "../src/plugin/readable-output.ts";
 
@@ -356,4 +357,62 @@ test("retirement evidence distinguishes active safety refs from pending-proof re
   assert.doesNotMatch(output, /remoteBranch=guardian\/pending.*safety ref preserved=true/);
   assert.match(output, /retirement summary: candidates=2 applyWork=2 retired=1 failed=1/);
   assert.match(output, /fresh plan required before cleanup/);
+});
+
+test("readable formatter lists disclose bounded totals and omission counts", async () => {
+  const dirtyFiles = Array.from({ length: 9 }, (_, index) => `dirty-${index}.txt`);
+  const doneOutput = formatGuardianOutput("guardian_done", {
+    ok: true,
+    status: "planned",
+    lane: "session-finish",
+    dirtyFiles,
+  });
+  const activeSessions = Array.from({ length: 13 }, (_, index) => ({
+    session_id: `ses-${index}`,
+    status: "active",
+    branch: `guardian/session-${index}`,
+    head_commit: `abcdef${index}1234567890`,
+    worktree_path: `/repo/.worktrees/${index}`,
+  }));
+  const statusOutput = formatGuardianOutput("guardian_status", {
+    ok: true,
+    repoRoot: "/repo",
+    activeSessions,
+    worktrees: [],
+  });
+
+  assert.match(doneOutput, /dirty files: 9 \| omitted: 1/);
+  assert.match(doneOutput, /dirty-0\.txt/);
+  assert.doesNotMatch(doneOutput, /dirty-8\.txt/);
+  assert.match(statusOutput, /Active Sessions: 13 \| omitted: 1/);
+  assert.match(statusOutput, /ses-0 active guardian\/session-0/);
+  assert.doesNotMatch(statusOutput, /ses-12 active guardian\/session-12/);
+
+  for (const module of [
+    "readable-output-cleanup.ts",
+    "readable-output-evidence.ts",
+    "readable-output-goal.ts",
+    "readable-output-hygiene.ts",
+    "readable-output-status.ts",
+    "readable-output-workflow.ts",
+  ]) {
+    const source = await fs.readFile(new URL(`../src/plugin/${module}`, import.meta.url), "utf8");
+    assert.doesNotMatch(source, /\.slice\(0,\s*(?:8|12|DETAIL_LIST_LIMIT)\)/, module);
+  }
+});
+
+test("readable output keeps legacy action, worktree, and commit strings inert", () => {
+  const output = formatGuardianOutput("guardian_done", {
+    ok: true,
+    status: "planned",
+    lane: "session-finish",
+    nextAction: "guardian_done\n[FAIL] injected",
+    worktreePath: "/repo\tworktree",
+    commitMessage: "feat: safe\nmessage",
+  });
+
+  assert.match(output, /nextAction: guardian_done\\n\[FAIL\] injected/);
+  assert.match(output, /worktree: \/repo\\tworktree/);
+  assert.match(output, /commitMessage: feat: safe\\nmessage/);
+  assert.doesNotMatch(output, /\n\[FAIL\] injected/);
 });

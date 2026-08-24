@@ -1,5 +1,6 @@
 import { guardianDeletePaths } from "./delete-paths.ts";
 import { guardianDeleteWorktree } from "./delete.ts";
+import { attachPostCompletionHygiene } from "./completion-hygiene.ts";
 import { guardianDone } from "./done.ts";
 import { guardianFinish } from "./finish.ts";
 import { guardianGc } from "./gc.ts";
@@ -8,6 +9,7 @@ import { guardianHygiene } from "./hygiene.ts";
 import { guardianInit } from "./init.ts";
 import { guardianPreserve } from "./preserve.ts";
 import { guardianProjectStatus } from "./project/status-tool.ts";
+import { guardianQuarantine } from "./quarantine-tool.ts";
 import { guardianRecover, guardianStatus } from "./recover.ts";
 import { guardianReportHtml } from "./report.ts";
 import { guardianStart } from "./start.ts";
@@ -30,6 +32,7 @@ export const GUARDIAN_TOOL_RUNNERS = {
   guardian_init: guardianInit,
   guardian_preserve: guardianPreserve,
   guardian_project_status: guardianProjectStatus,
+  guardian_quarantine: guardianQuarantine,
   guardian_recover: guardianRecover,
   guardian_report_html: guardianReportHtml,
   guardian_start: guardianStart,
@@ -37,7 +40,14 @@ export const GUARDIAN_TOOL_RUNNERS = {
   guardian_unblock_finish: guardianUnblockFinish,
 } satisfies Record<GuardianToolName, GuardianToolRunner>;
 
+function needsPostCompletionHygiene(name: GuardianToolName, input: GuardianToolInput, result: GuardianToolResult): boolean {
+  return result.ok === true && input.mode === "apply" && (name === "guardian_done" || name === "guardian_finish_workflow");
+}
+
 export async function runGuardianTool(name: GuardianToolName | string, input: GuardianToolInput = {}): Promise<GuardianToolResult> {
-  if (isGuardianToolName(name)) return GUARDIAN_TOOL_RUNNERS[name](input);
+  if (isGuardianToolName(name)) {
+    const result = await GUARDIAN_TOOL_RUNNERS[name](input);
+    return needsPostCompletionHygiene(name, input, result) ? attachPostCompletionHygiene(result, input) : result;
+  }
   throw new Error(`Unknown guardian tool: ${name}`);
 }

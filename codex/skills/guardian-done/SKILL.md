@@ -20,3 +20,5 @@ Terminal reattach and stale cleanup are plan-only handoffs. Treat an old termina
 For recovery, use `guardian_done` with `rescue: true` and `mode: "plan"` first. Rescue plan/default is artifact-read-only and token-bound; ignored-untracked residue blocks it. Only matching `mode: "apply"`, `confirm: true` materializes the create-only recovery evidence and cleans only the planned paths. Primary-main unconfirmed apply does not refresh; confirmed apply refreshes and checks drift before mutation. Done-all unconfirmed apply rejects before discovery, fetch, or token reconstruction; confirmed apply refreshes and validates the exact plan.
 
 Never replace `guardian_done` with raw push, merge, branch deletion, worktree deletion, stash mutation, force-push, or protected-branch bypass commands.
+
+After a successful apply, Guardian attaches `postCompletionHygiene`: a read-only full inventory of findings, reviewable paths, and filesystem-only empty directories. Show that section before reporting the task complete. If its status is `scan-failed` or `incomplete`, treat Guardian completion as partial; do not delete anything or declare full completion.

@@ -213,7 +213,7 @@ test("Codex guardian_done lands one dirty session from the primary cwd", async (
   assert.match(plan.stdout, /\[WARN\] guardian_done planned/);
   assert.match(plan.stdout, /lane: session-finish/);
   assert.match(plan.stdout, /selectedTarget: session session=ses_codex_done_anywhere/);
-  assert.match(plan.stdout, /dirty files:\n  - codex-session\.txt/);
+  assert.match(plan.stdout, /dirty files: 1\n  - codex-session\.txt/);
   assert.match(plan.stdout, /commitMessage: feat: codex session done/);
 
   await installFakeGh(t, { repo, branch, dynamicHead: true });

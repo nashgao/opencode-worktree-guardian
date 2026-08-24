@@ -75,9 +75,24 @@ function operationalScope(status: GuardianStatusResult) {
   return `<section class="card half" aria-labelledby="operational-scope-heading"><h2 id="operational-scope-heading">Operational Scope</h2><p class="section-note">Cached/read-only snapshot. Secondary remotes were not scanned.</p>${table("Cached operational scope", ["Fact", "Value"], rows.map(([label, value]) => `<tr><th scope="row">${escape(label)}</th><td data-label="${escape(label)}">${escape(value)}</td></tr>`).join(""), "operational-scope-table")}<h3>Unscanned Secondary Remotes</h3><ul>${remotes}</ul></section>`;
 }
 
+function cleanCompletionProof(status: GuardianStatusResult) {
+  if (!status.cleanCompletionProof) return "";
+  const proof = status.cleanCompletionProof;
+  const rows = [
+    ["Status", proof.status],
+    ...(proof.reason ? [["Reason", proof.reason]] : []),
+    ...(proof.provenAt ? [["Proven At", proof.provenAt]] : []),
+    ...(proof.inventoryDigest ? [["Inventory Digest", short(proof.inventoryDigest)]] : []),
+    ...(proof.stateVersion === undefined ? [] : [["State Version", proof.stateVersion]]),
+    ...(proof.worktreeCount === undefined ? [] : [["Worktrees", proof.worktreeCount]]),
+    ...(proof.quarantineItemCount === undefined ? [] : [["Recoverable Quarantine Items", proof.quarantineItemCount]]),
+  ];
+  return `<section class="card half" aria-labelledby="clean-completion-proof-heading"><h2 id="clean-completion-proof-heading">Clean Completion Proof</h2><p class="section-note">Evidence recorded by the opt-in stable two-pass completion contract.</p>${table("Clean completion proof", ["Fact", "Value"], rows.map(([label, value]) => `<tr><th scope="row">${escape(label)}</th><td data-label="${escape(label)}"><code>${escape(value)}</code></td></tr>`).join(""), "clean-completion-proof-table")}</section>`;
+}
+
 export function renderEvidence(status: GuardianStatusResult, recover: GuardianRecoverResult) {
   const repoRoot = canonicalPath(status.repoRoot); const unowned = status.worktreesWithoutState.filter((entry) => canonicalPath(entry.path) !== repoRoot); const recovery = candidates(recover);
-  return `<section class="grid" aria-label="Guardian evidence">${baseAuthority(status)}${operationalScope(status)}<section class="card" aria-labelledby="sessions-heading"><h2 id="sessions-heading">Sessions</h2>${sessions([...status.sessions])}</section><section class="card" aria-labelledby="worktrees-heading"><h2 id="worktrees-heading">Worktrees</h2>${worktrees([...status.worktrees])}</section><section class="card half" aria-labelledby="branch-coverage-heading"><h2 id="branch-coverage-heading">Branch Coverage</h2>${branches([...status.branchesWithoutWorktrees])}</section>${list("Orphaned Sessions", [...status.orphanedSessions], "risk", "No orphaned sessions detected.")}${list("Worktrees Without State", unowned, "risk", "No worktrees without Guardian state detected.")}${list("Dirty Files", [...status.dirtyFiles], "risk", "No dirty files detected.")}${list("Stashes", [...status.stashes], "risk", "No stashes detected.")}${hygiene(status.hygiene)}${list("Safety Refs", [...status.safetyRefs], "info", "No safety refs detected.")}${list("Recovery Candidates", recovery, "info", "No recovery candidates detected.")}<section class="card command-bank" aria-labelledby="recovery-guidance-heading"><h2 id="recovery-guidance-heading">Recovery Guidance</h2><p>Guardian-native planning guidance is available in Operations. Raw source values remain available only in Raw Data.</p></section></section>`;
+  return `<section class="grid" aria-label="Guardian evidence">${baseAuthority(status)}${operationalScope(status)}${cleanCompletionProof(status)}<section class="card" aria-labelledby="sessions-heading"><h2 id="sessions-heading">Sessions</h2>${sessions([...status.sessions])}</section><section class="card" aria-labelledby="worktrees-heading"><h2 id="worktrees-heading">Worktrees</h2>${worktrees([...status.worktrees])}</section><section class="card half" aria-labelledby="branch-coverage-heading"><h2 id="branch-coverage-heading">Branch Coverage</h2>${branches([...status.branchesWithoutWorktrees])}</section>${list("Orphaned Sessions", [...status.orphanedSessions], "risk", "No orphaned sessions detected.")}${list("Worktrees Without State", unowned, "risk", "No worktrees without Guardian state detected.")}${list("Dirty Files", [...status.dirtyFiles], "risk", "No dirty files detected.")}${list("Stashes", [...status.stashes], "risk", "No stashes detected.")}${hygiene(status.hygiene)}${list("Safety Refs", [...status.safetyRefs], "info", "No safety refs detected.")}${list("Recovery Candidates", recovery, "info", "No recovery candidates detected.")}<section class="card command-bank" aria-labelledby="recovery-guidance-heading"><h2 id="recovery-guidance-heading">Recovery Guidance</h2><p>Guardian-native planning guidance is available in Operations. Raw source values remain available only in Raw Data.</p></section></section>`;
 }
 
 export function renderVerdict(verdict: GuardianVerdict) {

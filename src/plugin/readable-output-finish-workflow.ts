@@ -1,6 +1,7 @@
 import { appendCleanupResults, appendFinalPostflightEvidence } from "./readable-output-evidence.ts";
 import { appendReservationRetirementEvidence } from "./readable-output-retirement.ts";
 import { appendBoundedList, appendStashInventoryWarning, arrayValue, recordValue, shortCommit, textValue } from "./readable-output-values.ts";
+import { appendPostCompletionHygiene } from "./readable-output-hygiene.ts";
 
 export function formatGuardianFinishWorkflowOutput(rawResult: unknown) {
   const result = recordValue(rawResult);
@@ -30,6 +31,7 @@ export function formatGuardianFinishWorkflowOutput(rawResult: unknown) {
   appendCleanupResults(lines, results);
   appendReservationRetirementEvidence(lines, result);
   appendFinalPostflightEvidence(lines, result.finalPostflight);
+  appendPostCompletionHygiene(lines, result);
   return lines.join("\n");
 }
 

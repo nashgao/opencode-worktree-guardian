@@ -121,8 +121,8 @@ test("guardian_status base distance routes ancestry through the read-only Git ru
   const calls = (await fs.readFile(logPath, "utf8")).trim().split("\n").filter(Boolean);
 
   assert.equal(distance.relation, "equal");
-  assert.ok(calls.some((call) => call.includes("config --includes --null --name-only --get-regexp ^remote\\..*\\.(url|pushurl)$")));
-  assert.ok(calls.some((call) => call.includes("for-each-ref --format=%(refname:short) refs/remotes/origin")));
+  assert.ok(calls.some((call) => call.includes("config --includes --null --name-only --get-regexp ^remote\\..*\\.(url|pushurl|fetch)$")));
+  assert.ok(calls.some((call) => call.includes("for-each-ref --format=%(refname) refs/remotes/origin")));
   assert.ok(calls.some((call) => call.includes("merge-base")));
   assert.ok(calls.every((call) => call.startsWith("1|0|")));
 });

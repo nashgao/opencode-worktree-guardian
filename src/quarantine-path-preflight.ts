@@ -3,7 +3,7 @@ import path from "node:path";
 import { collectCleanupFingerprint } from "./deletion-fingerprint.ts";
 import type { DeletionFingerprintEntry } from "./deletion-fingerprint.ts";
 import { isSameOrInside, lstatOrMissing, normalizeRelativePath, parseNullSeparated, relativePath } from "./filesystem-boundaries.ts";
-import { getCommonGitDir, getRepoRoot, listWorktrees, runGit } from "./git.ts";
+import { getCommonGitDir, getRepoRoot, listWorktrees, runGit, tryGit } from "./git.ts";
 import { canonicalPath } from "./plugin/canonical-path.ts";
 import { protectedPathMatch, protectedPathsFromConfig } from "./protected-paths.ts";
 import { getGuardianPaths, readState } from "./state.ts";
@@ -102,13 +102,18 @@ async function selectRestoreWorktree(input: QuarantinePathPreflightInput, repoRo
     blockers.push({ fatal: true, reason: input.targetWorktreePath ? "restore target is not a registered Git worktree" : "original worktree is absent; explicit target worktree selection is required" });
     return null;
   }
+  const targetGitDir = await tryGit(canonicalRequested, ["rev-parse", "--path-format=absolute", "--git-dir"]);
+  if (!targetGitDir.ok) {
+    blockers.push({ fatal: true, reason: "restore target Git identity could not be verified" });
+    return null;
+  }
+  if (await canonicalPath(targetGitDir.stdout) === commonGitDir) {
+    blockers.push({ fatal: true, reason: "restore target is the primary repository worktree" });
+    return null;
+  }
   const entry = matching[0];
   if (!entry || entry.detached || !entry.branch) {
     blockers.push({ fatal: true, reason: "restore target is detached" });
-    return null;
-  }
-  if (canonicalRequested === repoRoot) {
-    blockers.push({ fatal: true, reason: "restore target is the primary repository worktree" });
     return null;
   }
   if (input.config.protectedBranches.includes(entry.branch)) {

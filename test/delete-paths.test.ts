@@ -9,7 +9,7 @@ import { guardianHygiene, scanWorkspaceHygiene } from "../src/hygiene.ts";
 import { guardianStart } from "../src/start.ts";
 import type { GuardianConfig } from "../src/types.ts";
 import { isRecordLike } from "../src/types.ts";
-import { createRepo, createRepoWithOrigin, git } from "./helpers.ts";
+import { createRepo, createRepoWithOrigin, createTempDir, git } from "./helpers.ts";
 import { branchExists, createGuardianWorktree, deleteWorktree, guardianStatus, worktreePaths } from "./delete-fixtures.js";
 
 async function exists(candidate: string) {
@@ -219,6 +219,34 @@ test("guardian_delete_paths blocks repo control paths, dependencies, worktree ro
   assert.equal(reasons.some((reason) => /configured Guardian worktree root/.test(reason)), true);
   assert.equal(reasons.some((reason) => /protected node_modules/.test(reason)), true);
   assert.equal(reasons.some((reason) => /symlink delete roots/.test(reason)), true);
+});
+
+test("guardian_delete_paths blocks protected case aliases and symlink ancestors", { skip: process.platform === "win32" }, async (t) => {
+  // Given
+  const repo = await createRepo();
+  const outside = await createTempDir("guardian-delete-outside-");
+  t.after(() => fs.rm(repo, { recursive: true, force: true }));
+  t.after(() => fs.rm(outside, { recursive: true, force: true }));
+  await fs.mkdir(path.join(repo, ".beads"));
+  await fs.writeFile(path.join(repo, ".beads", "state.json"), "protected\n");
+  await fs.writeFile(path.join(outside, "preserved.txt"), "outside\n");
+  await fs.symlink(outside, path.join(repo, "escape"));
+  const supportsCaseAlias = await exists(path.join(repo, ".BEADS", "state.json"));
+
+  // When
+  const result = await guardianDeletePaths({
+    repoRoot: repo,
+    config: DEFAULT_CONFIG,
+    mode: "plan",
+    paths: [".BEADS", "escape/preserved.txt"],
+  });
+
+  // Then
+  assert.equal(result.status, "blocked");
+  if (supportsCaseAlias) assert.equal(hasFatalBlocker(result.blockers, ".beads", /protected path \.beads/), true);
+  else assert.equal(hasFatalBlocker(result.blockers, ".BEADS", /missing/), true);
+  assert.equal(hasFatalBlocker(result.blockers, "escape/preserved.txt", /symlink ancestor/), true);
+  assert.equal(await exists(path.join(outside, "preserved.txt")), true);
 });
 
 test("hygiene cleanup blocks an explicit approved parent containing an excluded category finding", async () => {

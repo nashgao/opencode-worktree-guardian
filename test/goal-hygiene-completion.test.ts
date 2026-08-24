@@ -257,7 +257,7 @@ test("guardian_goal readable output renders bounded sanitized hygiene postcondit
 
   assert.match(output, /hygiene mode=no-unprotected-findings phase=apply status=residual-unprotected complete=false/);
   assert.match(output, /hygiene residuals: 9 .*nested-git=8.*suspicious=1/);
-  assert.match(output, /hygiene residual findings omitted: 1/);
+  assert.match(output, /hygiene residual findings: 9 \| omitted: 1/);
   assert.match(output, /hygiene exclusions: 2 \| reviewable inventory: 3/);
   assert.doesNotMatch(output, /confirmToken|mode=apply confirm/);
 });

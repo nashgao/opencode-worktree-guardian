@@ -5,6 +5,7 @@ import { stdin as processStdin, stdout as processStdout } from "node:process";
 import { z } from "zod";
 import { formatGuardianOutput, READABLE_GUARDIAN_TOOLS } from "../../src/plugin/readable-output.ts";
 import { normalizeAllowedRemoteBranches } from "../../src/final-postflight.ts";
+import { quarantinePlanCacheKey } from "../../src/quarantine-tool.ts";
 import { getGuardianPaths } from "../../src/state.ts";
 import { recordLastSafeState, runGuardianTool } from "../../src/tools.ts";
 import { commandFromToolInput, parseHookPayload, runPreToolUse } from "./command-interception.ts";
@@ -45,11 +46,13 @@ function sortedStringArgs(value: unknown): readonly string[] {
     : [];
 }
 
-function planCacheKey(name: string, toolArgs: Record<string, unknown>): string {
+async function planCacheKey(name: string, toolArgs: Record<string, unknown>, plannedConfirmToken?: string): Promise<string | null> {
+  if (name === "guardian_quarantine") return await quarantinePlanCacheKey(toolArgs, plannedConfirmToken);
   return JSON.stringify({
     name, paths: sortedStringArgs(toolArgs["paths"]), cleanupPaths: sortedStringArgs(toolArgs["cleanupPaths"]), allowCategories: sortedStringArgs(toolArgs["allowCategories"]), allowedRemoteBranches: normalizeAllowedRemoteBranches(toolArgs["allowedRemoteBranches"]),
     sessionId: typeof toolArgs["sessionId"] === "string" ? toolArgs["sessionId"] : "", repoRoot: typeof toolArgs["repoRoot"] === "string" ? toolArgs["repoRoot"] : "", cwd: typeof toolArgs["cwd"] === "string" ? toolArgs["cwd"] : "",
     commitMessage: typeof toolArgs["commitMessage"] === "string" ? toolArgs["commitMessage"] : "", finishMode: typeof toolArgs["finishMode"] === "string" ? toolArgs["finishMode"] : "", action: typeof toolArgs["action"] === "string" ? toolArgs["action"] : "",
+    quarantineId: typeof toolArgs["quarantineId"] === "string" ? toolArgs["quarantineId"] : "", targetWorktreePath: typeof toolArgs["targetWorktreePath"] === "string" ? toolArgs["targetWorktreePath"] : "",
     allowTracked: toolArgs["allowTracked"] === true, allowRecursive: toolArgs["allowRecursive"] === true, allowDirtyNestedGit: toolArgs["allowDirtyNestedGit"] === true,
     rescue: toolArgs["rescue"] === true, primary: toolArgs["primary"] === true,
     deleteBranch: toolArgs["deleteBranch"] === true, abandonUnmerged: toolArgs["abandonUnmerged"] === true, allowIgnoredFiles: toolArgs["allowIgnoredFiles"] === true,
@@ -60,6 +63,7 @@ function planCacheKey(name: string, toolArgs: Record<string, unknown>): string {
 function shouldUseCachedPlanToken(name: string, toolArgs: Record<string, unknown>): boolean {
   if (toolArgs["mode"] !== "apply") return false;
   if (name === "guardian_delete_paths" || name === "guardian_hygiene") return toolArgs["confirmDelete"] === true;
+  if (name === "guardian_quarantine") return toolArgs["action"] === "restore" ? toolArgs["confirm"] === true : toolArgs["action"] === "purge" && toolArgs["confirmDelete"] === true;
   return (name === "guardian_done" || name === "guardian_finish_workflow" || name === "guardian_goal") && toolArgs["confirm"] === true;
 }
 
@@ -93,10 +97,12 @@ async function writePlanCache(repoRoot: string, cache: Map<string, string>): Pro
   await fs.rename(tmpPath, cachePath);
 }
 
-function maybeInjectPlanConfirmToken(name: string, toolArgs: Record<string, unknown>, cache: Map<string, string>): void {
+async function maybeInjectPlanConfirmToken(name: string, toolArgs: Record<string, unknown>, cache: Map<string, string>): Promise<void> {
   if (!shouldUseCachedPlanToken(name, toolArgs)) return;
   if (typeof toolArgs["confirmToken"] === "string" && !isPlaceholderConfirmToken(toolArgs["confirmToken"])) return;
-  const cachedToken = cache.get(planCacheKey(name, toolArgs));
+  const key = await planCacheKey(name, toolArgs);
+  if (key === null) return;
+  const cachedToken = cache.get(key);
   if (cachedToken !== undefined) toolArgs["confirmToken"] = cachedToken;
 }
 
@@ -104,10 +110,12 @@ function isCacheablePlanStatus(status: unknown): boolean {
   return status === "planned" || status === "planned-partial" || status === "rescue-planned";
 }
 
-function rememberPlanConfirmToken(name: string, toolArgs: Record<string, unknown>, result: Record<string, unknown>, cache: Map<string, string>): boolean {
+async function rememberPlanConfirmToken(name: string, toolArgs: Record<string, unknown>, result: Record<string, unknown>, cache: Map<string, string>): Promise<boolean> {
   if (toolArgs["mode"] !== "plan" || result["ok"] !== true || !isCacheablePlanStatus(result["status"])) return false;
-  if (!["guardian_delete_paths", "guardian_done", "guardian_finish_workflow", "guardian_goal", "guardian_hygiene"].includes(name) || typeof result["confirmToken"] !== "string") return false;
-  cache.set(planCacheKey(name, toolArgs), result["confirmToken"]);
+  if (!["guardian_delete_paths", "guardian_done", "guardian_finish_workflow", "guardian_goal", "guardian_hygiene", "guardian_quarantine"].includes(name) || typeof result["confirmToken"] !== "string") return false;
+  const key = await planCacheKey(name, toolArgs, result["confirmToken"]);
+  if (key === null) return false;
+  cache.set(key, result["confirmToken"]);
   return true;
 }
 
@@ -143,6 +151,9 @@ function confirmationHint(name: string, result: Record<string, unknown>): string
   if (name === "guardian_done" || name === "guardian_finish_workflow" || name === "guardian_goal") {
     return "After explicit user confirmation, rerun with mode=apply and confirm=true; the Codex adapter reuses the matching cached plan token.";
   }
+  if (name === "guardian_quarantine") return result["action"] === "restore"
+    ? "After explicit user confirmation, rerun with mode=apply and confirm=true; the Codex adapter reuses the matching cached plan token."
+    : "After explicit user confirmation, rerun with mode=apply and confirmDelete=true; the Codex adapter reuses the matching cached plan token.";
   if (name === "guardian_delete_worktree") {
     return `After explicit user confirmation, rerun with mode=apply and confirmToken=${result["confirmToken"]}; delete-worktree tokens are not auto-injected.`;
   }
@@ -178,9 +189,9 @@ async function runTool(name: string | undefined, rawArgs: string | undefined): P
   if (args["cwd"] === undefined) args["cwd"] = process.cwd();
   const repoRoot = typeof args["repoRoot"] === "string" ? args["repoRoot"] : process.cwd();
   const cache = await readPlanCache(repoRoot);
-  maybeInjectPlanConfirmToken(name, args, cache);
+  await maybeInjectPlanConfirmToken(name, args, cache);
   const result = await runGuardianTool(name, args);
-  if (rememberPlanConfirmToken(name, args, result, cache)) await writePlanCache(repoRoot, cache);
+  if (await rememberPlanConfirmToken(name, args, result, cache)) await writePlanCache(repoRoot, cache);
   return formatToolOutput(name, result);
 }
 

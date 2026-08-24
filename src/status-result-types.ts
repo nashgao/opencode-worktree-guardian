@@ -2,7 +2,8 @@ import type { ActiveSessionBaseDistance, CachedBaseAuthority } from "./status-ba
 import type { GitBranchEntry, GitRecoveryCandidates, GitRefEntry, GitStashEntry } from "./git.ts";
 import type { TerminalSessionStatus } from "./lifecycle.ts";
 import type { OperationalScope } from "./operational-scope.ts";
-import type { GuardianConfig, GuardianSession, GuardianToolResult, WorktreeEntry } from "./types.ts";
+import type { CleanCompletionProofEvidence, GuardianConfig, GuardianSession, GuardianToolResult, WorktreeEntry } from "./types.ts";
+import type { QuarantineItemState, QuarantineMoveOperationPhase, QuarantinePurgeOperationPhase } from "./quarantine-types.ts";
 
 export type WorktreeAnnotationMetadata = {
   readonly guardianRoot: string;
@@ -21,6 +22,22 @@ export type PoisonedSession = GuardianSession & {
   readonly severity: "fail";
   readonly reason: string;
   readonly suggestedCommand: string;
+};
+
+export type QuarantineRecoveryItem = {
+  readonly quarantineId: string;
+  readonly sessionId: string;
+  readonly originalRelativePath: string;
+  readonly artifactPath: string;
+  readonly state: QuarantineItemState;
+};
+
+export type IncompleteQuarantineOperation = {
+  readonly operationId: string;
+  readonly quarantineId: string;
+  readonly action: "quarantine" | "restore" | "purge";
+  readonly phase: QuarantineMoveOperationPhase | QuarantinePurgeOperationPhase;
+  readonly originalRelativePath: string;
 };
 
 export type TerminalRecoveryAction = {
@@ -65,6 +82,7 @@ export type GuardianStatusResult = Omit<GuardianToolResult, "activeSessions" | "
   readonly configLoaded: boolean;
   readonly configSource: "defaults" | "file" | "input";
   readonly stateVersion: number | undefined;
+  readonly cleanCompletionProof?: CleanCompletionProofEvidence;
   readonly sessions: readonly GuardianSession[];
   readonly activeSessions: readonly GuardianSession[];
   readonly baseAuthority: CachedBaseAuthority;
@@ -85,6 +103,9 @@ export type GuardianStatusResult = Omit<GuardianToolResult, "activeSessions" | "
   readonly stashes: readonly GitStashEntry[];
   readonly dirtyFiles: readonly string[];
   readonly hygiene: HygieneStatus;
+  readonly quarantineItems: readonly QuarantineRecoveryItem[];
+  readonly incompleteQuarantineOperations: readonly IncompleteQuarantineOperation[];
+  readonly quarantineRecoveryActions: readonly string[];
   readonly suggestedCommands: readonly string[];
 };
 

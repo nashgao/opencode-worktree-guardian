@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { revalidateCleanCompletionProof } from "./clean-completion-proof.ts";
 import { expandWorktreeRoot, loadConfig, normalizeConfig } from "./config.ts";
 import { realPathOrResolved, samePathOnDisk } from "./done-shared.ts";
 import { getCommonGitDir, getDirtyFiles, getRepoRoot, listBranches, listRecoveryCandidates, listRefs, listStashes, listWorktrees } from "./git.ts";
@@ -8,10 +9,21 @@ import { isActiveSession, isTerminalSession } from "./lifecycle.ts";
 import { collectActiveSessionBaseDistances } from "./status-base-distance.ts";
 import { terminalRecoveryPlans } from "./status-terminal-recovery.ts";
 import { getGuardianPaths, readState } from "./state.ts";
+import { listIncompleteQuarantineOperations, listQuarantineItems } from "./quarantine-journal.ts";
 import { cachedRemoteBranchCountReadOnly, listRemoteNamesReadOnly, operationalScope } from "./operational-scope.ts";
 import type { GuardianConfig, GuardianSession, GuardianToolInput, LoadedGuardianConfig, WorktreeEntry } from "./types.ts";
 import { errorMessage, isRecordLike } from "./types.ts";
 import type { AnnotatedWorktreeEntry, GuardianRecoverResult, GuardianStatusResult, PoisonedSession, WorktreeAnnotationMetadata } from "./status-result-types.ts";
+
+function quarantineActions(items: Awaited<ReturnType<typeof listQuarantineItems>>, incompleteOperations: Awaited<ReturnType<typeof listIncompleteQuarantineOperations>>): readonly string[] {
+  return [
+    ...incompleteOperations.map(() => "guardian_goal mode=apply confirm=true"),
+    ...items.flatMap((item) => item.record.state === "available" ? [
+      `guardian_quarantine mode=plan action=restore quarantineId=${item.record.quarantineId}`,
+      `guardian_quarantine mode=plan action=purge quarantineId=${item.record.quarantineId}`,
+    ] : []),
+  ];
+}
 
 async function pathExists(candidate: string) {
   try {
@@ -110,7 +122,12 @@ export async function guardianStatus(input: GuardianToolInput = {}): Promise<Gua
   const statusConfig = await configFromInput(input, repoRoot);
   const config = statusConfig.config;
   const paths = await getGuardianPaths(repoRoot);
+  const [quarantineItems, incompleteQuarantineOperations] = await Promise.all([
+    listQuarantineItems({ paths }),
+    listIncompleteQuarantineOperations({ paths }),
+  ]);
   const state = await readState(paths, { repoRoot, config });
+  const cleanCompletionProof = await revalidateCleanCompletionProof({ repoRoot, config, value: state.clean_completion_proof, stateVersion: state.state_version });
   const worktrees = await listWorktrees(repoRoot);
   const canonicalRepoRoot = path.resolve(await realPathOrResolved(repoRoot));
   const worktreeEntries = await Promise.all(worktrees.map(async (entry) => ({
@@ -168,6 +185,7 @@ export async function guardianStatus(input: GuardianToolInput = {}): Promise<Gua
     configLoaded: statusConfig.loaded,
     configSource: statusConfig.source,
     stateVersion: state.state_version,
+    ...(cleanCompletionProof ? { cleanCompletionProof } : {}),
     sessions,
     activeSessions,
     ...baseDistance,
@@ -187,7 +205,22 @@ export async function guardianStatus(input: GuardianToolInput = {}): Promise<Gua
     stashes: await listStashes(repoRoot),
     dirtyFiles: await getDirtyFiles(repoRoot),
     hygiene: await scanWorkspaceHygiene({ repoRoot, cwd: input.cwd, config }),
-    suggestedCommands: ["guardian_status", "guardian_recover"],
+    quarantineItems: quarantineItems.map((item) => ({
+      quarantineId: item.record.quarantineId,
+      sessionId: item.record.sessionId,
+      originalRelativePath: item.record.originalRelativePath,
+      artifactPath: item.record.artifactPath,
+      state: item.record.state,
+    })),
+    incompleteQuarantineOperations: incompleteQuarantineOperations.map((operation) => ({
+      operationId: operation.record.operationId,
+      quarantineId: operation.record.quarantineId,
+      action: operation.record.action,
+      phase: operation.record.phase,
+      originalRelativePath: operation.record.originalRelativePath,
+    })),
+    quarantineRecoveryActions: quarantineActions(quarantineItems, incompleteQuarantineOperations),
+    suggestedCommands: ["guardian_status", "guardian_recover", ...quarantineActions(quarantineItems, incompleteQuarantineOperations)],
   };
 }
 

@@ -140,3 +140,35 @@ test("the zero-signal headline scopes itself and never asserts repo cleanliness"
   assert.doesNotMatch(verdict.headline, /clean, no risks detected/);
   assert.match(verdict.headline, /not a repo-cleanliness claim/);
 });
+
+test("a current complete proof is the only status evidence that claims project cleanliness", () => {
+  const verdict = computeGuardianVerdict({
+    ok: true,
+    repoRoot: "/repo",
+    activeSessions: [],
+    cleanCompletionProof: { status: "proven", provenAt: "2026-08-23T00:00:00.000Z" },
+  });
+  assert.equal(verdict.tone, "good");
+  assert.match(verdict.headline, /Project clean/);
+});
+
+test("stale and invalid clean-completion proofs never retain a clean claim", () => {
+  for (const status of ["stale", "invalid"] as const) {
+    const verdict = computeGuardianVerdict({ ok: true, repoRoot: "/repo", activeSessions: [], cleanCompletionProof: { status } });
+    assert.notEqual(verdict.tone, "good");
+    assert.doesNotMatch(verdict.headline, /Project clean/);
+  }
+});
+
+test("an incomplete quarantine operation blocks a clean verdict", () => {
+  const verdict = computeGuardianVerdict({
+    ok: true,
+    repoRoot: "/repo",
+    activeSessions: [],
+    cleanCompletionProof: { status: "proven", provenAt: "2026-08-23T00:00:00.000Z" },
+    incompleteQuarantineOperations: [{ operationId: "op-1", phase: "renamed" }],
+  });
+  assert.equal(verdict.tone, "bad");
+  assert.match(verdict.headline, /incomplete quarantine operation/);
+  assert.doesNotMatch(verdict.headline, /Project clean/);
+});

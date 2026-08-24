@@ -2,7 +2,7 @@ import path from "node:path";
 import { expandWorktreeRoot, loadConfig } from "./config.ts";
 import { collectDeleteFingerprint } from "./deletion-fingerprint.ts";
 import { getRepoRoot, listWorktrees, runGit, tryGit } from "./git.ts";
-import { isEnoent, isSameOrInside, lstatOrMissing, normalizeRelativePath, parseNullSeparated, recordValue, relativePath, stringArray, uniqueSorted } from "./filesystem-boundaries.ts";
+import { assertNoSymlinkAncestors, canonicalPathOrResolved, isEnoent, isSameOrInside, lstatOrMissing, normalizeRelativePath, parseNullSeparated, recordValue, relativePath, stringArray, uniqueSorted } from "./filesystem-boundaries.ts";
 import { protectedPathMatch, protectedPathsFromConfig } from "./protected-paths.ts";
 import { getGuardianPaths, readState } from "./state.ts";
 
@@ -101,7 +101,9 @@ export function deleteSummary(targets: DeletePathTarget[], blockers: DeletePathB
 
 export async function buildDeletePathsPreflight(input: Record<string, unknown>) {
   const cwd = typeof input.cwd === "string" ? input.cwd : typeof input.repoRoot === "string" ? input.repoRoot : process.cwd();
-  const repoRoot = path.resolve(typeof input.repoRoot === "string" ? input.repoRoot : await getRepoRoot(cwd));
+  const requestedRepoRoot = typeof input.repoRoot === "string" ? input.repoRoot : await getRepoRoot(cwd);
+  await assertNoSymlinkAncestors(requestedRepoRoot, "repository root");
+  const repoRoot = await canonicalPathOrResolved(requestedRepoRoot);
   const loadedConfig = input.config && typeof input.config === "object" ? { config: input.config as Record<string, unknown> } : await loadConfig(repoRoot);
   const config = loadedConfig.config;
   const protectedPaths = protectedPathsFromConfig(config);
@@ -114,8 +116,23 @@ export async function buildDeletePathsPreflight(input: Record<string, unknown>) 
   const targets: DeletePathTarget[] = [];
   const seenTargets = new Set<string>();
   for (const requestedPath of paths) {
-    const { absolutePath, relative } = resolveDeletePath(repoRoot, requestedPath);
+    const resolved = resolveDeletePath(repoRoot, requestedPath);
+    let absolutePath = resolved.absolutePath;
+    let relative = resolved.relative;
     const pathBlockers: DeletePathBlocker[] = [];
+    const requestedStat = await lstatOrMissing(absolutePath);
+    if (requestedStat?.isSymbolicLink()) {
+      pathBlockers.push({ path: relative, reason: "symlink delete roots are not allowed", fatal: true });
+    } else {
+      try {
+        await assertNoSymlinkAncestors(path.dirname(absolutePath), "delete path");
+        absolutePath = await canonicalPathOrResolved(absolutePath);
+        relative = relativePath(repoRoot, absolutePath);
+      } catch (error) {
+        if (!(error instanceof Error)) throw error;
+        pathBlockers.push({ path: relative, reason: error.message, fatal: true });
+      }
+    }
     if (!isSameOrInside(absolutePath, repoRoot)) pathBlockers.push({ path: requestedPath, reason: "delete path is outside the repository root", fatal: true });
     if (relative === ".") pathBlockers.push({ path: relative, reason: "repository root cannot be deleted by guardian_delete_paths", fatal: true });
     const protectedReason = protectedPathReason(relative, protectedPaths);
