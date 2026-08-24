@@ -20,6 +20,8 @@ const MAX_MEASURED_ENTRIES_PER_CANDIDATE = 10_000;
 const MAX_MEASURED_ENTRIES_TOTAL = 100_000;
 
 type ByteMeasurement = { readonly bytes: number; readonly truncated: boolean; readonly visited: number };
+type CollapsedReviewableCandidate = { readonly path: string; readonly status: HygieneCandidateStatus; readonly fileCount: number };
+type MeasuredReviewableCandidate = CollapsedReviewableCandidate & { readonly bytes: number; readonly bytesTruncated: boolean };
 
 async function measureBytes(candidate: string, maxEntries: number): Promise<ByteMeasurement> {
   let bytes = 0;
@@ -40,6 +42,27 @@ async function measureBytes(candidate: string, maxEntries: number): Promise<Byte
   }
   await visit(candidate);
   return { bytes, truncated, visited };
+}
+
+export async function measureReviewableCandidates(
+  candidates: readonly CollapsedReviewableCandidate[],
+  measure: (candidatePath: string, maxEntries: number) => Promise<ByteMeasurement>,
+  limits: { readonly perCandidate: number; readonly total: number },
+): Promise<readonly MeasuredReviewableCandidate[]> {
+  let remainingEntries = limits.total;
+  const measured: MeasuredReviewableCandidate[] = [];
+  const ordered = [...candidates].sort((left, right) => compareCodeUnits(left.path, right.path));
+  for (const candidate of ordered) {
+    const measurement = await measure(candidate.path, Math.min(limits.perCandidate, remainingEntries));
+    remainingEntries = Math.max(0, remainingEntries - measurement.visited);
+    measured.push({ ...candidate, bytes: measurement.bytes, bytesTruncated: measurement.truncated });
+  }
+  measured.sort((left, right) =>
+    Number(right.bytesTruncated) - Number(left.bytesTruncated)
+    || (left.bytesTruncated ? 0 : right.bytes - left.bytes)
+    || right.fileCount - left.fileCount
+    || compareCodeUnits(left.path, right.path));
+  return measured;
 }
 
 async function pathKind(candidate: string): Promise<"directory" | "file" | "missing"> {
@@ -93,18 +116,11 @@ export async function buildReviewableCandidates(repoRoot: string, candidates: re
   const collapsed = [...collapsedByPath.entries()]
     .map(([candidatePath, status]) => ({ path: candidatePath, status, fileCount: fileCountByPath.get(candidatePath) ?? 1 }))
     ;
-  let remainingEntries = MAX_MEASURED_ENTRIES_TOTAL;
-  const measured = [] as Array<{ readonly path: string; readonly status: HygieneCandidateStatus; readonly fileCount: number; readonly bytes: number; readonly bytesTruncated: boolean }>;
-  for (const candidate of collapsed) {
-    const measurement = await measureBytes(path.resolve(repoRoot, candidate.path), Math.min(MAX_MEASURED_ENTRIES_PER_CANDIDATE, remainingEntries));
-    remainingEntries = Math.max(0, remainingEntries - measurement.visited);
-    measured.push({ ...candidate, bytes: measurement.bytes, bytesTruncated: measurement.truncated });
-  }
-  measured.sort((left, right) =>
-    Number(right.bytesTruncated) - Number(left.bytesTruncated)
-    || (left.bytesTruncated ? 0 : right.bytes - left.bytes)
-    || right.fileCount - left.fileCount
-    || compareCodeUnits(left.path, right.path));
+  const measured = await measureReviewableCandidates(
+    collapsed,
+    (candidatePath, maxEntries) => measureBytes(path.resolve(repoRoot, candidatePath), maxEntries),
+    { perCandidate: MAX_MEASURED_ENTRIES_PER_CANDIDATE, total: MAX_MEASURED_ENTRIES_TOTAL },
+  );
   const visible = visibleLimit === null ? measured : measured.slice(0, visibleLimit);
   const reviewableCandidates: ReviewableCandidate[] = [];
   for (const candidate of visible) {

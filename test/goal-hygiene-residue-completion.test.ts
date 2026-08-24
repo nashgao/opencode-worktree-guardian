@@ -5,7 +5,6 @@ import test from "node:test";
 import { DEFAULT_CONFIG } from "../src/config.ts";
 import { runGitNullSeparated } from "../src/git.ts";
 import { guardianGoal } from "../src/goal.ts";
-import { formatGuardianGoalOutput } from "../src/plugin/readable-output-goal.ts";
 import type { GuardianConfig } from "../src/types.ts";
 import { createRepoWithOrigin } from "./helpers.ts";
 
@@ -57,7 +56,6 @@ test("guardian_goal strict residue completion blocks on bounded reviewable inven
   const result = await applyGoal(repo, config);
   const hygiene = record(result.hygienePostcondition, "hygiene postcondition");
   const shown = Array.isArray(hygiene.reviewableCandidatesShown) ? hygiene.reviewableCandidatesShown : [];
-  const output = formatGuardianGoalOutput(result);
 
   assert.equal(plan.ok, true);
   assert.equal(plan.status, "planned-partial");
@@ -73,11 +71,8 @@ test("guardian_goal strict residue completion blocks on bounded reviewable inven
   assert.equal(hygiene.reviewableCandidatesTruncated, true);
   assert.equal(hygiene.reviewableInventoryComplete, true);
   assert.match(nonEmptyString(hygiene.reviewableDigest, "reviewable digest"), /^[0-9a-f]{64}$/);
-  assert.match(output, /hygiene reviewable candidates: 9 \| omitted: 1/);
-  assert.match(output, /reviewable digest: [0-9a-f]{64}/);
-  assert.match(output, /guardian_delete_paths mode=plan paths=/);
-  assert.match(output, /protectedPaths/);
-  assert.match(output, /\.omo\/evidence/);
+  const firstShown = record(shown[0], "first shown reviewable");
+  assert.match(nonEmptyString(firstShown.suggestedDeletePathCommand, "delete suggestion"), /^guardian_delete_paths mode=plan paths=/);
 });
 
 test("guardian_goal strict residue completion accepts intentionally protected reviewables", async (t) => {

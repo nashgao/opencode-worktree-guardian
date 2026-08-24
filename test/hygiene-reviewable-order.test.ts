@@ -1,31 +1,40 @@
 import assert from "node:assert/strict";
-import fs from "node:fs/promises";
-import path from "node:path";
 import test from "node:test";
-import { buildReviewableCandidates } from "../src/hygiene-reviewable.ts";
-import { createTempDir } from "./helpers.ts";
+import { measureReviewableCandidates } from "../src/hygiene-reviewable.ts";
 
-test("reviewable ordering stays deterministic across mixed complete and truncated measurements", async (t) => {
-  const repo = await createTempDir("guardian-reviewable-order-");
-  t.after(() => fs.rm(repo, { recursive: true, force: true }));
-  await fs.writeFile(path.join(repo, "a"), "");
-  await fs.writeFile(path.join(repo, "c"), "x");
-  const truncated = path.join(repo, "b");
-  await fs.mkdir(truncated);
-  for (let offset = 0; offset < 10_000; offset += 250) {
-    await Promise.all(Array.from({ length: 250 }, (_, index) => fs.writeFile(path.join(truncated, `${offset + index}.txt`), "x")));
-  }
+type Candidate = {
+  readonly path: string;
+  readonly status: "ignored" | "untracked";
+  readonly fileCount: number;
+};
 
-  const candidates = [
-    { path: "a", status: "untracked" as const },
-    { path: "b/0.txt", status: "untracked" as const },
-    { path: "c", status: "untracked" as const },
-  ];
-  const forward = await buildReviewableCandidates(repo, candidates, new Set(), null);
-  const reversed = await buildReviewableCandidates(repo, [...candidates].reverse(), new Set(), null);
-  const paths = (result: typeof forward) => result.reviewableCandidates.map((candidate) => candidate.path);
+const candidates: readonly Candidate[] = [
+  { path: "z", status: "untracked", fileCount: 1 },
+  { path: "a", status: "untracked", fileCount: 1 },
+  { path: "m", status: "untracked", fileCount: 1 },
+];
 
-  assert.deepEqual(paths(forward), ["b", "c", "a"]);
-  assert.deepEqual(paths(reversed), paths(forward));
-  assert.equal(forward.reviewableCandidates[0]?.bytesTruncated, true);
+async function measure(input: readonly Candidate[]) {
+  const calls: Array<readonly [string, number]> = [];
+  const measured = await measureReviewableCandidates(input, async (candidatePath, maxEntries) => {
+    calls.push([candidatePath, maxEntries]);
+    return {
+      bytes: candidatePath === "m" ? 1 : 0,
+      truncated: candidatePath !== "a",
+      visited: maxEntries,
+    };
+  }, { perCandidate: 3, total: 4 });
+  return {
+    calls,
+    candidates: measured.map(({ path, bytes, bytesTruncated }) => [path, bytes, bytesTruncated]),
+  };
+}
+
+test("aggregate reviewable measurement stays deterministic after its shared budget is exhausted", async () => {
+  const forward = await measure(candidates);
+  const reversed = await measure([...candidates].reverse());
+
+  assert.deepEqual(forward.calls, [["a", 3], ["m", 1], ["z", 0]]);
+  assert.deepEqual(reversed, forward);
+  assert.deepEqual(forward.candidates, [["m", 1, true], ["z", 0, true], ["a", 0, false]]);
 });
