@@ -50,6 +50,51 @@ test("guardian_status readable output treats hygiene-only findings as review war
   assert.doesNotMatch(output, /fail-severity/);
 });
 
+test("guardian_recover readable output preserves reflog and unreachable recovery provenance", () => {
+  const output = formatGuardianStatusOutput("guardian_recover", {
+    ok: true,
+    repoRoot: "/repo",
+    activeSessions: [],
+    worktrees: [],
+    recoveryCandidates: {
+      reflog: [{ selector: "HEAD@{1}", commit: "abcdef1234567890", subject: "lost work" }],
+      unreachable: ["fedcba0987654321"],
+    },
+  });
+
+  assert.match(output, /Recovery candidates: 2/);
+  assert.match(output, /Recovery Candidates: 2/);
+  assert.match(output, /reflog HEAD@\{1\} abcdef123456 lost work/);
+  assert.match(output, /unreachable fedcba098765/);
+});
+
+test("guardian_recover readable output lists recoverable quarantine items without tokens", () => {
+  const output = formatGuardianStatusOutput("guardian_recover", {
+    ok: true,
+    repoRoot: "/repo",
+    activeSessions: [],
+    worktrees: [],
+    quarantineItems: [{
+      quarantineId: "item-123",
+      originalRelativePath: ".completion-cache/residue.txt",
+      artifactPath: "/repo/.git/opencode-guardian/quarantine/ses-1/item-123",
+      state: "available",
+    }],
+    incompleteQuarantineOperations: [{
+      operationId: "operation-456",
+      quarantineId: "item-123",
+      action: "restore",
+      phase: "prepared",
+      originalRelativePath: ".completion-cache/residue.txt",
+    }],
+  });
+
+  assert.match(output, /Quarantine Recovery/);
+  assert.match(output, /available item-123 \.completion-cache\/residue\.txt/);
+  assert.match(output, /restore prepared operation-456 item-123/);
+  assert.doesNotMatch(output, /confirmToken|[a-f0-9]{64}/i);
+});
+
 test("guardian_status tool execute returns readable output with raw metadata", async () => {
   const repo = await createRepo();
   const { DEFAULT_CONFIG } = await import("../src/config.ts");
@@ -120,10 +165,10 @@ test("guardian_status tool execute returns readable output with raw metadata", a
   assert.match(result.output, /Work Now\n  Active sessions: 1\n  Worktrees: \d+\n  Dirty files: 0\n  Stashes: 0\n  Orphaned sessions: 0\n  Poisoned sessions: 1\n  Recovery candidates: 0/);
   assert.match(result.output, /Problems\n  Poisoned sessions: 1\n    - ses_contract_status_active/);
   assert.match(result.output, /History\n  Retained terminal sessions: 4\n  deleted: 1\n  finished: 1\n  preserved: 1\n  superseded: 1\n  Safety refs: 0\n  Preserved refs: 0/);
-  assert.match(result.output, /Active Sessions\n  ses_contract_status_active active guardian\/contract-status-active/);
+  assert.match(result.output, /Active Sessions: 1\n  ses_contract_status_active active guardian\/contract-status-active/);
   assert.doesNotMatch(result.output, /\[INFO\] terminal sessions:/);
   assert.doesNotMatch(result.output, /ses_contract_status_terminal/);
-  assert.match(result.output, /Current Worktrees\n  main /);
+  assert.match(result.output, /Current Worktrees: 1\n  main /);
 });
 
 test("guardian_init tool execute writes readable config result", async () => {
@@ -177,7 +222,8 @@ test("guardian_recover tool execute returns readable output with raw metadata", 
   assert.equal(typeof result.metadata, "object");
   assert.equal(result.metadata.repoRoot, repo);
   assert.match(result.output, /\[GOOD\] guardian_recover snapshot/);
-  assert.match(result.output, /Recovery candidates: 0/);
+  assert.match(result.output, /Recovery candidates: [1-9]\d*/);
+  assert.match(result.output, /Recovery Candidates: [1-9]\d*/);
   assert.match(result.output, /Suggested Commands/);
 });
 

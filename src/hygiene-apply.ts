@@ -4,7 +4,7 @@ import path from "node:path";
 import { expandWorktreeRoot, loadConfig } from "./config.ts";
 import { collectCleanupFingerprint } from "./deletion-fingerprint.ts";
 import { getRepoRoot, listWorktrees, runGit } from "./git.ts";
-import { isEnoent, isSameOrInside, lstatOrMissing, normalizeRelativePath, parseNullSeparated, recordValue, relativePath, stringArray, uniqueSorted } from "./filesystem-boundaries.ts";
+import { assertNoSymlinkAncestors, canonicalPathOrResolved, isEnoent, isSameOrInside, lstatOrMissing, normalizeRelativePath, parseNullSeparated, recordValue, relativePath, stringArray, uniqueSorted } from "./filesystem-boundaries.ts";
 import { getGuardianPaths, readState } from "./state.ts";
 import { protectedDirReason, scanWorkspaceHygiene } from "./hygiene-scan.ts";
 import type { HygieneCategory, HygieneSeverity } from "./hygiene-scan.ts";
@@ -153,9 +153,24 @@ async function buildHygieneCleanupPreflight(input: Record<string, unknown>) {
   const targets: CleanupTarget[] = [];
   const targetPaths = new Set<string>();
   for (const cleanupPath of selectedPaths) {
-    const { absolutePath, relative } = resolveCleanupPath(repoRoot, cleanupPath);
-    const finding = findingsByPath.get(relative);
+    const resolved = resolveCleanupPath(repoRoot, cleanupPath);
+    let absolutePath = resolved.absolutePath;
+    let relative = resolved.relative;
     const pathBlockers: CleanupBlocker[] = [];
+    const requestedStat = await lstatOrMissing(absolutePath);
+    if (requestedStat?.isSymbolicLink()) {
+      pathBlockers.push({ path: relative, reason: "symlink cleanup roots are not allowed", fatal: true });
+    } else {
+      try {
+        await assertNoSymlinkAncestors(path.dirname(absolutePath), "cleanup path");
+        absolutePath = await canonicalPathOrResolved(absolutePath);
+        relative = relativePath(repoRoot, absolutePath);
+      } catch (error) {
+        if (!(error instanceof Error)) throw error;
+        pathBlockers.push({ path: relative, reason: error.message, fatal: true });
+      }
+    }
+    const finding = findingsByPath.get(relative);
     if (!isSameOrInside(absolutePath, path.resolve(repoRoot))) pathBlockers.push({ path: cleanupPath, reason: "cleanup path is outside the repository root", fatal: true });
     if (relative === "." || relative === ".git" || relative.startsWith(".git/")) pathBlockers.push({ path: relative, reason: "repository root and .git metadata cannot be cleanup roots", fatal: true });
     const protectedReason = protectedDirReason(relative, protectedPaths);

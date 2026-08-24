@@ -20,6 +20,7 @@ export const expectedToolNames = [
   "guardian_init",
   "guardian_preserve",
   "guardian_project_status",
+  "guardian_quarantine",
   "guardian_recover",
   "guardian_report_html",
   "guardian_start",
@@ -39,6 +40,7 @@ export const expectedSlashNames = [
   "guardian-init",
   "guardian-preserve",
   "guardian-project-status",
+  "guardian-quarantine",
   "guardian-recover",
   "guardian-report",
   "guardian-start",
@@ -58,6 +60,7 @@ export const expectedCodexSkillNames = [
   "guardian-init",
   "guardian-preserve",
   "guardian-project-status",
+  "guardian-quarantine",
   "guardian-recover",
   "guardian-report",
   "guardian-start",
@@ -77,6 +80,7 @@ export const expectedCommandAssets = [
   "commands/init.md",
   "commands/preserve.md",
   "commands/project-status.md",
+  "commands/quarantine.md",
   "commands/recover.md",
   "commands/report.md",
   "commands/start.md",
@@ -102,6 +106,7 @@ export const expectedPackagedCommandTools = [
   ["init", "guardian_init"],
   ["preserve", "guardian_preserve"],
   ["project-status", "guardian_project_status"],
+  ["quarantine", "guardian_quarantine"],
   ["recover", "guardian_recover"],
   ["report", "guardian_report_html"],
   ["start", "guardian_start"],
@@ -130,7 +135,7 @@ export type RunResult = {
   readonly exitCode: number;
 };
 
-const coverageEnvNames = ["NODE_V8_COVERAGE", "OPENCODE_WORKTREE_GUARDIAN_COVERAGE_RUN", "NODE_COMPILE_CACHE"] as const;
+const coverageEnvNames = ["NODE_V8_COVERAGE", "OPENCODE_WORKTREE_GUARDIAN_COVERAGE_RUN", "OPENCODE_WORKTREE_GUARDIAN_COVERAGE_CAPABILITY", "NODE_COMPILE_CACHE"] as const;
 
 function outputText(value: unknown): string {
   if (typeof value === "string") return value.trim();

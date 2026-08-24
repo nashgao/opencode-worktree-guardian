@@ -34,6 +34,7 @@ export function guardianTool(name: GuardianToolName, description: string, planCa
       branch: z.string().optional(),
       targetPath: z.string().optional(),
       worktreePath: z.string().optional(),
+      targetWorktreePath: z.string().optional(),
       createWorktree: z.boolean().optional(),
       mode: z.enum(["plan", "apply"]).optional(),
       confirmToken: z.string().optional(),
@@ -42,7 +43,8 @@ export function guardianTool(name: GuardianToolName, description: string, planCa
       rescue: z.boolean().optional(),
       all: z.boolean().optional(),
       primary: z.boolean().optional(),
-      action: z.enum(["commit-review-artifacts"]).optional(),
+      action: z.enum(["commit-review-artifacts", "restore", "purge"]).optional(),
+      quarantineId: z.string().optional(),
       commitMessage: z.string().optional(),
       deleteBranch: z.boolean().optional(),
       abandonUnmerged: z.boolean().optional(),
@@ -80,9 +82,9 @@ export function guardianTool(name: GuardianToolName, description: string, planCa
         else if (typeof context?.worktree === "string") toolArgs.cwd = context.worktree;
         else if (typeof context?.directory === "string") toolArgs.cwd = context.directory;
       }
-      maybeInjectPlanConfirmToken(name, toolArgs, planCache);
+      await maybeInjectPlanConfirmToken(name, toolArgs, planCache);
       const result = await runGuardianTool(name, toolArgs);
-      rememberPlanConfirmToken(name, toolArgs, result, planCache);
+      await rememberPlanConfirmToken(name, toolArgs, result, planCache);
       return {
         title: name,
         metadata: result,

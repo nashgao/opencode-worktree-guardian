@@ -1,6 +1,7 @@
 import type { GuardCommandPayload, GuardianToolName, PlanCacheToolArgs, PlanTokenCache } from "../types.ts";
 import { isMutableRecord } from "../types.ts";
 import { normalizeAllowedRemoteBranches } from "../final-postflight.ts";
+import { quarantinePlanCacheKey } from "../quarantine-tool.ts";
 
 export function ensureToolArgs(output: GuardCommandPayload = {}) {
   if (!isMutableRecord(output.args)) output.args = {};
@@ -17,7 +18,8 @@ export function normalizeOptionalToolStrings(toolArgs: PlanCacheToolArgs) {
   }
 }
 
-function planCacheKey(name: GuardianToolName, toolArgs: PlanCacheToolArgs) {
+async function planCacheKey(name: GuardianToolName, toolArgs: PlanCacheToolArgs, plannedConfirmToken?: string): Promise<string | null> {
+  if (name === "guardian_quarantine") return await quarantinePlanCacheKey(toolArgs, plannedConfirmToken);
   return JSON.stringify({
     name,
     sessionId: typeof toolArgs.sessionId === "string" ? toolArgs.sessionId : "",
@@ -39,6 +41,8 @@ function planCacheKey(name: GuardianToolName, toolArgs: PlanCacheToolArgs) {
     allowIgnoredFiles: toolArgs.allowIgnoredFiles === true,
     allowAdminBypass: toolArgs.allowAdminBypass === true,
     action: typeof toolArgs.action === "string" ? toolArgs.action : "",
+    quarantineId: typeof toolArgs.quarantineId === "string" ? toolArgs.quarantineId : "",
+    targetWorktreePath: typeof toolArgs.targetWorktreePath === "string" ? toolArgs.targetWorktreePath : "",
     timestamp: typeof toolArgs.timestamp === "string" ? toolArgs.timestamp : "",
   });
 }
@@ -54,6 +58,7 @@ function shouldUseCachedPlanToken(name: GuardianToolName, toolArgs: PlanCacheToo
   if (name === "guardian_delete_paths") return toolArgs.confirmDelete === true;
   if (name === "guardian_hygiene") return toolArgs.confirmDelete === true;
   if (name === "guardian_gc") return toolArgs.confirmDelete === true;
+  if (name === "guardian_quarantine") return toolArgs.action === "restore" ? toolArgs.confirm === true : toolArgs.action === "purge" && toolArgs.confirmDelete === true;
   if (name === "guardian_done" || name === "guardian_finish_workflow" || name === "guardian_goal") return toolArgs.confirm === true;
   return false;
 }
@@ -62,16 +67,19 @@ function isCacheablePlanStatus(status: unknown): boolean {
   return status === "planned" || status === "planned-partial" || status === "rescue-planned";
 }
 
-export function maybeInjectPlanConfirmToken(name: GuardianToolName, toolArgs: PlanCacheToolArgs, planCache?: PlanTokenCache) {
+export async function maybeInjectPlanConfirmToken(name: GuardianToolName, toolArgs: PlanCacheToolArgs, planCache?: PlanTokenCache): Promise<void> {
   if (!planCache || !shouldUseCachedPlanToken(name, toolArgs)) return;
   if (typeof toolArgs.confirmToken === "string" && !isPlaceholderConfirmToken(toolArgs.confirmToken)) return;
-  const cachedToken = planCache.get(planCacheKey(name, toolArgs));
+  const key = await planCacheKey(name, toolArgs);
+  if (key === null) return;
+  const cachedToken = planCache.get(key);
   if (cachedToken) toolArgs.confirmToken = cachedToken;
 }
 
-export function rememberPlanConfirmToken(name: GuardianToolName, toolArgs: PlanCacheToolArgs, result: { readonly ok?: unknown; readonly status?: unknown; readonly confirmToken?: unknown }, planCache?: PlanTokenCache) {
+export async function rememberPlanConfirmToken(name: GuardianToolName, toolArgs: PlanCacheToolArgs, result: { readonly ok?: unknown; readonly status?: unknown; readonly confirmToken?: unknown }, planCache?: PlanTokenCache): Promise<void> {
   if (!planCache) return;
   if (toolArgs.mode !== "plan" || result.ok !== true || !isCacheablePlanStatus(result.status) || typeof result.confirmToken !== "string") return;
-  if (!["guardian_delete_paths", "guardian_hygiene", "guardian_done", "guardian_finish_workflow", "guardian_goal", "guardian_gc"].includes(name)) return;
-  planCache.set(planCacheKey(name, toolArgs), result.confirmToken);
+  if (!["guardian_delete_paths", "guardian_hygiene", "guardian_done", "guardian_finish_workflow", "guardian_goal", "guardian_gc", "guardian_quarantine"].includes(name)) return;
+  const key = await planCacheKey(name, toolArgs, result.confirmToken);
+  if (key !== null) planCache.set(key, result.confirmToken);
 }

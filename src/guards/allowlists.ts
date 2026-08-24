@@ -12,7 +12,7 @@ export const STASH_READ_ONLY = new Set<string>(["list", "show"]);
 const READ_ONLY_GIT_COMMANDS = new Set(["status", "diff", "log", "show", "rev-parse", "branch", "worktree", "stash", "remote", "ls-files"]);
 const NORMAL_AGENT_GIT_COMMANDS = new Set(["add", "commit", "fetch", "push"]);
 
-function hasUnsafeDiffOption(tokens: readonly string[]): boolean {
+export function hasUnsafeDiffOption(tokens: readonly string[]): boolean {
   return tokens.some((token) => token === "--output" || token.startsWith("--output=") || token === "--ext-diff" || token === "--textconv");
 }
 
@@ -33,6 +33,7 @@ function isAllowedReadOnlyGit(segment: CommandSegment): boolean {
   if (!parsed?.subcommand || !READ_ONLY_GIT_COMMANDS.has(parsed.subcommand)) return false;
   if (parsed.unsafeExecutableSearchPath) return false;
   const { subcommand, rest } = parsed;
+  if (parsed.configs.length > 0) return false;
 
   if (subcommand === "status") {
     return rest.every((token) => token.startsWith("-") || token === "--");
@@ -49,7 +50,7 @@ function isAllowedReadOnlyGit(segment: CommandSegment): boolean {
   if (subcommand === "remote") {
     return rest.length === 0 || rest.every((token) => token === "-v" || token === "--verbose");
   }
-  if (subcommand === "diff") {
+  if (subcommand === "diff" || subcommand === "log" || subcommand === "show") {
     return !hasUnsafeDiffOption(rest);
   }
   return true;

@@ -21,6 +21,7 @@ test("exposes guardian native tools", async () => {
     "guardian_init",
     "guardian_preserve",
     "guardian_project_status",
+    "guardian_quarantine",
     "guardian_recover",
     "guardian_report_html",
     "guardian_start",

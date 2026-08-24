@@ -48,13 +48,13 @@ export function isStructuredReadOnlyCommand(args: readonly string[]): boolean {
       && args[2] === "--null"
       && args[3] === "--name-only"
       && args[4] === "--get-regexp"
-      && args[5] === "^remote\\..*\\.(url|pushurl)$";
+      && args[5] === "^remote\\..*\\.(url|pushurl|fetch)$";
     return transportConfigRead || remoteNameRead;
   }
   if (args[0] === "for-each-ref") {
     const prefix = args[2];
     return args.length === 3
-      && args[1] === "--format=%(refname:short)"
+      && args[1] === "--format=%(refname)"
       && typeof prefix === "string"
       && prefix.startsWith("refs/remotes/")
       && !prefix.includes("\0");

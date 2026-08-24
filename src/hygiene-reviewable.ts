@@ -8,10 +8,38 @@ export type ReviewableCandidate = {
   readonly path: string;
   readonly status: HygieneCandidateStatus;
   readonly fileCount: number;
+  readonly bytes: number;
+  readonly bytesTruncated: boolean;
   readonly reason: "not matched by Guardian hygiene cleanup rules";
   readonly source: "git ls-files --others/--ignored";
   readonly suggestedDeletePathCommand: string;
 };
+
+const MAX_MEASURED_ENTRIES_PER_CANDIDATE = 10_000;
+const MAX_MEASURED_ENTRIES_TOTAL = 100_000;
+
+type ByteMeasurement = { readonly bytes: number; readonly truncated: boolean; readonly visited: number };
+
+async function measureBytes(candidate: string, maxEntries: number): Promise<ByteMeasurement> {
+  let bytes = 0;
+  let visited = 0;
+  let truncated = false;
+  async function visit(current: string): Promise<void> {
+    if (visited >= maxEntries) {
+      truncated = true;
+      return;
+    }
+    visited += 1;
+    const stat = await fs.lstat(current);
+    if (!stat.isDirectory()) {
+      bytes += stat.size;
+      return;
+    }
+    for (const child of await fs.readdir(current)) await visit(path.join(current, child));
+  }
+  await visit(candidate);
+  return { bytes, truncated, visited };
+}
 
 async function pathKind(candidate: string): Promise<"directory" | "file" | "missing"> {
   try {
@@ -48,6 +76,8 @@ export async function buildReviewableCandidates(repoRoot: string, candidates: re
   readonly reviewableCandidateCount: number;
   readonly reviewableShownCount: number;
   readonly reviewableTotalFileCount: number;
+  readonly reviewableTotalBytes: number;
+  readonly reviewableBytesTruncated: boolean;
   readonly reviewableOmittedCount: number;
   readonly reviewableTruncated: boolean;
 }> {
@@ -61,8 +91,16 @@ export async function buildReviewableCandidates(repoRoot: string, candidates: re
   }
   const collapsed = [...collapsedByPath.entries()]
     .map(([candidatePath, status]) => ({ path: candidatePath, status, fileCount: fileCountByPath.get(candidatePath) ?? 1 }))
-    .sort((left, right) => right.fileCount - left.fileCount || left.path.localeCompare(right.path));
-  const visible = visibleLimit === null ? collapsed : collapsed.slice(0, visibleLimit);
+    ;
+  let remainingEntries = MAX_MEASURED_ENTRIES_TOTAL;
+  const measured = [] as Array<{ readonly path: string; readonly status: HygieneCandidateStatus; readonly fileCount: number; readonly bytes: number; readonly bytesTruncated: boolean }>;
+  for (const candidate of collapsed) {
+    const measurement = await measureBytes(path.resolve(repoRoot, candidate.path), Math.min(MAX_MEASURED_ENTRIES_PER_CANDIDATE, remainingEntries));
+    remainingEntries = Math.max(0, remainingEntries - measurement.visited);
+    measured.push({ ...candidate, bytes: measurement.bytes, bytesTruncated: measurement.truncated });
+  }
+  measured.sort((left, right) => (left.bytesTruncated || right.bytesTruncated ? 0 : right.bytes - left.bytes) || right.fileCount - left.fileCount || left.path.localeCompare(right.path));
+  const visible = visibleLimit === null ? measured : measured.slice(0, visibleLimit);
   const reviewableCandidates: ReviewableCandidate[] = [];
   for (const candidate of visible) {
     const kind = await pathKind(path.resolve(repoRoot, candidate.path));
@@ -71,6 +109,8 @@ export async function buildReviewableCandidates(repoRoot: string, candidates: re
       path: candidate.path,
       status: candidate.status,
       fileCount: candidate.fileCount,
+      bytes: candidate.bytes,
+      bytesTruncated: candidate.bytesTruncated,
       reason: "not matched by Guardian hygiene cleanup rules",
       source: "git ls-files --others/--ignored",
       suggestedDeletePathCommand: `guardian_delete_paths mode=plan paths=${JSON.stringify([candidate.path])}${recursiveFlag}`,
@@ -79,5 +119,7 @@ export async function buildReviewableCandidates(repoRoot: string, candidates: re
   const reviewableCandidateCount = collapsed.length;
   const reviewableShownCount = reviewableCandidates.length;
   const reviewableTotalFileCount = collapsed.reduce((total, candidate) => total + candidate.fileCount, 0);
-  return { reviewableCandidates, reviewableCandidateCount, reviewableShownCount, reviewableTotalFileCount, reviewableOmittedCount: reviewableCandidateCount - reviewableShownCount, reviewableTruncated: reviewableCandidateCount > reviewableShownCount };
+  const reviewableTotalBytes = measured.reduce((total, candidate) => total + candidate.bytes, 0);
+  const reviewableBytesTruncated = measured.some((candidate) => candidate.bytesTruncated);
+  return { reviewableCandidates, reviewableCandidateCount, reviewableShownCount, reviewableTotalFileCount, reviewableTotalBytes, reviewableBytesTruncated, reviewableOmittedCount: reviewableCandidateCount - reviewableShownCount, reviewableTruncated: reviewableCandidateCount > reviewableShownCount };
 }

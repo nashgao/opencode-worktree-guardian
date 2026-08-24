@@ -24,7 +24,7 @@ export const HYGIENE_OPERATIONAL_SCOPE = {
   emptyDirectories: "outside-coverage",
 } as const;
 
-const REMOTE_CONFIG_PATTERN = "^remote\\..*\\.(url|pushurl)$";
+const REMOTE_CONFIG_PATTERN = "^remote\\..*\\.(url|pushurl|fetch)$";
 
 function readTarget(repoRoot: string): GitReadTarget {
   return { cwd: repoRoot, gitDir: null, workTree: null, configs: [] };
@@ -64,15 +64,15 @@ export async function listRemoteNamesReadOnly(repoRoot: string): Promise<readonl
 }
 
 export async function cachedRemoteBranchCount(repoRoot: string, remote: string): Promise<number> {
-  const result = await tryGit(repoRoot, ["for-each-ref", "--format=%(refname:short)", `refs/remotes/${remote}`]);
+  const result = await tryGit(repoRoot, ["for-each-ref", "--format=%(refname)", `refs/remotes/${remote}`]);
   if (!result.ok) throw result.error;
-  return result.stdout.split("\n").filter((ref) => ref.length > 0 && ref !== remote && ref !== `${remote}/HEAD`).length;
+  return result.stdout.split("\n").filter((ref) => ref.length > 0 && ref !== `refs/remotes/${remote}/HEAD`).length;
 }
 
 export async function cachedRemoteBranchCountReadOnly(repoRoot: string, remote: string): Promise<number> {
-  const result = await tryGitReadOnly(readTarget(repoRoot), ["for-each-ref", "--format=%(refname:short)", `refs/remotes/${remote}`]);
+  const result = await tryGitReadOnly(readTarget(repoRoot), ["for-each-ref", "--format=%(refname)", `refs/remotes/${remote}`]);
   if (!result.ok) throw result.error;
-  return result.stdout.split("\n").filter((ref) => ref.length > 0 && ref !== remote && ref !== `${remote}/HEAD`).length;
+  return result.stdout.split("\n").filter((ref) => ref.length > 0 && ref !== `refs/remotes/${remote}/HEAD`).length;
 }
 
 export function operationalScope({ effectiveRemote, remotes, localBranchCount, effectiveRemoteBranchCount, freshness }: OperationalScopeInput): OperationalScope {

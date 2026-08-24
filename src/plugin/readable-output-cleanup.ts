@@ -1,4 +1,4 @@
-import { appendStashInventoryWarning, arrayValue, recordValue, shortCommit, textValue } from "./readable-output-values.ts";
+import { appendBoundedList, appendStashInventoryWarning, arrayValue, recordValue, shortCommit, textValue } from "./readable-output-values.ts";
 
 function reviewableTextValue(value: unknown, fallback = "-") {
   return textValue(value, fallback)
@@ -23,6 +23,8 @@ export function formatGuardianHygieneOutput(rawResult: unknown) {
   const visibleReviewableCandidates = reviewableCandidates;
   const reviewableOmittedCount = Number(summary.reviewableOmittedCount ?? Math.max(0, reviewableCount - visibleReviewableCandidates.length));
   const reviewableTotalFileCount = Number(summary.reviewableTotalFileCount ?? reviewableCount);
+  const reviewableTotalBytes = Number(summary.reviewableTotalBytes ?? 0);
+  const reviewableBytesTruncated = summary.reviewableBytesTruncated === true;
   const failCount = Number(recordValue(summary.bySeverity).fail ?? 0);
   const warnCount = Number(recordValue(summary.bySeverity).warn ?? 0);
   const scanFailed = result.ok === false || summary.scanFailed === true;
@@ -32,28 +34,35 @@ export function formatGuardianHygieneOutput(rawResult: unknown) {
   const reason = textValue(result.reason, "");
   if (result.ok === false || reason) lines.push(`[FAIL] ${reason || "guardian_hygiene scan failed"}`);
   if (findings.length > 0) {
-    lines.push("[WARN] top findings:");
-    for (const entry of findings.slice(0, 8)) {
+    lines.push("[WARN] findings:");
+    for (const entry of findings) {
       const finding = recordValue(entry);
       lines.push(`  - ${textValue(finding.severity)} ${textValue(finding.category)} ${textValue(finding.path)}: ${textValue(finding.reason)}`);
     }
   }
   if (reviewableCount > 0) {
-    lines.push(`[WARN] reviewable candidates: ${reviewableCount}${reviewableOmittedCount > 0 ? ` | omitted: ${reviewableOmittedCount}` : ""} | files covered: ${reviewableTotalFileCount}`);
+    lines.push(`[WARN] reviewable candidates: ${reviewableCount}${reviewableOmittedCount > 0 ? ` | omitted: ${reviewableOmittedCount}` : ""} | files covered: ${reviewableTotalFileCount} | bytes covered: ${reviewableTotalBytes}${reviewableBytesTruncated ? " (lower bound; measurement truncated)" : ""}`);
     if (reviewableOmittedCount > 0) lines.push(`[WARN] the ${visibleReviewableCandidates.length} rows below are the largest of ${reviewableCount} by file count; run guardian_hygiene includeAllReviewableCandidates=true to enumerate all ${reviewableCount}`);
     lines.push("[INFO] reviewable entries require exact-path guardian_delete_paths planning if cleanup is intended");
     for (const entry of visibleReviewableCandidates) {
       const candidate = recordValue(entry);
       const fileCount = Number(candidate.fileCount ?? 1);
-      lines.push(`  - ${reviewableTextValue(candidate.status)} ${reviewableTextValue(candidate.path)} (${fileCount} file${fileCount === 1 ? "" : "s"}): ${reviewableTextValue(candidate.reason)}`);
+      const bytes = Number(candidate.bytes ?? 0);
+      const bytesSuffix = candidate.bytesTruncated === true ? `${bytes}+ bytes` : `${bytes} bytes`;
+      lines.push(`  - ${reviewableTextValue(candidate.status)} ${reviewableTextValue(candidate.path)} (${fileCount} file${fileCount === 1 ? "" : "s"}, ${bytesSuffix}): ${reviewableTextValue(candidate.reason)}`);
       lines.push(`    ${reviewableTextValue(candidate.suggestedDeletePathCommand)}`);
     }
   }
-  const suggestions = arrayValue(result.suggestedCommands);
-  if (suggestions.length > 0) {
-    lines.push("[INFO] suggested commands:");
-    for (const command of suggestions.slice(0, 8)) lines.push(`  - ${textValue(command, String(command))}`);
+  const filesystemOnlyEmptyDirectories = arrayValue(result.filesystemOnlyEmptyDirectories);
+  if (filesystemOnlyEmptyDirectories.length > 0) {
+    lines.push(`[WARN] filesystem-only empty directories: ${filesystemOnlyEmptyDirectories.length} | omitted: 0`);
+    for (const entry of filesystemOnlyEmptyDirectories) {
+      const directory = recordValue(entry);
+      lines.push(`  - ${reviewableTextValue(directory.classification)} ${reviewableTextValue(directory.path)}: ${reviewableTextValue(directory.reason)}`);
+    }
   }
+  const suggestions = arrayValue(result.suggestedCommands);
+  appendBoundedList({ lines, heading: "[INFO] suggested commands", entries: suggestions, format: (command) => `  - ${textValue(command, String(command))}` });
   return lines.join("\n");
 }
 
@@ -69,20 +78,26 @@ function formatGuardianHygienePlanOutput(rawResult: unknown) {
   ];
   const reason = textValue(result.reason, "");
   if (result.ok === false || reason) lines.push(`[FAIL] ${reason || "guardian_hygiene blocked"}`);
-  if (targets.length > 0) {
-    lines.push("[INFO] approved targets:");
-    for (const entry of targets.slice(0, 8)) {
+  appendBoundedList({
+    lines,
+    heading: "[INFO] approved targets",
+    entries: targets,
+    count: summary.approvedTargetCount,
+    format: (entry) => {
       const target = recordValue(entry);
-      lines.push(`  - ${textValue(target.category)} ${textValue(target.path)}: ${textValue(target.reason)}`);
-    }
-  }
-  if (blockers.length > 0) {
-    lines.push("[WARN] blockers:");
-    for (const entry of blockers.slice(0, 8)) {
+      return `  - ${textValue(target.category)} ${textValue(target.path)}: ${textValue(target.reason)}`;
+    },
+  });
+  appendBoundedList({
+    lines,
+    heading: "[WARN] blockers",
+    entries: blockers,
+    count: summary.blockedTargetCount,
+    format: (entry) => {
       const blocker = recordValue(entry);
-      lines.push(`  - ${blocker.fatal === true ? "fatal" : "blocked"} ${textValue(blocker.path)}: ${textValue(blocker.reason)}`);
-    }
-  }
+      return `  - ${blocker.fatal === true ? "fatal" : "blocked"} ${textValue(blocker.path)}: ${textValue(blocker.reason)}`;
+    },
+  });
   return lines.join("\n");
 }
 
@@ -100,13 +115,15 @@ export function formatGuardianDeleteOutput(rawResult: unknown) {
     lines.push(`[INFO] allowRedundantDirtyPaths: ${String(preflight.allowRedundantDirtyPaths === true)} | baseRef: ${textValue(preflight.baseRef)} | baseRefOid: ${shortCommit(preflight.baseRefOid)}`);
     lines.push(`[INFO] redundantDirtyFileCount: ${Number(preflight.redundantDirtyFileCount ?? 0)} | dirtySnapshotRef: ${textValue(preflight.dirtySnapshotRef ?? result.dirtySnapshotRef)}`);
     const proofs = arrayValue(preflight.redundantDirtyProofs);
-    if (proofs.length > 0) {
-      lines.push("[INFO] redundant dirty proofs:");
-      for (const entry of proofs.slice(0, 8)) {
+    appendBoundedList({
+      lines,
+      heading: "[INFO] redundant dirty proofs",
+      entries: proofs,
+      format: (entry) => {
         const proof = recordValue(entry);
-        lines.push(`  - ${textValue(proof.status)} ${textValue(proof.kind)} ${textValue(proof.path)}: matchesBase=${String(proof.matchesBase === true)}`);
-      }
-    }
+        return `  - ${textValue(proof.status)} ${textValue(proof.kind)} ${textValue(proof.path)}: matchesBase=${String(proof.matchesBase === true)}`;
+      },
+    });
   }
   if (preflight.ancestryProven === false || Number(preflight.unmergedCommitCount ?? 0) > 0) {
     lines.push(`[WARN] ancestryProven: ${String(preflight.ancestryProven === true)} | ancestryRef: ${textValue(preflight.ancestryRef)} | unmergedCommitCount: ${Number(preflight.unmergedCommitCount ?? 0)}`);
@@ -116,10 +133,7 @@ export function formatGuardianDeleteOutput(rawResult: unknown) {
   if (typeof result.confirmToken === "string") lines.push(`[WARN] confirmToken: ${result.confirmToken}`);
   if (typeof result.safetyRef === "string") lines.push(`[INFO] safetyRef: ${result.safetyRef}`);
   const blockers = arrayValue(preflight.blockers);
-  if (blockers.length > 0) {
-    lines.push("[WARN] blockers:");
-    for (const blocker of blockers.slice(0, 8)) lines.push(`  - ${textValue(blocker, String(blocker))}`);
-  }
+  appendBoundedList({ lines, heading: "[WARN] blockers", entries: blockers, format: (blocker) => `  - ${textValue(blocker, String(blocker))}` });
   return lines.join("\n");
 }
 
@@ -137,20 +151,26 @@ export function formatGuardianDeletePathsOutput(rawResult: unknown) {
   ];
   const reason = textValue(result.reason, "");
   if (result.ok === false || reason) lines.push(`[FAIL] ${reason || "guardian_delete_paths blocked"}`);
-  if (targets.length > 0) {
-    lines.push("[INFO] approved targets:");
-    for (const entry of targets.slice(0, 8)) {
+  appendBoundedList({
+    lines,
+    heading: "[INFO] approved targets",
+    entries: targets,
+    count: summary.approvedTargetCount,
+    format: (entry) => {
       const target = recordValue(entry);
-      lines.push(`  - ${textValue(target.status)} ${textValue(target.kind)} ${textValue(target.path)}`);
-    }
-  }
-  if (blockers.length > 0) {
-    lines.push("[WARN] blockers:");
-    for (const entry of blockers.slice(0, 8)) {
+      return `  - ${textValue(target.status)} ${textValue(target.kind)} ${textValue(target.path)}`;
+    },
+  });
+  appendBoundedList({
+    lines,
+    heading: "[WARN] blockers",
+    entries: blockers,
+    count: summary.blockedTargetCount,
+    format: (entry) => {
       const blocker = recordValue(entry);
-      lines.push(`  - ${blocker.fatal === true ? "fatal" : "blocked"} ${textValue(blocker.path)}: ${textValue(blocker.reason)}`);
-    }
-  }
+      return `  - ${blocker.fatal === true ? "fatal" : "blocked"} ${textValue(blocker.path)}: ${textValue(blocker.reason)}`;
+    },
+  });
   return lines.join("\n");
 }
 
@@ -164,20 +184,28 @@ export function formatGuardianUnblockFinishOutput(rawResult: unknown) {
   ];
   appendStashInventoryWarning(lines, preflight.stashCount);
   const reviewArtifactPaths = arrayValue(preflight.reviewArtifactPaths);
-  if (reviewArtifactPaths.length > 0) {
-    lines.push(`[INFO] review artifacts: ${reviewArtifactPaths.length}`);
-    for (const entry of reviewArtifactPaths.slice(0, 8)) lines.push(`  - ${textValue(entry, String(entry))}`);
-  }
+  appendBoundedList({ lines, heading: "[INFO] review artifacts", entries: reviewArtifactPaths, format: (entry) => `  - ${textValue(entry, String(entry))}` });
   const otherDirtyPaths = arrayValue(preflight.otherDirtyPaths);
-  if (otherDirtyPaths.length > 0) {
-    lines.push(`[WARN] other dirty paths: ${otherDirtyPaths.length}`);
-    for (const entry of otherDirtyPaths.slice(0, 8)) lines.push(`  - ${textValue(entry, String(entry))}`);
-  }
+  appendBoundedList({ lines, heading: "[WARN] other dirty paths", entries: otherDirtyPaths, format: (entry) => `  - ${textValue(entry, String(entry))}` });
   const reason = textValue(result.reason, "");
   if (result.ok === false || reason) lines.push(`[FAIL] ${reason || "guardian_unblock_finish blocked"}`);
-  if (typeof result.nextAction === "string") lines.push(`[INFO] nextAction: ${result.nextAction}`);
-  if (typeof result.commitMessage === "string") lines.push(`[INFO] commitMessage: ${result.commitMessage}`);
+  if (typeof result.nextAction === "string") lines.push(`[INFO] nextAction: ${textValue(result.nextAction)}`);
+  if (typeof result.commitMessage === "string") lines.push(`[INFO] commitMessage: ${textValue(result.commitMessage)}`);
   if (typeof result.commit === "string") lines.push(`[INFO] commit: ${shortCommit(result.commit)}`);
   if (typeof result.safetyRef === "string") lines.push(`[INFO] safetyRef: ${result.safetyRef}`);
+  return lines.join("\n");
+}
+
+export function formatGuardianQuarantineOutput(rawResult: unknown) {
+  const result = recordValue(rawResult);
+  const action = textValue(result.action);
+  const quarantineId = textValue(result.quarantineId);
+  const status = textValue(result.status, result.ok === false ? "blocked" : "planned");
+  const lines = [`${result.ok === false ? "[FAIL]" : status === "planned" || status === "needs-selection" ? "[WARN]" : "[GOOD]"} guardian_quarantine ${status}`, `[INFO] action: ${action} | quarantineId: ${quarantineId}`];
+  if (typeof result.selectedTargetWorktreePath === "string") lines.push(`[INFO] targetWorktreePath: ${textValue(result.selectedTargetWorktreePath)}`);
+  const eligible = arrayValue(result.eligibleTargetWorktreePaths);
+  appendBoundedList({ lines, heading: "[INFO] eligible restore worktrees", entries: eligible, format: (entry) => `  - ${textValue(entry, String(entry))}` });
+  if (result.ok === false) lines.push(`[FAIL] ${textValue(result.reason, "guardian_quarantine blocked")}`);
+  else if (typeof result.confirmToken === "string") lines.push(`[INFO] plan ready for explicit confirmation`);
   return lines.join("\n");
 }

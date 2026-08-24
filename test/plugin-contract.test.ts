@@ -19,6 +19,7 @@ const expectedToolNames = [
   "guardian_init",
   "guardian_preserve",
   "guardian_project_status",
+  "guardian_quarantine",
   "guardian_recover",
   "guardian_report_html",
   "guardian_start",
@@ -46,6 +47,7 @@ const expectedPackagedCommands = new Map([
   ["init", "guardian_init"],
   ["preserve", "guardian_preserve"],
   ["project-status", "guardian_project_status"],
+  ["quarantine", "guardian_quarantine"],
   ["recover", "guardian_recover"],
   ["report", "guardian_report_html"],
   ["start", "guardian_start"],
@@ -141,6 +143,7 @@ test("public plugin export matches OpenCode PluginModule contract", async () => 
   const module = await import("../src/index.ts");
   assert.equal(Object.hasOwn(module, removedLegacyRootExportName), false);
   assert.equal(module.default, plugin);
+  assert.equal(typeof module.guardianQuarantine, "function");
   assert.equal(plugin.id, "opencode-worktree-guardian");
   assert.equal(typeof plugin.server, "function");
 });
@@ -271,38 +274,38 @@ test("Codex hygiene guidance preserves the reviewable exact-path boundary", asyn
   }
 });
 
-test("guardian_done plugin confirm reuses planned-partial tokens", () => {
+test("guardian_done plugin confirm reuses planned-partial tokens", async () => {
   const cache: PlanTokenCache = new Map();
   const planArgs: PlanCacheToolArgs = { repoRoot: "/repo", cwd: "/repo", mode: "plan", allowIgnoredFiles: true };
   const applyArgs: PlanCacheToolArgs = { repoRoot: "/repo", cwd: "/repo", mode: "apply", confirm: true, confirmToken: "", allowIgnoredFiles: true };
   const changedApplyArgs: PlanCacheToolArgs = { ...applyArgs, allowIgnoredFiles: false };
   const adminApplyArgs: PlanCacheToolArgs = { ...applyArgs, allowAdminBypass: true };
 
-  rememberPlanConfirmToken("guardian_done", planArgs, { ok: true, status: "planned-partial", confirmToken: "partial-token" }, cache);
-  maybeInjectPlanConfirmToken("guardian_done", applyArgs, cache);
-  maybeInjectPlanConfirmToken("guardian_done", changedApplyArgs, cache);
-  maybeInjectPlanConfirmToken("guardian_done", adminApplyArgs, cache);
+  await rememberPlanConfirmToken("guardian_done", planArgs, { ok: true, status: "planned-partial", confirmToken: "partial-token" }, cache);
+  await maybeInjectPlanConfirmToken("guardian_done", applyArgs, cache);
+  await maybeInjectPlanConfirmToken("guardian_done", changedApplyArgs, cache);
+  await maybeInjectPlanConfirmToken("guardian_done", adminApplyArgs, cache);
 
   assert.equal(applyArgs.confirmToken, "partial-token");
   assert.equal(changedApplyArgs.confirmToken, "");
   assert.equal(adminApplyArgs.confirmToken, "");
 });
 
-test("guardian_done plugin cache keys include primary target", () => {
+test("guardian_done plugin cache keys include primary target", async () => {
   const cache: PlanTokenCache = new Map();
   const primaryPlanArgs: PlanCacheToolArgs = { repoRoot: "/repo", cwd: "/repo", mode: "plan", primary: true, commitMessage: "feat: primary target" };
   const bareApplyArgs: PlanCacheToolArgs = { repoRoot: "/repo", cwd: "/repo", mode: "apply", confirm: true, confirmToken: "", commitMessage: "feat: primary target" };
   const primaryApplyArgs: PlanCacheToolArgs = { ...bareApplyArgs, primary: true };
 
-  rememberPlanConfirmToken("guardian_done", primaryPlanArgs, { ok: true, status: "planned", confirmToken: "primary-token" }, cache);
-  maybeInjectPlanConfirmToken("guardian_done", bareApplyArgs, cache);
-  maybeInjectPlanConfirmToken("guardian_done", primaryApplyArgs, cache);
+  await rememberPlanConfirmToken("guardian_done", primaryPlanArgs, { ok: true, status: "planned", confirmToken: "primary-token" }, cache);
+  await maybeInjectPlanConfirmToken("guardian_done", bareApplyArgs, cache);
+  await maybeInjectPlanConfirmToken("guardian_done", primaryApplyArgs, cache);
 
   assert.equal(bareApplyArgs.confirmToken, "");
   assert.equal(primaryApplyArgs.confirmToken, "primary-token");
 });
 
-test("guardian completion cache normalizes and isolates allowed remote branches", () => {
+test("guardian completion cache normalizes and isolates allowed remote branches", async () => {
   const cache: PlanTokenCache = new Map();
   const planArgs: PlanCacheToolArgs = {
     repoRoot: "/repo",
@@ -323,9 +326,9 @@ test("guardian completion cache normalizes and isolates allowed remote branches"
     allowedRemoteBranches: ["chore/retained-a", "chore/other"],
   };
 
-  rememberPlanConfirmToken("guardian_goal", planArgs, { ok: true, status: "planned", confirmToken: "retained-branches-token" }, cache);
-  maybeInjectPlanConfirmToken("guardian_goal", matchingApply, cache);
-  maybeInjectPlanConfirmToken("guardian_goal", changedApply, cache);
+  await rememberPlanConfirmToken("guardian_goal", planArgs, { ok: true, status: "planned", confirmToken: "retained-branches-token" }, cache);
+  await maybeInjectPlanConfirmToken("guardian_goal", matchingApply, cache);
+  await maybeInjectPlanConfirmToken("guardian_goal", changedApply, cache);
 
   assert.equal(matchingApply.confirmToken, "retained-branches-token");
   assert.equal(changedApply.confirmToken, "");
@@ -357,7 +360,7 @@ test("guardian_done exposes rescue and injects only a matching confirmed rescue 
   await assert.rejects(fs.access(path.join(repo, "rescue-note.txt")));
 });
 
-test("guardian_done rescue cache keys separate rescue and changed rescue options", () => {
+test("guardian_done rescue cache keys separate rescue and changed rescue options", async () => {
   const cache: PlanTokenCache = new Map();
   const planArgs: PlanCacheToolArgs = { repoRoot: "/repo", cwd: "/repo", rescue: true, mode: "plan", timestamp: "20260730T120000" };
   const matchingApply: PlanCacheToolArgs = { ...planArgs, mode: "apply", confirm: true, confirmToken: "" };
@@ -366,12 +369,12 @@ test("guardian_done rescue cache keys separate rescue and changed rescue options
   const ordinaryApply: PlanCacheToolArgs = { ...matchingApply, rescue: false };
   const changedApply: PlanCacheToolArgs = { ...matchingApply, timestamp: "20260730T120001" };
 
-  rememberPlanConfirmToken("guardian_done", planArgs, { ok: true, status: "rescue-planned", confirmToken: "rescue-token" }, cache);
-  maybeInjectPlanConfirmToken("guardian_done", matchingApply, cache);
-  maybeInjectPlanConfirmToken("guardian_done", unconfirmedApply, cache);
-  maybeInjectPlanConfirmToken("guardian_done", legacyConfirmDeleteApply, cache);
-  maybeInjectPlanConfirmToken("guardian_done", ordinaryApply, cache);
-  maybeInjectPlanConfirmToken("guardian_done", changedApply, cache);
+  await rememberPlanConfirmToken("guardian_done", planArgs, { ok: true, status: "rescue-planned", confirmToken: "rescue-token" }, cache);
+  await maybeInjectPlanConfirmToken("guardian_done", matchingApply, cache);
+  await maybeInjectPlanConfirmToken("guardian_done", unconfirmedApply, cache);
+  await maybeInjectPlanConfirmToken("guardian_done", legacyConfirmDeleteApply, cache);
+  await maybeInjectPlanConfirmToken("guardian_done", ordinaryApply, cache);
+  await maybeInjectPlanConfirmToken("guardian_done", changedApply, cache);
 
   assert.equal(matchingApply.confirmToken, "rescue-token");
   assert.equal(unconfirmedApply.confirmToken, "");

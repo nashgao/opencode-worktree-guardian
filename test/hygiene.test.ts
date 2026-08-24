@@ -6,6 +6,7 @@ import test from "node:test";
 import { DEFAULT_CONFIG } from "../src/config.ts";
 import { runGitNullSeparated } from "../src/git.ts";
 import { guardianHygiene, scanWorkspaceHygiene } from "../src/hygiene.ts";
+import { buildReviewableCandidates } from "../src/hygiene-reviewable.ts";
 import { createRepo, createRepoWithOrigin, createTempDir, git } from "./helpers.ts";
 import { guardianStart, runGuardianTool } from "../src/tools.ts";
 
@@ -54,7 +55,7 @@ test("hygiene scanner detects known scratch artifact patterns", async () => {
   assert.equal(reasons.get("tsx-501"), "generated tsx runtime cache");
 });
 
-test("hygiene scanner declares Git untracked and ignored coverage while excluding empty directories", async () => {
+test("hygiene scanner declares Git untracked and ignored coverage plus bounded empty-directory coverage", async () => {
   // Given
   const repo = await createRepo();
   await fs.mkdir(path.join(repo, "empty-directory"));
@@ -65,9 +66,10 @@ test("hygiene scanner declares Git untracked and ignored coverage while excludin
   // Then
   assert.deepEqual(result.operationalScope, {
     enumeration: "git-untracked-and-ignored",
-    emptyDirectories: "outside-coverage",
+    emptyDirectories: "bounded-filesystem-empty-directory-scan",
   });
   assert.equal(result.summary.candidateCount, 0);
+  assert.equal(result.summary.filesystemOnlyEmptyDirectoryCount, 1);
 });
 
 test("hygiene scanner degrades one unenumerable ignored directory without losing precision elsewhere", async () => {
@@ -290,6 +292,30 @@ test("hygiene cleanup rejects unsupported allowCategories entries as fatal block
   assert.equal(await pathExists(path.join(repo, "librarian-categories")), true);
 });
 
+test("hygiene cleanup blocks symlinked residue roots", { skip: process.platform === "win32" }, async (t) => {
+  // Given
+  const repo = await createRepo();
+  const outside = await createTempDir("guardian-hygiene-outside-");
+  t.after(() => fs.rm(repo, { recursive: true, force: true }));
+  t.after(() => fs.rm(outside, { recursive: true, force: true }));
+  await fs.writeFile(path.join(outside, "preserved.txt"), "outside\n");
+  await fs.symlink(outside, path.join(repo, "guardian-origin-escape"));
+
+  // When
+  const result = await guardianHygiene({
+    repoRoot: repo,
+    config: DEFAULT_CONFIG,
+    mode: "plan",
+    cleanupPaths: ["guardian-origin-escape"],
+    allowCategories: ["suspicious"],
+  });
+
+  // Then
+  assert.equal(result.status, "blocked");
+  assert.equal((result.blockers as Array<Record<string, unknown>>).some((blocker) => blocker.path === "guardian-origin-escape" && /symlink cleanup roots/.test(String(blocker.reason))), true);
+  assert.equal(await fs.readFile(path.join(outside, "preserved.txt"), "utf8"), "outside\n");
+});
+
 test("hygiene cleanup blocks overlapping cleanup targets", async () => {
   const repo = await createRepo();
   await writeArtifact(repo, "guardian-overlap/root-file.txt");
@@ -316,4 +342,44 @@ test("hygiene scan reports failure metadata when the repo is unavailable", async
   assert.deepEqual(result.findings, []);
   assert.equal(result.summary.findingCount, 0);
   assert.deepEqual(result.suggestedCommands, ["guardian_hygiene", "guardian_status"]);
+});
+
+test("reviewable candidates report bounded byte totals and prefer complete byte measurements", async (t) => {
+  const repo = await createRepo();
+  t.after(() => fs.rm(repo, { recursive: true, force: true }));
+  await fs.mkdir(path.join(repo, "small"), { recursive: true });
+  await fs.writeFile(path.join(repo, "small", "item.txt"), "x");
+  await fs.mkdir(path.join(repo, "large"), { recursive: true });
+  await fs.writeFile(path.join(repo, "large", "item.txt"), "x".repeat(64));
+
+  const result = await buildReviewableCandidates(repo, [
+    { path: "small/item.txt", status: "untracked" },
+    { path: "large/item.txt", status: "untracked" },
+  ], new Set(), null);
+
+  assert.deepEqual(result.reviewableCandidates.map((candidate) => [candidate.path, candidate.bytes, candidate.bytesTruncated]), [
+    ["large", 64, false],
+    ["small", 1, false],
+  ]);
+  assert.equal(result.reviewableTotalBytes, 65);
+  assert.equal(result.reviewableBytesTruncated, false);
+});
+
+test("reviewable byte measurement marks a per-candidate cap as partial", async (t) => {
+  const repo = await createRepo();
+  t.after(() => fs.rm(repo, { recursive: true, force: true }));
+  const bulk = path.join(repo, "bulk");
+  await fs.mkdir(bulk, { recursive: true });
+  for (let offset = 0; offset < 10_001; offset += 100) {
+    const writes: Promise<void>[] = [];
+    for (let index = offset; index < Math.min(offset + 100, 10_001); index += 1) writes.push(fs.writeFile(path.join(bulk, `${index}.txt`), "x"));
+    await Promise.all(writes);
+  }
+
+  const result = await buildReviewableCandidates(repo, [{ path: "bulk/0.txt", status: "untracked" }], new Set(), null);
+  const candidate = result.reviewableCandidates[0];
+
+  assert.equal(candidate?.path, "bulk");
+  assert.equal(candidate?.bytesTruncated, true);
+  assert.equal(result.reviewableBytesTruncated, true);
 });

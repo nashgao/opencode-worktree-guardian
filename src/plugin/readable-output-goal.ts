@@ -1,6 +1,6 @@
 import { appendCleanupEvidence, appendFinalPostflightEvidence } from "./readable-output-evidence.ts";
 import { appendReservationRetirementEvidence } from "./readable-output-retirement.ts";
-import { appendBoundedList, appendStashInventoryWarning, arrayValue, recordValue, textValue } from "./readable-output-values.ts";
+import { appendBoundedList, appendStashInventoryWarning, arrayValue, recordValue, shortCommit, textValue } from "./readable-output-values.ts";
 import { sanitizeGoalResidualText } from "../goal-hygiene-postcondition.ts";
 
 function statusPrefix(result: Record<string, unknown>): "[FAIL]" | "[WARN]" | "[GOOD]" {
@@ -50,14 +50,17 @@ function appendHygienePostcondition(lines: string[], value: unknown, complete: b
   lines.push(`[INFO] hygiene mode=${sanitizeGoalResidualText(postcondition.mode)} phase=${sanitizeGoalResidualText(postcondition.phase)} status=${sanitizeGoalResidualText(postcondition.status)} complete=${completeText}`);
   lines.push(`[${residualCount > 0 ? "WARN" : "INFO"}] hygiene residuals: ${residualCount} | known-cleanable=${Number(counts["known-cleanable"] ?? 0)} | nested-git=${Number(counts["nested-git"] ?? 0)} | suspicious=${Number(counts.suspicious ?? 0)}`);
   if (shownFindings.length > 0) {
-    lines.push("[WARN] hygiene residual findings:");
-    for (const entry of shownFindings.slice(0, 8)) {
+    appendBoundedList({
+      lines,
+      heading: "[WARN] hygiene residual findings",
+      entries: shownFindings,
+      count: postcondition.residualFindingCount ?? residualCount,
+      format: (entry) => {
       const finding = recordValue(entry);
-      lines.push(`  - ${sanitizeGoalResidualText(finding.category)} ${sanitizeGoalResidualText(finding.path)}: ${sanitizeGoalResidualText(finding.reason)}`);
-    }
+        return `  - ${sanitizeGoalResidualText(finding.category)} ${sanitizeGoalResidualText(finding.path)}: ${sanitizeGoalResidualText(finding.reason)}`;
+      },
+    });
   }
-  const omitted = Number(postcondition.residualFindingsOmittedCount ?? 0);
-  if (omitted > 0) lines.push(`[WARN] hygiene residual findings omitted: ${omitted}`);
   lines.push(`[INFO] hygiene exclusions: ${Number(postcondition.protectedExclusionCount ?? 0)} | reviewable inventory: ${Number(postcondition.reviewableCandidateCount ?? 0)}`);
 }
 
@@ -80,7 +83,7 @@ export function formatGuardianGoalOutput(rawResult: unknown): string {
   appendStashInventoryWarning(lines, donePreflight.stashCount ?? doneResult.stashCount ?? doneCleanupPreflight.stashCount);
   const reason = textValue(result.reason, "");
   if (result.ok === false && reason) lines.push(`[FAIL] ${reason}`);
-  if (typeof result.nextAction === "string") lines.push(`[INFO] nextAction: ${result.nextAction}`);
+  if (typeof result.nextAction === "string") lines.push(`[INFO] nextAction: ${textValue(result.nextAction)}`);
   appendBoundedList({ lines, heading: "[INFO] goal steps", entries: steps, format: formatStep });
   appendBoundedList({ lines, heading: "[WARN] blockers", entries: blockers, format: (entry) => {
     const blocker = recordValue(entry);
@@ -94,6 +97,6 @@ export function formatGuardianGoalOutput(rawResult: unknown): string {
     appendReservationRetirementEvidence(lines, nested);
     appendFinalPostflightEvidence(lines, nested.finalPostflight);
   }
-  if (typeof result.commit === "string") lines.push(`[INFO] commit: ${result.commit.slice(0, 12)}`);
+  if (typeof result.commit === "string") lines.push(`[INFO] commit: ${shortCommit(result.commit)}`);
   return lines.join("\n");
 }

@@ -86,6 +86,12 @@ const COMMANDS = [
     prompt: "Use the guardian_project_status native tool to inspect project roadmap, milestone, plan, and ULW evidence. Treat the result as read-only evidence unless writeReport=true is explicitly requested.",
   },
   {
+    name: "guardian-quarantine",
+    title: "Guardian: Quarantine",
+    description: "Plan a selected restore or permanent purge for one retained quarantine item.",
+    prompt: "Use the guardian_quarantine native tool. Run mode=plan first with one exact action=restore|purge and quarantineId. Restore defaults to its original worktree only while registered; otherwise inspect eligibleTargetWorktreePaths and choose an exact registered targetWorktreePath. Apply restore only after explicit user confirmation with confirm=true. Purge is permanent and applies only after explicit user confirmation with confirmDelete=true. Never use raw move or deletion commands for quarantine artifacts, and do not ask the user to copy an internal confirm token.",
+  },
+  {
     name: "guardian-recover",
     title: "Guardian: Recover",
     description: "Inspect Guardian recovery refs, orphaned sessions, stashes, and evidence.",

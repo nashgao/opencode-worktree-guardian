@@ -1,7 +1,37 @@
 import { computeGuardianVerdict } from "../verdict.ts";
 import { TERMINAL_SESSION_STATUSES, TERMINAL_SESSION_STATUS_VALUES } from "../lifecycle.ts";
 import { appendOperationalScope } from "./readable-output-evidence.ts";
-import { DETAIL_LIST_LIMIT, arrayValue, describeEntry, recordValue, shortCommit, textValue } from "./readable-output-values.ts";
+import { appendBoundedList, arrayValue, describeEntry, recordValue, shortCommit, textValue } from "./readable-output-values.ts";
+
+function recoveryCandidateEntries(value: unknown): unknown[] {
+  if (Array.isArray(value)) return value;
+  const candidates = recordValue(value);
+  return [
+    ...arrayValue(candidates.reflog).map((entry) => ({ ...recordValue(entry), kind: "reflog" })),
+    ...arrayValue(candidates.unreachable).map((entry) => typeof entry === "string" ? { kind: "unreachable", commit: entry } : { ...recordValue(entry), kind: "unreachable" }),
+  ];
+}
+
+function formatRecoveryCandidate(entry: unknown): string {
+  const candidate = recordValue(entry);
+  const kind = textValue(candidate.kind);
+  const commit = shortCommit(candidate.commit);
+  if (kind === "reflog") return `  - reflog ${textValue(candidate.selector)} ${commit} ${textValue(candidate.subject)}`;
+  return `  - unreachable ${commit}`;
+}
+
+function safeRecoveryValue(value: unknown): string {
+  return textValue(value).replace(/\r\n|\n|\r/g, "\\n").replace(/\t/g, "\\t");
+}
+
+function quarantineRecoveryLines(result: Record<string, unknown>): string[] {
+  const items = arrayValue(result.quarantineItems).map(recordValue);
+  const operations = arrayValue(result.incompleteQuarantineOperations).map(recordValue);
+  return [
+    ...items.map((item) => `- ${safeRecoveryValue(item.state)} ${safeRecoveryValue(item.quarantineId)} ${safeRecoveryValue(item.originalRelativePath)}`),
+    ...operations.map((operation) => `- ${safeRecoveryValue(operation.action)} ${safeRecoveryValue(operation.phase)} ${safeRecoveryValue(operation.operationId)} ${safeRecoveryValue(operation.quarantineId)}`),
+  ];
+}
 
 function operationalLine(result: Record<string, unknown>, activeSessionCount: number) {
   return [
@@ -11,7 +41,7 @@ function operationalLine(result: Record<string, unknown>, activeSessionCount: nu
     `Stashes: ${arrayValue(result.stashes).length}`,
     `Orphaned sessions: ${arrayValue(result.orphanedSessions).length}`,
     `Poisoned sessions: ${arrayValue(result.poisonedSessions).length}`,
-    `Recovery candidates: ${arrayValue(result.recoveryCandidates).length}`,
+    `Recovery candidates: ${recoveryCandidateEntries(result.recoveryCandidates).length}`,
   ];
 }
 
@@ -63,10 +93,7 @@ function addSection(lines: string[], title: string, entries: readonly string[]) 
 
 function addProblemList(lines: string[], label: string, value: unknown) {
   const entries = arrayValue(value);
-  if (entries.length === 0) return;
-  lines.push(`  ${label}: ${entries.length}`);
-  for (const entry of entries.slice(0, DETAIL_LIST_LIMIT)) lines.push(`    - ${describeEntry(entry)}`);
-  if (entries.length > DETAIL_LIST_LIMIT) lines.push(`    - ... ${entries.length - DETAIL_LIST_LIMIT} more`);
+  appendBoundedList({ lines, heading: `  ${label}`, entries, format: (entry) => `    - ${describeEntry(entry)}` });
 }
 
 function hygieneProblemLines(result: Record<string, unknown>): string[] {
@@ -122,6 +149,23 @@ function statusVerdict(result: Record<string, unknown>) {
   return result.ok === false ? null : computeGuardianVerdict(result);
 }
 
+function cleanCompletionProofLines(result: Record<string, unknown>): string[] {
+  const proof = recordValue(result.cleanCompletionProof);
+  const status = textValue(proof.status, "");
+  if (!status) return [];
+  const lines = [`status: ${status}`];
+  const reason = textValue(proof.reason, "");
+  const provenAt = textValue(proof.provenAt, "");
+  const digest = textValue(proof.inventoryDigest, "");
+  if (reason) lines.push(`reason: ${reason}`);
+  if (provenAt) lines.push(`proven at: ${provenAt}`);
+  if (digest) lines.push(`inventory digest: ${shortCommit(digest)}`);
+  if (typeof proof.stateVersion === "number") lines.push(`state version: ${proof.stateVersion}`);
+  if (typeof proof.worktreeCount === "number") lines.push(`worktrees: ${proof.worktreeCount}`);
+  if (typeof proof.quarantineItemCount === "number") lines.push(`recoverable quarantine items: ${proof.quarantineItemCount}`);
+  return lines;
+}
+
 export function formatGuardianStatusOutput(name: string, rawResult: unknown) {
   const result = recordValue(rawResult);
   const lines: string[] = [statusHeader(name, result)];
@@ -133,6 +177,7 @@ export function formatGuardianStatusOutput(name: string, rawResult: unknown) {
   const scopeLines: string[] = [];
   appendOperationalScope(scopeLines, result.operationalScope);
   addSection(lines, "Operational Scope", scopeLines.slice(1).map((line) => line.replace(/^\[INFO\] /, "")));
+  addSection(lines, "Clean Completion Proof", cleanCompletionProofLines(result));
   const reason = textValue(result.reason, "");
   if (result.ok === false || reason) addSection(lines, "Problem", [reason || "guardian tool reported failure"]);
   const activeSessions = arrayValue(result.activeSessions);
@@ -152,25 +197,34 @@ export function formatGuardianStatusOutput(name: string, rawResult: unknown) {
   if (lines.length === problemStart + 2) lines.splice(problemStart, 2);
   addSection(lines, "Terminal Recovery Plans", terminalRecoveryPlanLines(result));
   addSection(lines, "History", terminalHistoryLines(terminalSessions, result));
-  if (visibleActiveSessions.length > 0) lines.push("", "Active Sessions");
-  for (const entry of visibleActiveSessions.slice(0, 12)) {
-    const session = recordValue(entry);
-    lines.push(`  ${textValue(session.session_id ?? session.sessionId)} ${textValue(session.status)} ${textValue(session.branch)} ${shortCommit(session.head_commit ?? session.headCommit)}`);
-    lines.push(`    ${textValue(session.worktree_path ?? session.worktreePath)}`);
-    lines.push(`    ${baseDistanceLine(result, session)}`);
-  }
+  if (visibleActiveSessions.length > 0) lines.push("");
+  appendBoundedList({
+    lines,
+    heading: "Active Sessions",
+    entries: visibleActiveSessions,
+    limit: 12,
+    format: (entry) => {
+      const session = recordValue(entry);
+      return `  ${textValue(session.session_id ?? session.sessionId)} ${textValue(session.status)} ${textValue(session.branch)} ${shortCommit(session.head_commit ?? session.headCommit)}\n    ${textValue(session.worktree_path ?? session.worktreePath)}\n    ${baseDistanceLine(result, session)}`;
+    },
+  });
   const worktrees = arrayValue(result.worktrees);
-  lines.push("", "Current Worktrees");
-  for (const entry of worktrees.slice(0, 12)) {
-    const worktree = recordValue(entry);
-    const markers = [worktree.detached === true ? "detached" : "", worktree.bare === true ? "bare" : ""].filter(Boolean).join(",");
-    lines.push(`  ${textValue(worktree.branch)} ${shortCommit(worktree.head ?? worktree.head_commit ?? worktree.headCommit)} ${textValue(worktree.path ?? worktree.worktree_path ?? worktree.worktreePath)}${markers ? ` (${markers})` : ""}`);
-  }
-  const recoveryCandidates = arrayValue(result.recoveryCandidates);
-  if (recoveryCandidates.length > 0) {
-    lines.push("", "Recovery Candidates");
-    for (const entry of recoveryCandidates.slice(0, 12)) lines.push(`  - ${describeEntry(entry)}`);
-  }
+  lines.push("");
+  appendBoundedList({
+    lines,
+    heading: "Current Worktrees",
+    entries: worktrees,
+    limit: 12,
+    format: (entry) => {
+      const worktree = recordValue(entry);
+      const markers = [worktree.detached === true ? "detached" : "", worktree.bare === true ? "bare" : ""].filter(Boolean).join(",");
+      return `  ${textValue(worktree.branch)} ${shortCommit(worktree.head ?? worktree.head_commit ?? worktree.headCommit)} ${textValue(worktree.path ?? worktree.worktree_path ?? worktree.worktreePath)}${markers ? ` (${markers})` : ""}`;
+    },
+  });
+  const recoveryCandidates = recoveryCandidateEntries(result.recoveryCandidates);
+  if (recoveryCandidates.length > 0) lines.push("");
+  appendBoundedList({ lines, heading: "Recovery Candidates", entries: recoveryCandidates, limit: 12, format: formatRecoveryCandidate });
+  addSection(lines, "Quarantine Recovery", quarantineRecoveryLines(result));
   const suggestions = arrayValue(result.suggestedCommands);
   addSection(lines, "Suggested Commands", suggestions.map((command) => textValue(command, String(command))));
   return lines.join("\n");

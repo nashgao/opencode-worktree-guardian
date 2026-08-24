@@ -4,7 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { DEFAULT_CONFIG } from "../src/config.ts";
 import { classifyCleanCompletionDisposition } from "../src/clean-completion-disposition.ts";
-import { buildCandidateFacts } from "../src/clean-completion.ts";
+import { buildCandidateFacts, planCleanCompletion } from "../src/clean-completion.ts";
 import { collectCleanupFingerprint } from "../src/deletion-fingerprint.ts";
 import { buildDirtySessionDoneIntent } from "../src/done-intent.ts";
 import plugin from "../src/index.ts";
@@ -401,6 +401,44 @@ test("T12-WORKTREE-DRIFT rejects a session whose recorded worktree no longer exi
   const facts = await buildCandidateFacts({ repoRoot: repo, worktreePath: worktree, config: enabledConfig, session: started.session, paths, relativePath: "residue.txt", commitPaths: [] });
 
   assert.equal(classifyCleanCompletionDisposition(facts).disposition, "block");
+});
+
+test("T12-GUARDIAN-ROOT blocks a stable clean claim when the configured Guardian root has an unregistered entry", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_t12_guardian_root", taskName: "guardian root inventory", createWorktree: true, config: enabledConfig });
+  const root = path.join(repo, ".worktrees", path.basename(repo));
+  await fs.mkdir(path.join(root, "unregistered"), { recursive: true });
+
+  const proof = await planCleanCompletion({ repoRoot: repo, cwd: String(started.session.worktree_path), config: enabledConfig, session: started.session });
+
+  assert.equal(proof.finalProof.status, "unstable", JSON.stringify(proof));
+  assert.match(String(proof.finalProof.reason), /unregistered Guardian worktree root entry/);
+});
+
+test("T12-METADATA-ROOT blocks a stable clean claim when Guardian metadata has an unknown root entry", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_t12_metadata_root", taskName: "metadata root inventory", createWorktree: true, config: enabledConfig });
+  const paths = await getGuardianPaths(repo);
+  await fs.writeFile(path.join(paths.dir, "unexpected-state"), "unexpected\n", "utf8");
+
+  const proof = await planCleanCompletion({ repoRoot: repo, cwd: String(started.session.worktree_path), config: enabledConfig, session: started.session });
+
+  assert.equal(proof.finalProof.status, "unstable", JSON.stringify(proof));
+  assert.match(String(proof.finalProof.reason), /unknown Guardian metadata root entry/);
+});
+
+test("T12-REF-ROOT blocks a stable clean claim when Guardian has an unknown safety ref", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_t12_ref_root", taskName: "ref root inventory", createWorktree: true, config: enabledConfig });
+  await git(repo, ["update-ref", "refs/opencode-guardian/unrecognized", "HEAD"]);
+
+  const proof = await planCleanCompletion({ repoRoot: repo, cwd: String(started.session.worktree_path), config: enabledConfig, session: started.session });
+
+  assert.equal(proof.finalProof.status, "unstable", JSON.stringify(proof));
+  assert.match(String(proof.finalProof.reason), /unknown Guardian safety ref/);
 });
 
 test("T12-METADATA-DRIFT rejects a session whose recorded provenance digest no longer matches its manifest file", async (t) => {

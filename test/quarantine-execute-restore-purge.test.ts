@@ -55,11 +55,15 @@ test("executeRestore moves a quarantined item back into a selected registered wo
 });
 
 test("executeRestore refuses to restore into the primary repository worktree", async (t) => {
-  const { base, repo, paths, session, quarantined } = await quarantinedResidueFixture("ses_restore_primary_blocked", "no-primary-restore\n");
+  const { base, repo, worktree, paths, session, quarantined } = await quarantinedResidueFixture("ses_restore_primary_blocked", "no-primary-restore\n");
   t.after(() => fs.rm(base, { recursive: true, force: true }));
 
   await assert.rejects(
     executeRestore({ paths, repoRoot: repo, config: enabledConfig, session, quarantineId: quarantined.quarantineId, targetWorktreePath: repo }),
+    /restore target is the primary repository worktree/,
+  );
+  await assert.rejects(
+    executeRestore({ paths, repoRoot: worktree, config: { ...enabledConfig, protectedBranches: [] }, session, quarantineId: quarantined.quarantineId, targetWorktreePath: repo }),
     /restore target is the primary repository worktree/,
   );
   const item = await readQuarantineItem({ paths, quarantineId: quarantined.quarantineId });

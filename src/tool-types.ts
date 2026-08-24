@@ -161,6 +161,7 @@ export const GUARDIAN_TOOL_NAMES = [
   "guardian_init",
   "guardian_preserve",
   "guardian_project_status",
+  "guardian_quarantine",
   "guardian_recover",
   "guardian_report_html",
   "guardian_start",
@@ -211,6 +212,8 @@ export type PlanCacheToolArgs = MutableRecord & {
   branch?: unknown;
   targetPath?: unknown;
   worktreePath?: unknown;
+  targetWorktreePath?: unknown;
+  quarantineId?: unknown;
 };
 
 export function isGuardianToolName(value: string): value is GuardianToolName {

@@ -48,6 +48,15 @@ export async function lstatOrMissing(candidate: string) {
   }
 }
 
+export async function canonicalPathOrResolved(candidate: string): Promise<string> {
+  try {
+    return await fs.realpath(candidate);
+  } catch (error) {
+    if (isEnoent(error)) return path.resolve(candidate);
+    throw error;
+  }
+}
+
 export async function assertNoSymlinkAncestors(candidate: string, label: string): Promise<void> {
   const resolved = path.resolve(candidate);
   const parts = path.relative(path.parse(resolved).root, resolved).split(path.sep).filter(Boolean);

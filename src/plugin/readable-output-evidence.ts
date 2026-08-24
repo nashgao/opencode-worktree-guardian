@@ -1,9 +1,7 @@
-import { DETAIL_LIST_LIMIT, appendBoundedList, arrayValue, recordValue, shortCommit, textValue } from "./readable-output-values.ts";
+import { appendBoundedList, arrayValue, recordValue, shortCommit, textValue } from "./readable-output-values.ts";
 
 function inlineItems(entries: readonly unknown[]): string {
-  const visible = entries.slice(0, DETAIL_LIST_LIMIT).map((entry) => textValue(entry, String(entry)));
-  const omitted = entries.length - visible.length;
-  return omitted > 0 ? `${entries.length} | shown: ${visible.join(", ")} | omitted: ${omitted}` : visible.join(", ");
+  return entries.map((entry) => textValue(entry, String(entry))).join(", ");
 }
 
 export function appendOperationalScope(lines: string[], rawScope: unknown, compact = false): void {
@@ -72,16 +70,18 @@ function formatBlockerStash(entry: unknown): string {
 }
 
 function appendPostflightBlockers(lines: string[], blockers: readonly unknown[]): void {
-  if (blockers.length === 0) return;
-  const shown = blockers.slice(0, DETAIL_LIST_LIMIT);
-  lines.push(`[WARN] final postflight blockers: ${blockers.length}${blockers.length > shown.length ? ` | omitted: ${blockers.length - shown.length}` : ""}`);
-  for (const entry of shown) {
-    lines.push(formatPostflightBlocker(entry));
+  appendBoundedList({
+    lines,
+    heading: "[WARN] final postflight blockers",
+    entries: blockers,
+    format: formatPostflightBlocker,
+    afterEntry: (entry) => {
     const blocker = recordValue(entry);
     appendBoundedList({ lines, heading: "[WARN] blocker branches", entries: arrayValue(blocker.branches), format: formatBlockerBranch });
     appendBoundedList({ lines, heading: "[WARN] blocker worktrees", entries: arrayValue(blocker.worktrees), format: formatBlockerWorktree });
     appendBoundedList({ lines, heading: "[WARN] blocker stashes", entries: arrayValue(blocker.stashes), format: formatBlockerStash });
-  }
+    },
+  });
 }
 
 function formatDroppedCommit(entry: unknown): string {

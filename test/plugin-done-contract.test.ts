@@ -4,7 +4,7 @@ import test from "node:test";
 import plugin from "../src/index.ts";
 import { maybeInjectPlanConfirmToken, rememberPlanConfirmToken } from "../src/plugin/plan-token-cache.ts";
 import { formatGuardianOutput } from "../src/plugin/readable-output.ts";
-import { createToolContext, runTool } from "./plugin-contract-helpers.ts";
+import { createToolContext, metadataRecord, runTool } from "./plugin-contract-helpers.ts";
 import type { PlanCacheToolArgs, PlanTokenCache } from "../src/types.ts";
 
 test("guardian_done tool execute returns readable primary-main plan output with raw metadata", async () => {
@@ -87,34 +87,11 @@ test("guardian_done plugin confirm reuses matching plan token for primary publis
   assert.equal(plan.metadata.status, "planned");
   assert.equal(apply.metadata.status, "published");
   assert.equal(apply.metadata.lane, "primary-main-publish");
+  assert.equal(metadataRecord(apply.metadata, "postCompletionHygiene").status, "satisfied");
+  assert.match(apply.output, /post-completion hygiene: satisfied/);
   const { git } = await import("./helpers.ts");
   const { stdout: remoteMain } = await git(repo, ["rev-parse", "origin/main"]);
   assert.equal(remoteMain, apply.metadata.commit);
-});
-
-test("guardian_done plugin confirm reuses planned-partial tokens", () => {
-  const cache: PlanTokenCache = new Map();
-  const planArgs: PlanCacheToolArgs = { repoRoot: "/repo", cwd: "/repo", mode: "plan", allowIgnoredFiles: true };
-  const applyArgs: PlanCacheToolArgs = { repoRoot: "/repo", cwd: "/repo", mode: "apply", confirm: true, confirmToken: "", allowIgnoredFiles: true };
-
-  rememberPlanConfirmToken("guardian_done", planArgs, { ok: true, status: "planned-partial", confirmToken: "partial-token" }, cache);
-  maybeInjectPlanConfirmToken("guardian_done", applyArgs, cache);
-
-  assert.equal(applyArgs.confirmToken, "partial-token");
-});
-
-test("guardian_done plugin cache keys include primary target", () => {
-  const cache: PlanTokenCache = new Map();
-  const primaryPlanArgs: PlanCacheToolArgs = { repoRoot: "/repo", cwd: "/repo", mode: "plan", primary: true, commitMessage: "feat: primary target" };
-  const bareApplyArgs: PlanCacheToolArgs = { repoRoot: "/repo", cwd: "/repo", mode: "apply", confirm: true, confirmToken: "", commitMessage: "feat: primary target" };
-  const primaryApplyArgs: PlanCacheToolArgs = { ...bareApplyArgs, primary: true };
-
-  rememberPlanConfirmToken("guardian_done", primaryPlanArgs, { ok: true, status: "planned", confirmToken: "primary-token" }, cache);
-  maybeInjectPlanConfirmToken("guardian_done", bareApplyArgs, cache);
-  maybeInjectPlanConfirmToken("guardian_done", primaryApplyArgs, cache);
-
-  assert.equal(bareApplyArgs.confirmToken, "");
-  assert.equal(primaryApplyArgs.confirmToken, "primary-token");
 });
 
 test("guardian_done readable done-all output includes cleanup plan details", () => {

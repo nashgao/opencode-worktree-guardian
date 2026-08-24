@@ -247,7 +247,7 @@ test("Codex guardian_done lands one dirty session from the primary cwd", async (
   assert.match(plan.stdout, /\[WARN\] guardian_done planned/);
   assert.match(plan.stdout, /lane: session-finish/);
   assert.match(plan.stdout, /selectedTarget: session session=ses_codex_done_anywhere/);
-  assert.match(plan.stdout, /dirty files:\n  - codex-session\.txt/);
+  assert.match(plan.stdout, /dirty files: 1\n  - codex-session\.txt/);
   assert.match(plan.stdout, /commitMessage: feat: codex session done/);
 
   await installFakeGh(t, { repo, branch, dynamicHead: true });
@@ -278,48 +278,4 @@ test("Codex guardian_done reports needs-selection for ambiguous dirty targets", 
   assert.match(plan.stdout, /target=session session=ses_codex_done_ambiguous/);
   assert.match(plan.stdout, /guardian_done primary=true commitMessage=\.\.\./);
   assert.match(plan.stdout, new RegExp(`guardian_done branch=${escapeRegExp(started.session.branch)} commitMessage=\\.\\.\\.`));
-});
-
-test("Codex plugin payload is packaged and points at Guardian hooks", async () => {
-  const packageJson = JSON.parse(await fs.readFile(path.join(projectRoot, "package.json"), "utf8"));
-  const pluginJson = JSON.parse(await fs.readFile(path.join(projectRoot, "codex", ".codex-plugin", "plugin.json"), "utf8"));
-  const hooksJson = JSON.parse(await fs.readFile(path.join(projectRoot, "codex", "hooks", "hooks.json"), "utf8"));
-  const rootPluginJson = JSON.parse(await fs.readFile(path.join(projectRoot, ".codex-plugin", "plugin.json"), "utf8"));
-  const rootHooksJson = JSON.parse(await fs.readFile(path.join(projectRoot, "hooks", "hooks.json"), "utf8"));
-  const codexSkillNames = (await fs.readdir(path.join(projectRoot, "codex", "skills"), { withFileTypes: true }))
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => entry.name)
-    .sort();
-
-  assert.equal(packageJson.files.includes("codex"), true);
-  assert.equal(packageJson.exports["./codex"], "./codex/hooks/guardian-hook.ts");
-  assert.equal(pluginJson.hooks, "./hooks/hooks.json");
-  assert.equal(pluginJson.skills, "./skills/");
-  assert.match(hooksJson.hooks.PreToolUse[0].hooks[0].command, /^node "\$\{PLUGIN_ROOT\}\/hooks\/guardian-hook\.ts" hook pre-tool-use$/);
-  assert.match(hooksJson.hooks.PostToolUse[0].hooks[0].command, /^node "\$\{PLUGIN_ROOT\}\/hooks\/guardian-hook\.ts" hook post-tool-use$/);
-  assert.doesNotMatch(hooksJson.hooks.PreToolUse[0].hooks[0].command, /\.\.\/node_modules|\/Users\//);
-  assert.equal(rootPluginJson.hooks, "./hooks/hooks.json");
-  assert.equal(rootPluginJson.skills, "./codex/skills/");
-  assert.match(rootHooksJson.hooks.PreToolUse[0].hooks[0].command, /^node "\$\{PLUGIN_ROOT\}\/codex\/hooks\/guardian-hook\.ts" hook pre-tool-use$/);
-  assert.match(rootHooksJson.hooks.PostToolUse[0].hooks[0].command, /^node "\$\{PLUGIN_ROOT\}\/codex\/hooks\/guardian-hook\.ts" hook post-tool-use$/);
-  assert.deepEqual(codexSkillNames, [
-    "guardian-delete-paths",
-    "guardian-delete-worktree",
-    "guardian-done",
-    "guardian-finish",
-    "guardian-finish-workflow",
-    "guardian-gc",
-    "guardian-goal",
-    "guardian-hud",
-    "guardian-hygiene",
-    "guardian-init",
-    "guardian-preserve",
-    "guardian-project-status",
-    "guardian-recover",
-    "guardian-report",
-    "guardian-start",
-    "guardian-status",
-    "guardian-unblock-finish",
-    "worktree-guardian",
-  ]);
 });

@@ -14,7 +14,7 @@ import {
 } from "./delete-fixtures.js";
 import { buildSafetyRef, createSafetyRef, deleteBranchAtHead, deleteRemoteBranch, getHeadCommit } from "../src/git.ts";
 import { guardianStart } from "../src/start.ts";
-import { createRepo } from "./helpers.ts";
+import { createRepo, createTempDir } from "./helpers.ts";
 
 const ownedRoots: string[] = [];
 
@@ -198,6 +198,27 @@ test("safety refs are create-only and preserve an existing collision", async (t)
   await git(repo, ["update-ref", ref, head]);
 
   await assert.rejects(createSafetyRef(repo, { sessionId: "collision", branch: "guardian/collision", commit: head, timestamp }));
+  assert.equal((await git(repo, ["rev-parse", ref])).stdout, head);
+});
+
+test("safety refs are create-only in SHA-256 repositories", async (t) => {
+  // Given
+  const repo = await createTempDir("guardian-sha256-safety-");
+  t.after(() => fs.rm(repo, { recursive: true, force: true }));
+  await git(repo, ["init", "--object-format=sha256", "-b", "main", "."]);
+  await git(repo, ["config", "user.email", "guardian@example.test"]);
+  await git(repo, ["config", "user.name", "Guardian Test"]);
+  await fs.writeFile(path.join(repo, "README.md"), "initial\n");
+  await git(repo, ["add", "README.md"]);
+  await git(repo, ["commit", "-m", "initial"]);
+  const head = await getHeadCommit(repo);
+  const ref = buildSafetyRef("sha256", "guardian/sha256", "20260823T000000");
+
+  // When
+  await createSafetyRef(repo, { ref, commit: head });
+
+  // Then
+  assert.equal(head.length, 64);
   assert.equal((await git(repo, ["rev-parse", ref])).stdout, head);
 });
 

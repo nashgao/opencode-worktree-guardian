@@ -135,9 +135,9 @@ test("hygiene scanner exposes reviewable scan inventory separately from cleanup 
         findingCount: 0,
         exclusionCount: 2,
         reviewableCandidateCount: 14,
-        reviewableShownCount: 12,
-        reviewableOmittedCount: 2,
-        reviewableTruncated: true,
+        reviewableShownCount: 14,
+        reviewableOmittedCount: 0,
+        reviewableTruncated: false,
       },
       reviewableCandidates: [
         { path: "aaa.txt", status: "untracked", fileCount: 1, reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["aaa.txt"]' },
@@ -152,12 +152,14 @@ test("hygiene scanner exposes reviewable scan inventory separately from cleanup 
         { path: "jjj.txt", status: "untracked", fileCount: 1, reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["jjj.txt"]' },
         { path: "logs", status: "ignored", fileCount: 1, reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["logs"] allowRecursive=true' },
         { path: "plain.log", status: "ignored", fileCount: 1, reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["plain.log"]' },
-      ],
+        { path: "yyy.txt", status: "untracked", fileCount: 1, reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["yyy.txt"]' },
+        { path: "zzz.txt", status: "untracked", fileCount: 1, reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["zzz.txt"]' },
+      ].map((candidate) => ({ ...candidate, bytes: 9, bytesTruncated: false })),
     },
   );
 });
 
-test("reviewable truncation shows the largest candidates, not the alphabetically first", async () => {
+test("reviewable inventory includes the largest candidates and every smaller path", async () => {
   const repo = await createRepo();
   for (const name of ["aaa", "bbb", "ccc", "ddd", "eee", "fff", "ggg", "hhh", "iii", "jjj", "kkk", "lll"]) {
     await writeArtifact(repo, `${name}.txt`);
@@ -172,13 +174,13 @@ test("reviewable truncation shows the largest candidates, not the alphabetically
 
   assert.equal(summary.candidateCount, 17);
   assert.equal(summary.reviewableCandidateCount, 13);
-  assert.equal(summary.reviewableShownCount, 12);
-  assert.equal(summary.reviewableOmittedCount, 1);
+  assert.equal(summary.reviewableShownCount, 13);
+  assert.equal(summary.reviewableOmittedCount, 0);
   assert.equal(summary.reviewableTotalFileCount, 17);
 
   assert.equal(candidates[0]?.path, "zzz-bulk");
   assert.equal(candidates[0]?.fileCount, 5);
-  assert.ok(candidates.every((candidate) => candidate.path !== "lll.txt"));
+  assert.ok(candidates.some((candidate) => candidate.path === "lll.txt"));
 });
 
 test("hygiene scanner keeps reviewable delete suggestions narrow when siblings include hygiene findings", async () => {
@@ -191,7 +193,7 @@ test("hygiene scanner keeps reviewable delete suggestions narrow when siblings i
   assert.equal(result.ok, true);
   assert.deepEqual(findingPaths(result), ["foo/node-compile-cache"]);
   assert.deepEqual(recordField(result, "reviewableCandidates"), [
-    { path: "foo/ordinary.txt", status: "untracked", fileCount: 1, reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["foo/ordinary.txt"]' },
+    { path: "foo/ordinary.txt", status: "untracked", fileCount: 1, bytes: 9, bytesTruncated: false, reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["foo/ordinary.txt"]' },
   ]);
 });
 
@@ -208,7 +210,7 @@ test("hygiene scanner keeps reviewable files exact under tracked source director
 
   assert.equal(result.ok, true);
   assert.deepEqual(recordField(result, "reviewableCandidates"), [
-    { path: "src/ordinary.txt", status: "ignored", fileCount: 1, reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["src/ordinary.txt"]' },
+    { path: "src/ordinary.txt", status: "ignored", fileCount: 1, bytes: 11, bytesTruncated: false, reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["src/ordinary.txt"]' },
   ]);
 });
 
@@ -224,7 +226,7 @@ test("hygiene scanner keeps nested protected exclusions from suppressing reviewa
   const protectedExclusion = (result.exclusions as Array<Record<string, unknown>>).find((entry) => entry.path === "foo/node_modules");
   assert.equal(recordField(protectedExclusion ?? {}, "suggestedDeletePathCommand"), undefined);
   assert.deepEqual(recordField(result, "reviewableCandidates"), [
-    { path: "foo/ordinary.txt", status: "untracked", fileCount: 1, reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["foo/ordinary.txt"]' },
+    { path: "foo/ordinary.txt", status: "untracked", fileCount: 1, bytes: 9, bytesTruncated: false, reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["foo/ordinary.txt"]' },
   ]);
 });
 
@@ -266,7 +268,7 @@ test("hygiene cleanup blocks unsafe selected cleanup roots", async () => {
 test("readiness keeps each command timeout finite and sufficient for verification", async () => {
   const readiness = await readFile(new URL("../scripts/readiness.ts", import.meta.url), "utf8");
 
-  assert.match(readiness, /const commandTimeoutMs = 900000;/);
+  assert.match(readiness, /const commandTimeoutMs = 1500000;/);
   assert.match(readiness, /timeout: commandTimeoutMs,/);
   assert.match(readiness, /killSignal: "SIGTERM",/);
 });

@@ -43,6 +43,8 @@ type BoundedListInput = {
   readonly entries: readonly unknown[];
   readonly format: (entry: unknown) => string;
   readonly count?: unknown;
+  readonly limit?: number;
+  readonly afterEntry?: (entry: unknown) => void;
 };
 
 function itemCount(entries: readonly unknown[], value: unknown): number {
@@ -50,13 +52,17 @@ function itemCount(entries: readonly unknown[], value: unknown): number {
   return Math.max(entries.length, reported);
 }
 
-export function appendBoundedList({ lines, heading, entries, format, count }: BoundedListInput): void {
+export function appendBoundedList({ lines, heading, entries, format, count, limit = DETAIL_LIST_LIMIT, afterEntry }: BoundedListInput): void {
   const total = itemCount(entries, count);
   if (total === 0) return;
-  const shown = Math.min(entries.length, DETAIL_LIST_LIMIT);
+  const boundedLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : DETAIL_LIST_LIMIT;
+  const shown = Math.min(entries.length, boundedLimit);
   const omitted = Math.max(0, total - shown);
   lines.push(`${heading}: ${total}${omitted > 0 ? ` | omitted: ${omitted}` : ""}`);
-  for (const entry of entries.slice(0, DETAIL_LIST_LIMIT)) lines.push(format(entry));
+  for (const entry of entries.slice(0, boundedLimit)) {
+    lines.push(format(entry));
+    afterEntry?.(entry);
+  }
 }
 
 export function appendStashInventoryWarning(lines: string[], value: unknown): void {

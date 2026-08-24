@@ -130,6 +130,30 @@ export type GuardianSession = {
   readonly [key: string]: unknown;
 };
 
+export type CleanCompletionProofRecordV1 = {
+  readonly version: 1;
+  readonly kind: "clean-completion-proof";
+  readonly status: "complete";
+  readonly stateVersion: number;
+  readonly provenAt: string;
+  readonly inventoryDigest: string;
+  readonly worktreeCount: number;
+  readonly quarantineItemCount: number;
+  readonly incompleteOperationCount: 0;
+};
+
+export type CleanCompletionProofEvidence = {
+  readonly status: "proven" | "stale" | "invalid";
+  readonly reason?: string;
+  readonly version?: 1;
+  readonly stateVersion?: number;
+  readonly provenAt?: string;
+  readonly inventoryDigest?: string;
+  readonly worktreeCount?: number;
+  readonly quarantineItemCount?: number;
+  readonly incompleteOperationCount?: 0;
+};
+
 export type GuardianState = {
   schema_version: string;
   state_version: number;
@@ -139,6 +163,7 @@ export type GuardianState = {
   finish_mode: string;
   worktree_root: string;
   sessions: Record<string, GuardianSession>;
+  clean_completion_proof?: CleanCompletionProofRecordV1;
   remote_branch_cleanup_reservations?: readonly RemoteBranchCleanupSafetyRefReservation[];
   created_at: string;
   updated_at: string;
