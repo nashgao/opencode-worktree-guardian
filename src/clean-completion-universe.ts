@@ -4,9 +4,12 @@ import path from "node:path";
 import { guardianMetadataSnapshot } from "./clean-completion-metadata.ts";
 import { expandWorktreeRoot } from "./config.ts";
 import { realPathOrResolved } from "./done-shared.ts";
+import { isSameOrInside } from "./filesystem-boundaries.ts";
 import { getGuardianPaths } from "./guardian-paths.ts";
 import { isAncestor, listRefs, listWorktrees, runGitNullSeparated } from "./git.ts";
+import { protectedDirReason } from "./hygiene-scan.ts";
 import { listIncompleteQuarantineOperations, listQuarantineItems } from "./quarantine-journal.ts";
+import { protectedPathsFromConfig } from "./protected-paths.ts";
 import { readState } from "./state.ts";
 import type { GuardianConfig, GuardianPaths, GuardianStateRecord } from "./types.ts";
 import { isRecordLike } from "./types.ts";
@@ -35,15 +38,32 @@ function isEnoent(error: unknown): error is NodeJS.ErrnoException {
   return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 }
 
-async function registeredWorktreeSnapshot(repoRoot: string): Promise<{ readonly worktrees: readonly { readonly path: string; readonly status: readonly string[]; readonly tracked: readonly string[]; readonly ignored: readonly string[] }[]; readonly reason?: string }> {
+async function registeredWorktreeSnapshot(repoRoot: string, config: GuardianConfig): Promise<{ readonly worktrees: readonly { readonly path: string; readonly status: readonly string[]; readonly tracked: readonly string[]; readonly ignored: readonly string[] }[]; readonly reason?: string }> {
   try {
     const worktrees = await listWorktrees(repoRoot);
-    const inventories = await Promise.all(worktrees.map(async (worktree) => ({
-      path: path.resolve(await realPathOrResolved(worktree.path)),
-      status: await runGitNullSeparated(worktree.path, ["status", "--porcelain=v1", "--untracked-files=all", "-z"]),
-      tracked: await runGitNullSeparated(worktree.path, ["ls-files", "-z", "--stage"]),
-      ignored: await runGitNullSeparated(worktree.path, ["ls-files", "-z", "--others", "--ignored", "--exclude-standard"]),
-    })));
+    const registeredRoots = await Promise.all(worktrees.map(async (worktree) => path.resolve(await realPathOrResolved(worktree.path))));
+    const guardianRoot = path.resolve(repoRoot, expandWorktreeRoot(config.worktreeRoot, repoRoot));
+    const protectedPaths = protectedPathsFromConfig(config);
+    const inventories = await Promise.all(worktrees.map(async (worktree, index) => {
+      const visible = (entry: string) => {
+        if (protectedDirReason(entry, protectedPaths)) return false;
+        const candidate = path.resolve(worktree.path, entry);
+        return !isSameOrInside(candidate, guardianRoot)
+          && !registeredRoots.some((root, rootIndex) => rootIndex !== index && isSameOrInside(candidate, root));
+      };
+      const [status, tracked, untracked, ignored] = await Promise.all([
+        runGitNullSeparated(worktree.path, ["status", "--porcelain=v1", "--untracked-files=no", "-z"]),
+        runGitNullSeparated(worktree.path, ["ls-files", "-z", "--stage"]),
+        runGitNullSeparated(worktree.path, ["ls-files", "-z", "--others", "--exclude-standard"]),
+        runGitNullSeparated(worktree.path, ["ls-files", "-z", "--others", "--ignored", "--exclude-standard"]),
+      ]);
+      return {
+        path: registeredRoots[index] ?? path.resolve(worktree.path),
+        status: [...status, ...untracked.filter(visible).map((entry) => `?? ${entry}`)],
+        tracked,
+        ignored: ignored.filter(visible),
+      };
+    }));
     return { worktrees: inventories };
   } catch (error) {
     return { worktrees: [], reason: `registered worktree inventory failed: ${error instanceof Error ? error.message : String(error)}` };
@@ -113,7 +133,7 @@ async function cleanCompletionUniverseSnapshot(repoRoot: string, config: Guardia
     const [worktreeRoot, metadata, registeredWorktrees, refs] = await Promise.all([
       guardianWorktreeRootSnapshot(repoRoot, config),
       guardianMetadataSnapshot({ paths, state, quarantineItems }),
-      registeredWorktreeSnapshot(repoRoot),
+      registeredWorktreeSnapshot(repoRoot, config),
       guardianRefSnapshot(repoRoot, recordedGuardianRefs(state)),
     ]);
     const reason = worktreeRoot.reason ?? metadata.reason ?? registeredWorktrees.reason ?? refs.reason
