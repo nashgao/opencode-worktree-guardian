@@ -25,9 +25,9 @@ function okField(value: unknown): unknown {
 
 export async function postFinishMaintenance(context: LandCleanMaintenanceContext, requiredCommits: readonly FinalPostflightCommit[]): Promise<Record<string, unknown>> {
   if (context.input.skipPostFinishMaintenance === true) return {};
-  const cleanupSweep = await runCleanupSweep(context.repoRoot, context.config, context.input);
-  if (cleanupSweep.freshPlanRequired === true) return { cleanupSweep, freshPlanRequired: true };
   const mainSync = await syncLocalBase(context.repoRoot, context.config);
+  const cleanupSweep = await runCleanupSweep(context.repoRoot, context.config, context.input);
+  if (cleanupSweep.freshPlanRequired === true) return { mainSync, cleanupSweep, freshPlanRequired: true };
   const finalPostflight = await runFinalCleanupPostflight({ repoRoot: context.repoRoot, config: context.config, requiredCommits: [...requiredCommits, ...finalPostflightCommitsFromCleanupSweep(cleanupSweep)], allowedRemoteBranches: normalizeAllowedRemoteBranches(context.input.allowedRemoteBranches) });
   return { mainSync, cleanupSweep, finalPostflight };
 }
