@@ -8,9 +8,12 @@
     ".milestones",
     ".opencode",
     ".codegraph",
-    ".worktrees"
+    ".worktrees",
+    "AGENTS.md",
+    "logs/stop.json"
   ],
   "goal": {
-    "hygieneCompletion": "no-unprotected-findings"
+    "hygieneCompletion": "no-unprotected-residue",
+    "quarantineSessionResidue": true
   }
 }
