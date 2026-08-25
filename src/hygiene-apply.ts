@@ -129,7 +129,7 @@ async function buildHygieneCleanupPreflight(input: Record<string, unknown>) {
   const selectedInput = stringArray(input.cleanupPaths);
   const scan = await scanWorkspaceHygiene({ ...input, repoRoot, config });
   const findings = (scan.findings as Array<Record<string, unknown>> | undefined ?? []).filter((finding) => typeof finding.path === "string");
-  const exclusions = (scan.exclusions as Array<Record<string, unknown>> | undefined ?? []).filter((exclusion) => typeof exclusion.path === "string");
+  const exclusions = scan.exclusions.filter((exclusion) => typeof exclusion.path === "string");
   const findingsByPath = new Map(findings.map((finding) => [String(finding.path), finding]));
   const blockers: CleanupBlocker[] = invalidAllowCategories.map((category) => ({ category, reason: `unsupported allowCategories entry: ${category}`, fatal: true }));
   if (scan.ok === false) blockers.push({ reason: `guardian_hygiene scan failed: ${String(scan.reason ?? "unknown error")}`, fatal: true });

@@ -43,7 +43,7 @@ test("hygiene cleanup blocks an explicit finding parent that contains a scan exc
   const scan = await scanWorkspaceHygiene({ repoRoot: repo, config: DEFAULT_CONFIG });
   const plan = await guardianHygiene({ repoRoot: repo, config: DEFAULT_CONFIG, mode: "plan", cleanupPaths: [parent] });
 
-  assert.deepEqual((scan.exclusions as Array<Record<string, unknown>>).map((entry) => entry.path).sort(), [exclusion]);
+  assert.deepEqual(scan.exclusions.map((entry) => entry.path).sort(), [exclusion]);
   assert.deepEqual(scan.reviewableCandidates, []);
   assert.equal(plan.ok, false);
   assert.equal(plan.status, "blocked");

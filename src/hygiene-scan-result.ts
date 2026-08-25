@@ -1,4 +1,5 @@
 import type { HygieneCategory, HygieneSeverity } from "./hygiene-classification.ts";
+import type { ProtectedInventoryEntry } from "./hygiene-protected-inventory.ts";
 import type { ReviewableCandidate } from "./hygiene-reviewable.ts";
 
 export type FilesystemOnlyEmptyDirectory = {
@@ -11,6 +12,11 @@ export type FilesystemOnlyEmptyDirectory = {
 export type HygieneSummary = {
   readonly candidateCount: number;
   readonly exclusionCount: number;
+  readonly protectedInventoryCount: number;
+  readonly protectedInventoryFileCount: number;
+  readonly protectedInventoryDirectoryCount: number;
+  readonly protectedInventoryTotalBytes: number;
+  readonly protectedInventoryBytesTruncated: boolean;
   readonly findingCount: number;
   readonly filesystemOnlyEmptyDirectoryCount: number;
   readonly filesystemOnlyEmptyDirectoryMaxDepth: number;
@@ -38,7 +44,7 @@ export type HygieneScanResult = {
   readonly scannedAt: string;
   readonly summary: HygieneSummary;
   readonly findings: readonly Record<string, unknown>[];
-  readonly exclusions: readonly Record<string, unknown>[];
+  readonly exclusions: readonly ProtectedInventoryEntry[];
   readonly filesystemOnlyEmptyDirectories: readonly FilesystemOnlyEmptyDirectory[];
   readonly operationalScope: Record<string, string>;
   readonly reviewableCandidates: ReviewableCandidate[];

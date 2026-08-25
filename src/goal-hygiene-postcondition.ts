@@ -5,6 +5,8 @@ import type { NullSeparatedRunner } from "./hygiene-candidates.ts";
 import type { GuardianGoalHygieneCompletion, RecordLike } from "./types.ts";
 import { isRecordLike } from "./types.ts";
 import type { NormalizedGuardianConfig } from "./normalized-config.ts";
+import { EMPTY_PROTECTED_INVENTORY } from "./hygiene-protected-inventory.ts";
+import type { ProtectedInventorySummary } from "./hygiene-protected-inventory.ts";
 import { inertText } from "./plugin/readable-output-values.ts";
 
 const HYGIENE_CATEGORIES = ["known-cleanable", "nested-git", "suspicious"] as const;
@@ -42,6 +44,7 @@ export type GoalHygienePostcondition = {
   readonly residualFindingsOmittedCount: number;
   readonly residualFindingsTruncated: boolean;
   readonly protectedExclusionCount: number;
+  readonly protectedInventory: ProtectedInventorySummary;
   readonly reviewableCandidateCount: number;
   readonly reviewableDigest: string;
   readonly reviewableCandidatesShown: readonly GoalReviewableCandidate[];
@@ -167,6 +170,7 @@ function noResiduals(mode: GuardianGoalHygieneCompletion, phase: "not-required" 
     residualFindingsOmittedCount: 0,
     residualFindingsTruncated: false,
     protectedExclusionCount,
+    protectedInventory: EMPTY_PROTECTED_INVENTORY,
     reviewableCandidateCount,
     reviewableDigest: reviewableDigest([]),
     reviewableCandidatesShown: [],
@@ -205,6 +209,15 @@ export async function scanGoalHygienePostcondition(options: GoalHygienePostcondi
   const scan = await scanWorkspaceHygiene({ repoRoot: options.repoRoot, cwd: options.cwd, config: options.config, ...(runner ? { runGitNullSeparated: runner } : {}), ...(options.input?.emptyDirectoryMaxDepth !== undefined ? { emptyDirectoryMaxDepth: options.input.emptyDirectoryMaxDepth } : {}), ...(options.input?.emptyDirectoryMaxEntries !== undefined ? { emptyDirectoryMaxEntries: options.input.emptyDirectoryMaxEntries } : {}) });
   const summary: RecordLike = isRecordLike(scan.summary) ? scan.summary : {};
   const protectedExclusionCount = numericValue(summary.exclusionCount);
+  const protectedInventory: ProtectedInventorySummary = {
+    rootCount: numericValue(summary.protectedInventoryCount),
+    fileCount: numericValue(summary.protectedInventoryFileCount),
+    directoryCount: numericValue(summary.protectedInventoryDirectoryCount),
+    totalBytes: numericValue(summary.protectedInventoryTotalBytes),
+    bytesTruncated: summary.protectedInventoryBytesTruncated === true,
+    assessment: "not-assessed",
+    cleanupAuthorized: false,
+  };
   const reviewableCandidateCount = numericValue(summary.reviewableCandidateCount);
   if (scan.ok === false || summary.scanFailed === true) {
     return noResiduals(mode, options.phase, "scan-failed", protectedExclusionCount, reviewableCandidateCount, false);
@@ -227,6 +240,7 @@ export async function scanGoalHygienePostcondition(options: GoalHygienePostcondi
     residualFindingsOmittedCount: residualFindings.length - residualFindingsShown.length,
     residualFindingsTruncated: residualFindings.length > residualFindingsShown.length,
     protectedExclusionCount,
+    protectedInventory,
     reviewableCandidateCount,
     reviewableDigest: reviewableDigest(reviewableCandidates),
     reviewableCandidatesShown,

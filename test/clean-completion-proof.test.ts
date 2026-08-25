@@ -69,7 +69,8 @@ test("opted-in guardian_goal persists a current clean proof and later state revi
 
   const provenStatus = await guardianStatus({ repoRoot: repo, cwd: repo, config: ENABLED_CONFIG });
   assert.deepEqual(provenStatus.cleanCompletionProof, appliedProof);
-  assert.match(computeGuardianVerdict(provenStatus).headline, /project clean/i);
+  assert.equal(computeGuardianVerdict(provenStatus).tone, "warn");
+  assert.equal(provenStatus.hygiene?.summary.protectedInventoryCount, 1);
   const readable = formatGuardianStatusOutput("guardian_status", provenStatus);
   assert.match(readable, /Clean Completion Proof/);
   assert.match(readable, /status: proven/);

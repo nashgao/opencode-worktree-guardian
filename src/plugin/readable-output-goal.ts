@@ -44,6 +44,7 @@ function appendHygienePostcondition(lines: string[], value: unknown, complete: b
   const postcondition = recordValue(value);
   if (Object.keys(postcondition).length === 0) return;
   const counts = recordValue(postcondition.residualByCategory);
+  const protectedInventory = recordValue(postcondition.protectedInventory);
   const shownFindings = arrayValue(postcondition.residualFindingsShown);
   const shownReviewables = arrayValue(postcondition.reviewableCandidatesShown);
   const residualCount = Number(postcondition.residualCount ?? 0);
@@ -82,6 +83,11 @@ function appendHygienePostcondition(lines: string[], value: unknown, complete: b
   }
   if (postcondition.reviewableInventoryComplete === false) lines.push("[WARN] hygiene inventory coverage is incomplete; strict residue completion remains partial");
   lines.push(`[INFO] hygiene exclusions: ${Number(postcondition.protectedExclusionCount ?? 0)} | reviewable inventory: ${reviewableCount}`);
+  const protectedRootCount = Number(protectedInventory.rootCount ?? 0);
+  if (protectedRootCount > 0) {
+    const protectedBytes = Number(protectedInventory.totalBytes ?? 0);
+    lines.push(`[WARN] protected inventory: ${protectedRootCount} root${protectedRootCount === 1 ? "" : "s"} | files=${Number(protectedInventory.fileCount ?? 0)} | directories=${Number(protectedInventory.directoryCount ?? 0)} | bytes=${protectedBytes}${protectedInventory.bytesTruncated === true ? "+" : ""} | assessment=not-assessed | cleanup-authorized=false`);
+  }
 }
 
 export function formatGuardianGoalOutput(rawResult: unknown): string {
