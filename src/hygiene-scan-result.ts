@@ -13,6 +13,7 @@ export type HygieneSummary = {
   readonly candidateCount: number;
   readonly exclusionCount: number;
   readonly protectedInventoryCount: number;
+  readonly protectedInventoryRootsTruncated: boolean;
   readonly protectedInventoryFileCount: number;
   readonly protectedInventoryDirectoryCount: number;
   readonly protectedInventoryTotalBytes: number;

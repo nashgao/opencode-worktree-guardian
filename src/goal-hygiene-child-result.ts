@@ -10,7 +10,9 @@ const PROJECTION_BYTE_LIMIT = 16_384;
 const TRUNCATION_MARKER = "[truncated]";
 const VALID_CONFIRM_TOKEN = /^[0-9a-f]{64}$/;
 const SUMMARY_NUMBER_KEYS = ["candidateCount", "findingCount", "exclusionCount", "protectedInventoryCount", "protectedInventoryFileCount", "protectedInventoryDirectoryCount", "protectedInventoryTotalBytes", "reviewableCandidateCount", "reviewableShownCount", "reviewableOmittedCount", "reviewableTotalFileCount", "approvedTargetCount", "blockedTargetCount", "fatalBlockerCount", "removedTargetCount"] as const;
-const SUMMARY_BOOLEAN_KEYS = ["protectedInventoryBytesTruncated", "reviewableTruncated", "scanFailed"] as const;
+const SUMMARY_BOOLEAN_KEYS = ["protectedInventoryRootsTruncated", "protectedInventoryBytesTruncated", "reviewableTruncated", "scanFailed"] as const;
+const TOKEN_SUMMARY_NUMBER_KEYS = ["findingCount", "reviewableCandidateCount", "reviewableShownCount", "reviewableOmittedCount", "reviewableTotalFileCount", "approvedTargetCount", "blockedTargetCount", "fatalBlockerCount", "removedTargetCount"] as const;
+const TOKEN_SUMMARY_BOOLEAN_KEYS = ["reviewableTruncated", "scanFailed"] as const;
 const TARGET_PREVIEW_FIELDS = ["path", "category", "severity", "reason", "kind"] as const;
 const TARGET_DIGEST_FIELDS = [...TARGET_PREVIEW_FIELDS, "fingerprint"] as const;
 const BLOCKER_FIELDS = ["path", "category", "reason", "fatal"] as const;
@@ -129,10 +131,10 @@ function addSummaryTuples(tuples: Tuple[], scope: string, value: unknown): void 
   const summary = record(value);
   const bySeverity = record(summary.bySeverity);
   const byCategory = record(summary.byCategory);
-  tuples.push(fieldTuple(`${scope}:summary`, summary, SUMMARY_NUMBER_KEYS));
+  tuples.push(fieldTuple(`${scope}:summary`, summary, TOKEN_SUMMARY_NUMBER_KEYS));
   tuples.push(fieldTuple(`${scope}:severity`, bySeverity, ["warn", "fail"]));
   tuples.push(fieldTuple(`${scope}:category`, byCategory, ["known-cleanable", "nested-git", "suspicious"]));
-  tuples.push(fieldTuple(`${scope}:flags`, summary, SUMMARY_BOOLEAN_KEYS));
+  tuples.push(fieldTuple(`${scope}:flags`, summary, TOKEN_SUMMARY_BOOLEAN_KEYS));
 }
 
 function addListTuples(tuples: Tuple[], scope: string, value: unknown, fields: readonly string[], scalarField?: string): void {

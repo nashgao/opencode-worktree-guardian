@@ -2,56 +2,21 @@ import crypto from "node:crypto";
 import { compareCodeUnits } from "./code-unit-order.ts";
 import { scanWorkspaceHygiene } from "./hygiene.ts";
 import type { NullSeparatedRunner } from "./hygiene-candidates.ts";
+import type { GoalHygienePostcondition, GoalProtectedInventory, GoalResidualFinding, GoalReviewableCandidate } from "./goal-hygiene-types.ts";
 import type { GuardianGoalHygieneCompletion, RecordLike } from "./types.ts";
 import { isRecordLike } from "./types.ts";
 import type { NormalizedGuardianConfig } from "./normalized-config.ts";
 import { EMPTY_PROTECTED_INVENTORY } from "./hygiene-protected-inventory.ts";
-import type { ProtectedInventorySummary } from "./hygiene-protected-inventory.ts";
 import { inertText } from "./plugin/readable-output-values.ts";
 
 const HYGIENE_CATEGORIES = ["known-cleanable", "nested-git", "suspicious"] as const;
 const RESIDUAL_FINDING_LIMIT = 8;
+const PROTECTED_ROOT_LIMIT = 12;
 
 type HygieneCategory = (typeof HYGIENE_CATEGORIES)[number];
 type UnknownRunner = (repoPath: string, args: readonly string[]) => unknown;
 
-export type GoalResidualFinding = {
-  readonly category: string;
-  readonly path: string;
-  readonly reason: string;
-  readonly severity: string;
-};
-
-export type GoalReviewableCandidate = {
-  readonly path: string;
-  readonly status: string;
-  readonly fileCount: number;
-  readonly bytes: number;
-  readonly bytesTruncated: boolean;
-  readonly reason: string;
-  readonly suggestedDeletePathCommand: string;
-};
-
-export type GoalHygienePostcondition = {
-  readonly mode: GuardianGoalHygieneCompletion;
-  readonly phase: "not-required" | "plan" | "apply";
-  readonly status: "not-required" | "pending" | "satisfied" | "residual-unprotected" | "scan-incomplete" | "scan-failed";
-  readonly residualCount: number;
-  readonly residualByCategory: Readonly<Record<HygieneCategory, number>>;
-  readonly residualFindingCount: number;
-  readonly residualDigest: string;
-  readonly residualFindingsShown: readonly GoalResidualFinding[];
-  readonly residualFindingsOmittedCount: number;
-  readonly residualFindingsTruncated: boolean;
-  readonly protectedExclusionCount: number;
-  readonly protectedInventory: ProtectedInventorySummary;
-  readonly reviewableCandidateCount: number;
-  readonly reviewableDigest: string;
-  readonly reviewableCandidatesShown: readonly GoalReviewableCandidate[];
-  readonly reviewableCandidatesOmittedCount: number;
-  readonly reviewableCandidatesTruncated: boolean;
-  readonly reviewableInventoryComplete: boolean;
-};
+export type { GoalHygienePostcondition } from "./goal-hygiene-types.ts";
 
 type GoalHygienePostconditionOptions = {
   readonly config: NormalizedGuardianConfig;
@@ -170,7 +135,7 @@ function noResiduals(mode: GuardianGoalHygieneCompletion, phase: "not-required" 
     residualFindingsOmittedCount: 0,
     residualFindingsTruncated: false,
     protectedExclusionCount,
-    protectedInventory: EMPTY_PROTECTED_INVENTORY,
+    protectedInventory: { ...EMPTY_PROTECTED_INVENTORY, rootsShown: [], rootsOmittedCount: 0 },
     reviewableCandidateCount,
     reviewableDigest: reviewableDigest([]),
     reviewableCandidatesShown: [],
@@ -209,8 +174,15 @@ export async function scanGoalHygienePostcondition(options: GoalHygienePostcondi
   const scan = await scanWorkspaceHygiene({ repoRoot: options.repoRoot, cwd: options.cwd, config: options.config, ...(runner ? { runGitNullSeparated: runner } : {}), ...(options.input?.emptyDirectoryMaxDepth !== undefined ? { emptyDirectoryMaxDepth: options.input.emptyDirectoryMaxDepth } : {}), ...(options.input?.emptyDirectoryMaxEntries !== undefined ? { emptyDirectoryMaxEntries: options.input.emptyDirectoryMaxEntries } : {}) });
   const summary: RecordLike = isRecordLike(scan.summary) ? scan.summary : {};
   const protectedExclusionCount = numericValue(summary.exclusionCount);
-  const protectedInventory: ProtectedInventorySummary = {
+  const protectedRoots = records(scan.exclusions)
+    .map((entry) => sanitizeGoalResidualText(entry.path))
+    .sort(compareCodeUnits);
+  const protectedRootsShown = protectedRoots.slice(0, PROTECTED_ROOT_LIMIT);
+  const protectedInventory: GoalProtectedInventory = {
     rootCount: numericValue(summary.protectedInventoryCount),
+    rootsTruncated: summary.protectedInventoryRootsTruncated === true,
+    rootsShown: protectedRootsShown,
+    rootsOmittedCount: Math.max(0, protectedRoots.length - protectedRootsShown.length),
     fileCount: numericValue(summary.protectedInventoryFileCount),
     directoryCount: numericValue(summary.protectedInventoryDirectoryCount),
     totalBytes: numericValue(summary.protectedInventoryTotalBytes),

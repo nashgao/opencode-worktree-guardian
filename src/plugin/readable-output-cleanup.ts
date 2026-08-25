@@ -26,6 +26,7 @@ export function formatGuardianHygieneOutput(rawResult: unknown) {
   const reviewableTotalBytes = Number(summary.reviewableTotalBytes ?? 0);
   const reviewableBytesTruncated = summary.reviewableBytesTruncated === true;
   const protectedInventoryCount = Number(summary.protectedInventoryCount ?? exclusions.length);
+  const protectedInventoryRootsTruncated = summary.protectedInventoryRootsTruncated === true;
   const protectedInventoryFileCount = Number(summary.protectedInventoryFileCount ?? 0);
   const protectedInventoryDirectoryCount = Number(summary.protectedInventoryDirectoryCount ?? 0);
   const protectedInventoryTotalBytes = Number(summary.protectedInventoryTotalBytes ?? 0);
@@ -48,7 +49,7 @@ export function formatGuardianHygieneOutput(rawResult: unknown) {
     }
   }
   if (protectedInventoryCount > 0) {
-    lines.push(`[WARN] protected inventory: ${protectedInventoryCount} root${protectedInventoryCount === 1 ? "" : "s"} | files: ${protectedInventoryFileCount} | directories: ${protectedInventoryDirectoryCount} | bytes: ${protectedInventoryTotalBytes}${protectedInventoryBytesTruncated ? "+" : ""} | assessment: not-assessed | cleanup authorized: false`);
+    lines.push(`[WARN] protected inventory: ${protectedInventoryCount}${protectedInventoryRootsTruncated ? "+" : ""} root${protectedInventoryCount === 1 && !protectedInventoryRootsTruncated ? "" : "s"} | files: ${protectedInventoryFileCount} | directories: ${protectedInventoryDirectoryCount} | bytes: ${protectedInventoryTotalBytes}${protectedInventoryBytesTruncated ? "+" : ""} | assessment: not-assessed | cleanup authorized: false`);
     lines.push("[INFO] protection prevents deletion; it does not prove that retained content is useful");
     appendBoundedList({
       lines,

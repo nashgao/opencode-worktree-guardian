@@ -54,6 +54,7 @@ export type TerminalRecoveryAction = {
 type HygieneSummary = Record<string, unknown> & {
   readonly findingCount: number;
   readonly protectedInventoryCount: number;
+  readonly protectedInventoryRootsTruncated: boolean;
   readonly protectedInventoryFileCount: number;
   readonly protectedInventoryDirectoryCount: number;
   readonly protectedInventoryTotalBytes: number;

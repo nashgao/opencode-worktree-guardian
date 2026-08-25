@@ -111,6 +111,7 @@ function collectSignals(status: LooseRecord): VerdictSignal[] {
   // Excluded from findingCount by design; omitting it here rendered unreviewed paths as "clean".
   const hygieneReviewable = numberValue(hygieneSummary.reviewableCandidateCount);
   const hygieneProtectedInventory = numberValue(hygieneSummary.protectedInventoryCount);
+  const hygieneProtectedRootsTruncated = hygieneSummary.protectedInventoryRootsTruncated === true;
   // A failed scan zeroes every hygiene count, so silence here must read as unknown, not clean.
   const hygieneScanFailed = hygiene.ok === false || hygieneSummary.scanFailed === true;
   const hygieneScanIncomplete = !hygieneScanFailed && hygieneSummary.filesystemOnlyEmptyDirectoryScanComplete === false;
@@ -159,7 +160,7 @@ function collectSignals(status: LooseRecord): VerdictSignal[] {
     signals.push({ tone: "warn", fragment: `${findingCount} workspace hygiene finding${plural(findingCount)} (${hygieneFail} manual-review item${plural(hygieneFail)})`, nextAction: "guardian_hygiene to review" });
   }
   if (hygieneProtectedInventory > 0) {
-    signals.push({ tone: "warn", fragment: `${hygieneProtectedInventory} protected path${plural(hygieneProtectedInventory)}; protected content has not been retention-assessed`, nextAction: "guardian_hygiene to inspect protected inventory" });
+    signals.push({ tone: "warn", fragment: `${hygieneProtectedInventory}${hygieneProtectedRootsTruncated ? "+" : ""} protected path${plural(hygieneProtectedInventory)}; protected content has not been retention-assessed`, nextAction: "guardian_hygiene to inspect protected inventory" });
   }
 
   if (dirty > 0) {
