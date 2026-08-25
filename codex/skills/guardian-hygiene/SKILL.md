@@ -11,6 +11,8 @@ Start with a read-only scan:
 node <adapter-path> tool guardian_hygiene '{}'
 ```
 
+Relay the bounded protected inventory with file, directory, and byte totals. Protected entries are `not-assessed` and never cleanup targets: protection denies deletion authority but does not prove that retained content is useful.
+
 For cleanup, run `mode: "plan"` first with the intended cleanup options. Inspect exact approved targets and blockers. Apply only after explicit delete confirmation with `mode: "apply"`, `confirmDelete: true`, and the same options.
 
 `reviewableCandidates` are inventory, not hygiene targets. For intentional reviewable cleanup, run `guardian_delete_paths mode=plan paths=["..."]`. Directories also require `allowRecursive=true`. Review target status and blockers before explicit confirmation, then apply through `guardian_delete_paths` with `confirmDelete=true`. Do not pass reviewables back to `guardian_hygiene`, and never run raw cleanup commands.

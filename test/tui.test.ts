@@ -144,7 +144,6 @@ test("tui goal prompt distinguishes authorized cleanup from strict completion", 
   assert.match(prompt.parts[0].text, /only token-bound known-cleanable findings/);
   assert.match(prompt.parts[0].text, /nested-git and suspicious findings require direct explicit review/);
   assert.match(prompt.parts[0].text, /dirty nested Git requires allowDirtyNestedGit/);
-  assert.match(prompt.parts[0].text, /protectedPaths are intentional retention/);
   assert.match(prompt.parts[0].text, /reviewableCandidates are inventory rather than strict failures/);
 });
 

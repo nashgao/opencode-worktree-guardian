@@ -25,11 +25,16 @@ export function formatGuardianHygieneOutput(rawResult: unknown) {
   const reviewableTotalFileCount = Number(summary.reviewableTotalFileCount ?? reviewableCount);
   const reviewableTotalBytes = Number(summary.reviewableTotalBytes ?? 0);
   const reviewableBytesTruncated = summary.reviewableBytesTruncated === true;
+  const protectedInventoryCount = Number(summary.protectedInventoryCount ?? exclusions.length);
+  const protectedInventoryFileCount = Number(summary.protectedInventoryFileCount ?? 0);
+  const protectedInventoryDirectoryCount = Number(summary.protectedInventoryDirectoryCount ?? 0);
+  const protectedInventoryTotalBytes = Number(summary.protectedInventoryTotalBytes ?? 0);
+  const protectedInventoryBytesTruncated = summary.protectedInventoryBytesTruncated === true;
   const failCount = Number(recordValue(summary.bySeverity).fail ?? 0);
   const warnCount = Number(recordValue(summary.bySeverity).warn ?? 0);
   const scanFailed = result.ok === false || summary.scanFailed === true;
   const inventoryIncomplete = summary.filesystemOnlyEmptyDirectoryScanComplete === false;
-  const lines = [`${scanFailed ? "[FAIL]" : findings.length > 0 || reviewableCount > 0 || inventoryIncomplete ? "[WARN]" : "[GOOD]"} guardian_hygiene scan`, `[INFO] repoRoot: ${textValue(result.repoRoot)}`];
+  const lines = [`${scanFailed ? "[FAIL]" : findings.length > 0 || reviewableCount > 0 || protectedInventoryCount > 0 || inventoryIncomplete ? "[WARN]" : "[GOOD]"} guardian_hygiene scan`, `[INFO] repoRoot: ${textValue(result.repoRoot)}`];
   if (scanFailed) lines.push("[WARN] scan incomplete: findings and candidate counts are not trustworthy");
   else lines.push(`[INFO] findings: ${Number(summary.findingCount ?? findings.length)} | warn: ${warnCount} | fail: ${failCount} | exclusions: ${Number(summary.exclusionCount ?? exclusions.length)} | candidates: ${Number(summary.candidateCount ?? 0)} | reviewable: ${reviewableCount}`);
   if (!scanFailed && inventoryIncomplete) lines.push("[WARN] inventory coverage is incomplete: filesystem-only empty-directory scan was truncated");
@@ -41,6 +46,22 @@ export function formatGuardianHygieneOutput(rawResult: unknown) {
       const finding = recordValue(entry);
       lines.push(`  - ${textValue(finding.severity)} ${textValue(finding.category)} ${textValue(finding.path)}: ${textValue(finding.reason)}`);
     }
+  }
+  if (protectedInventoryCount > 0) {
+    lines.push(`[WARN] protected inventory: ${protectedInventoryCount} root${protectedInventoryCount === 1 ? "" : "s"} | files: ${protectedInventoryFileCount} | directories: ${protectedInventoryDirectoryCount} | bytes: ${protectedInventoryTotalBytes}${protectedInventoryBytesTruncated ? "+" : ""} | assessment: not-assessed | cleanup authorized: false`);
+    lines.push("[INFO] protection prevents deletion; it does not prove that retained content is useful");
+    appendBoundedList({
+      lines,
+      heading: "[WARN] protected roots requiring retention review",
+      entries: exclusions,
+      count: protectedInventoryCount,
+      limit: 12,
+      format: (entry) => {
+        const inventory = recordValue(entry);
+        const bytes = Number(inventory.bytes ?? 0);
+        return `  - ${reviewableTextValue(inventory.path)} (${Number(inventory.fileCount ?? 0)} files, ${Number(inventory.directoryCount ?? 0)} directories, ${bytes}${inventory.bytesTruncated === true ? "+" : ""} bytes): ${reviewableTextValue(inventory.reason)}`;
+      },
+    });
   }
   if (reviewableCount > 0) {
     lines.push(`[WARN] reviewable candidates: ${reviewableCount}${reviewableOmittedCount > 0 ? ` | omitted: ${reviewableOmittedCount}` : ""} | files covered: ${reviewableTotalFileCount} | bytes covered: ${reviewableTotalBytes}${reviewableBytesTruncated ? " (lower bound; measurement truncated)" : ""}`);

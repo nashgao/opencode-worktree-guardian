@@ -223,7 +223,7 @@ test("hygiene scanner keeps nested protected exclusions from suppressing reviewa
 
   assert.equal(result.ok, true);
   assert.deepEqual(pathsFromRecords(result.exclusions), ["foo/node_modules"]);
-  const protectedExclusion = (result.exclusions as Array<Record<string, unknown>>).find((entry) => entry.path === "foo/node_modules");
+  const protectedExclusion = result.exclusions.find((entry) => entry.path === "foo/node_modules");
   assert.equal(recordField(protectedExclusion ?? {}, "suggestedDeletePathCommand"), undefined);
   assert.deepEqual(recordField(result, "reviewableCandidates"), [
     { path: "foo/ordinary.txt", status: "untracked", fileCount: 1, bytes: 9, bytesTruncated: false, reason: "not matched by Guardian hygiene cleanup rules", source: "git ls-files --others/--ignored", suggestedDeletePathCommand: 'guardian_delete_paths mode=plan paths=["foo/ordinary.txt"]' },

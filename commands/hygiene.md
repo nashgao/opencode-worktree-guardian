@@ -3,7 +3,7 @@ description: Scan hygiene findings and reviewable inventory, or plan/apply confi
 argument-hint: "[mode=plan|apply] [cleanupPaths...] [confirmDelete=true]"
 ---
 
-Use the native `guardian_hygiene` tool. With no `mode`, scan untracked and ignored workspace artifacts, report cleanup findings, protected exclusions, and scan-only `reviewableCandidates`.
+Use the native `guardian_hygiene` tool. With no `mode`, scan untracked and ignored workspace artifacts, report cleanup findings, bounded protected-root file/directory/byte inventory, and scan-only `reviewableCandidates`. Protected inventory is marked `not-assessed` and never authorizes cleanup.
 
 `reviewableCandidates` are not cleanup findings and are not accepted by the `guardian_hygiene` cleanup preflight. If cleanup is intended for a reviewable file, hand off to exact-path planning with `guardian_delete_paths mode=plan paths=["..."]`. If cleanup is intended for a reviewable directory, use `guardian_delete_paths mode=plan paths=["..."] allowRecursive=true`.
 

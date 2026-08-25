@@ -250,15 +250,16 @@ Apply re-runs the same fingerprinted preflight immediately before deletion, dele
 
 ## `guardian_hygiene` Scan Policy
 
-`guardian_hygiene` without `mode` is report-only. It detects untracked or ignored scratch artifacts, nested Git repositories, suspicious research dumps, generated cache roots, protected exclusions, and scan-only `reviewableCandidates`. Scan output does not authorize deletion.
+`guardian_hygiene` without `mode` is report-only. It detects untracked or ignored scratch artifacts, nested Git repositories, suspicious research dumps, generated cache roots, protected exclusions, and scan-only `reviewableCandidates`. Scan output does not authorize deletion. Protection is an authority boundary rather than a retention judgment: every protected root is measured with bounded file, directory, and byte totals, marked `not-assessed`, and carries `cleanupAuthorized: false`.
 
 `reviewableCandidates` are the untracked or ignored candidate roots Guardian saw but did not classify as cleanup findings or protected exclusions. They are inventory for human review, not `findings`, not hygiene cleanup targets, and not accepted by the `guardian_hygiene` cleanup preflight. They do not increment finding, severity, category, risk, or approved-target counts.
 
-The hygiene scan summary reports `candidateCount`, `findingCount`, `exclusionCount`, `reviewableCandidateCount`, `reviewableShownCount`, `reviewableOmittedCount`, and `reviewableTruncated`. Readable scan output must keep reviewable entries separate from findings, for example:
+The hygiene scan summary reports `candidateCount`, `findingCount`, `exclusionCount`, protected inventory root/file/directory/byte totals and truncation, `reviewableCandidateCount`, `reviewableShownCount`, `reviewableOmittedCount`, and `reviewableTruncated`. Readable scan output must keep protected inventory, reviewable entries, and findings separate, for example:
 
 ```text
 [WARN] guardian_hygiene scan
 [INFO] findings: 3 | warn: 2 | fail: 1 | exclusions: 1 | candidates: 8 | reviewable: 4
+[WARN] protected inventory: 1 root | files: 12 | directories: 3 | bytes: 4096 | assessment: not-assessed | cleanup authorized: false
 [WARN] top findings:
   - warn known-cleanable librarian-react: known librarian scratch artifact
   - fail nested-git test-hyperf-kafka: nested Git repository has uncommitted changes
@@ -270,7 +271,7 @@ The hygiene scan summary reports `candidateCount`, `findingCount`, `exclusionCou
     guardian_delete_paths mode=plan paths=["plain.log"]
 ```
 
-If cleanup is intended for a reviewable file, the handoff is exact-path planning with `guardian_delete_paths mode=plan paths=["..."]`. If cleanup is intended for a reviewable directory, use `guardian_delete_paths mode=plan paths=["..."] allowRecursive=true`. Protected exclusions must not receive suggested delete-path templates.
+If cleanup is intended for a reviewable file, the handoff is exact-path planning with `guardian_delete_paths mode=plan paths=["..."]`. If cleanup is intended for a reviewable directory, use `guardian_delete_paths mode=plan paths=["..."] allowRecursive=true`. Protected inventory must not receive suggested delete-path templates or become hygiene targets; changing protection or authorizing any exact deletion remains a separate explicit policy decision.
 
 `guardian_status`, `guardian_recover`, and `guardian_hygiene` scan output are evidence-only surfaces. Research clones, downloaded upstream repos, generated fixtures, and temporary test data should live outside the active project tree, preferably under OS temp space such as `$TMPDIR/opencode/<repo>/<session>/`.
 
@@ -290,7 +291,7 @@ Apply re-runs preflight and removes only token-bound approved paths using intern
 
 `allowedRemoteBranches` is a per-call exact-name retention list for the resolved effective remote. Guardian normalizes and deduplicates the list before token binding. Listed remote refs are excluded from remote cleanup candidate discovery and from strict extra-remote postflight blocking. A same-named local branch remains independently eligible for local cleanup. Plan and apply must use the same option set, including the normalized effective list, or the token does not authorize apply. This exception does not persist retention policy, broaden deletion authority, affect unscanned secondary remotes, or allow an unlisted remote branch.
 
-This setting never broadens deletion. In every mode, `guardian_goal` auto-deletes only token-bound `known-cleanable` findings. Residual `nested-git` and `suspicious` findings require direct explicit review and are never auto-authorized. A dirty nested repository requires direct `allowDirtyNestedGit` for its own hygiene plan and apply. Configured `protectedPaths` represent intentional retention and are excluded from strict completion. `reviewableCandidates` remain inventory rather than hygiene targets; only `no-unprotected-residue` makes their unresolved presence a completion failure. Resolution remains explicit: protect an intentional path, move retained evidence under a protected path, or plan exact deletion through `guardian_delete_paths`.
+This setting never broadens deletion. In every mode, `guardian_goal` auto-deletes only token-bound `known-cleanable` findings. Residual `nested-git` and `suspicious` findings require direct explicit review and are never auto-authorized. A dirty nested repository requires direct `allowDirtyNestedGit` for its own hygiene plan and apply. Configured `protectedPaths` deny deletion and are excluded from strict completion, while their bounded inventory remains visible as `not-assessed`; protection is not evidence that retained content is useful. `reviewableCandidates` remain inventory rather than hygiene targets; only `no-unprotected-residue` makes their unresolved presence a completion failure. Resolution remains explicit through retention-policy review or exact `guardian_delete_paths` planning.
 
 Goal plans report `complete: null`. A strict plan with safe authorized work and residual unprotected findings, reviewables, or incomplete coverage can be actionable with `status: "planned-partial"`. Goal apply reports authorization and completion separately. A strict post-apply rescan can return `ok: true`, `complete: false`, and `status: "partial"`: Guardian performed the authorized work, but the desired state was not reached. Reviewable evidence is token-bound and reports an exact count and digest plus a bounded path list and omitted count. Prompt and TUI surfaces must inspect `complete` and `hygienePostcondition`; they must not equate `ok` with desired-state completion.
 

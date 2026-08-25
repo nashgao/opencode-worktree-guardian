@@ -3,6 +3,7 @@ import type { GitBranchEntry, GitRecoveryCandidates, GitRefEntry, GitStashEntry 
 import type { TerminalSessionStatus } from "./lifecycle.ts";
 import type { OperationalScope } from "./operational-scope.ts";
 import type { CleanCompletionProofEvidence, GuardianConfig, GuardianSession, GuardianToolResult, WorktreeEntry } from "./types.ts";
+import type { ProtectedInventoryEntry } from "./hygiene-protected-inventory.ts";
 import type { QuarantineItemState, QuarantineMoveOperationPhase, QuarantinePurgeOperationPhase } from "./quarantine-types.ts";
 
 export type WorktreeAnnotationMetadata = {
@@ -52,6 +53,11 @@ export type TerminalRecoveryAction = {
 
 type HygieneSummary = Record<string, unknown> & {
   readonly findingCount: number;
+  readonly protectedInventoryCount: number;
+  readonly protectedInventoryFileCount: number;
+  readonly protectedInventoryDirectoryCount: number;
+  readonly protectedInventoryTotalBytes: number;
+  readonly protectedInventoryBytesTruncated: boolean;
   readonly reviewableCandidateCount: number;
   readonly reviewableShownCount: number;
   readonly reviewableOmittedCount: number;
@@ -72,6 +78,7 @@ type HygieneStatus = Record<string, unknown> & {
   readonly ok?: unknown;
   readonly summary: HygieneSummary;
   readonly findings: readonly (Record<string, unknown> & { readonly path?: unknown })[];
+  readonly exclusions: readonly ProtectedInventoryEntry[];
   readonly reviewableCandidates: readonly HygieneReviewableCandidate[];
 };
 
