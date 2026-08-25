@@ -7,7 +7,7 @@ import { formatGuardianOutput, READABLE_GUARDIAN_TOOLS } from "./readable-output
 import { resolveActualWorktreeOrPath } from "./session-routing.ts";
 
 const z = tool.schema;
-const SESSION_WORKTREE_DEFAULT_TOOLS = new Set(["guardian_finish", "guardian_preserve"]);
+const SESSION_WORKTREE_DEFAULT_TOOLS = new Set(["guardian_finish", "guardian_goal", "guardian_preserve"]);
 
 async function getRecordedToolWorktree(name: GuardianToolName, toolArgs: PlanCacheToolArgs, context: HookContext) {
   if (!SESSION_WORKTREE_DEFAULT_TOOLS.has(name)) return null;
@@ -52,10 +52,11 @@ export function guardianTool(name: GuardianToolName, description: string, planCa
       allowRedundantDirtyPaths: z.boolean().optional(),
       allowedRemoteBranches: z.array(z.string()).optional(),
       paths: z.array(z.string()).optional(),
+      intentionalPaths: z.array(z.string()).optional(),
       allowTracked: z.boolean().optional(),
       allowRecursive: z.boolean().optional(),
       cleanupPaths: z.array(z.string()).optional(),
-      allowCategories: z.array(z.enum(["known-cleanable", "nested-git", "suspicious"])).optional(),
+      allowCategories: z.array(z.enum(["known-cleanable", "nested-git", "suspicious", "filesystem-only-empty-directory"])).optional(),
       allowDirtyNestedGit: z.boolean().optional(),
       timestamp: z.string().optional(),
       finishMode: z.enum(["preserve-only", "push-branch", "create-pr", "merge-to-base"]).optional(),

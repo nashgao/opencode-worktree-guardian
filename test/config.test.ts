@@ -22,20 +22,20 @@ test("config defaults are delivery-first and cleanup-conservative", () => {
   assert.deepEqual(config.allowDirtyPaths, []);
   assert.deepEqual(config.protectedPaths, TEMPLATE_PROTECTED_PATHS);
   assert.deepEqual(config.protectedBranches, DEFAULT_CONFIG.protectedBranches);
-  assert.equal(config.goal.hygieneCompletion, "authorized-cleanup");
+  assert.equal(config.goal.hygieneCompletion, "no-unprotected-residue");
 });
 
 test("missing goal config defaults hygiene completion", () => {
   const config = normalizeConfig({});
 
-  assert.equal(config.goal.hygieneCompletion, "authorized-cleanup");
+  assert.equal(config.goal.hygieneCompletion, "no-unprotected-residue");
 });
 
 test("partial legacy goal config preserves explicit values and defaults hygiene completion", () => {
   const config = normalizeConfig({ goal: { cleanupHygiene: false } });
 
   assert.equal(config.goal.cleanupHygiene, false);
-  assert.equal(config.goal.hygieneCompletion, "authorized-cleanup");
+  assert.equal(config.goal.hygieneCompletion, "no-unprotected-residue");
 });
 
 test("goal hygiene completion accepts strict unprotected-finding policy", () => {
@@ -208,7 +208,7 @@ test("config initialization writes defaults once", async () => {
   assert.deepEqual(loaded.config, DEFAULT_CONFIG);
   assert.deepEqual(loaded.config.protectedPaths, TEMPLATE_PROTECTED_PATHS);
   assert.equal(await fs.readFile(configPath, "utf8"), `${JSON.stringify(DEFAULT_CONFIG, null, 2)}\n`);
-  assert.equal(JSON.parse(await fs.readFile(configPath, "utf8")).goal.hygieneCompletion, "authorized-cleanup");
+  assert.equal(JSON.parse(await fs.readFile(configPath, "utf8")).goal.hygieneCompletion, "no-unprotected-residue");
 });
 
 test("non-object config payloads fail closed at the boundary", async () => {

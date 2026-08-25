@@ -41,15 +41,15 @@ function normalizeOptionalToolStrings(toolArgs: Record<string, unknown>): void {
 }
 
 function sortedStringArgs(value: unknown): readonly string[] {
-  return Array.isArray(value)
-    ? value.filter((entry): entry is string => typeof entry === "string").sort((left, right) => left.localeCompare(right))
-    : [];
+  if (!Array.isArray(value)) return [];
+  const strings = value.filter((entry): entry is string => typeof entry === "string");
+  return [...new Set(strings)].sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
 }
 
 async function planCacheKey(name: string, toolArgs: Record<string, unknown>, plannedConfirmToken?: string): Promise<string | null> {
   if (name === "guardian_quarantine") return await quarantinePlanCacheKey(toolArgs, plannedConfirmToken);
   return JSON.stringify({
-    name, paths: sortedStringArgs(toolArgs["paths"]), cleanupPaths: sortedStringArgs(toolArgs["cleanupPaths"]), allowCategories: sortedStringArgs(toolArgs["allowCategories"]), allowedRemoteBranches: normalizeAllowedRemoteBranches(toolArgs["allowedRemoteBranches"]),
+    name, paths: sortedStringArgs(toolArgs["paths"]), intentionalPaths: sortedStringArgs(toolArgs["intentionalPaths"]), cleanupPaths: sortedStringArgs(toolArgs["cleanupPaths"]), allowCategories: sortedStringArgs(toolArgs["allowCategories"]), allowedRemoteBranches: normalizeAllowedRemoteBranches(toolArgs["allowedRemoteBranches"]),
     sessionId: typeof toolArgs["sessionId"] === "string" ? toolArgs["sessionId"] : "", repoRoot: typeof toolArgs["repoRoot"] === "string" ? toolArgs["repoRoot"] : "", cwd: typeof toolArgs["cwd"] === "string" ? toolArgs["cwd"] : "",
     commitMessage: typeof toolArgs["commitMessage"] === "string" ? toolArgs["commitMessage"] : "", finishMode: typeof toolArgs["finishMode"] === "string" ? toolArgs["finishMode"] : "", action: typeof toolArgs["action"] === "string" ? toolArgs["action"] : "",
     quarantineId: typeof toolArgs["quarantineId"] === "string" ? toolArgs["quarantineId"] : "", targetWorktreePath: typeof toolArgs["targetWorktreePath"] === "string" ? toolArgs["targetWorktreePath"] : "",

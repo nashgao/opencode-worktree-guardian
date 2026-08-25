@@ -1,47 +1,24 @@
-import path from "node:path";
-import type { CleanCompletionPlan } from "./clean-completion.ts";
 import { proveAndPersistCleanCompletion } from "./clean-completion-proof.ts";
-import { loadConfig, normalizeConfig } from "./config.ts";
 import { guardianDone } from "./done.ts";
-import { getRepoRoot } from "./git.ts";
-import { applyGoalCleanCompletion, goalCleanCompletionBlockReason, planGoalCleanCompletion, plannedGoalCleanCompletionStep } from "./goal-clean-completion.ts";
+import { applyGoalSteps } from "./goal-apply.ts";
+import { goalCleanCompletionBlockReason, planGoalCleanCompletion, plannedGoalCleanCompletionStep } from "./goal-clean-completion.ts";
 import { createGoalConfirmToken } from "./goal-confirm-token.ts";
+import { resolveGoalContext } from "./goal-context.ts";
+import type { GoalContext } from "./goal-context.ts";
 import { approvedHygieneTargetPaths, postconditionBlocksCompletion, postconditionIsComplete, postconditionReason, scanGoalHygienePostcondition } from "./goal-hygiene-postcondition.ts";
 import type { GoalHygienePostcondition } from "./goal-hygiene-postcondition.ts";
-import { blockedGoalStep, findGoalStep, goalBlockerFromStep, goalStepFromResult, topLevelGoalCommit } from "./goal-steps.ts";
+import { blockedGoalStep, goalBlockerFromStep, goalStepFromResult, topLevelGoalCommit } from "./goal-steps.ts";
 import type { GoalStep, GoalStepBlocker, GoalTool } from "./goal-steps.ts";
+import type { GoalBlocker, GoalPlan } from "./goal-types.ts";
 import { guardianHygiene } from "./hygiene.ts";
-import type { GuardianConfig, GuardianToolInput, GuardianToolResult } from "./types.ts";
-import { isRecordLike } from "./types.ts";
-import type { NormalizedGuardianConfig, NormalizedGuardianGoalConfig } from "./normalized-config.ts";
+import type { GuardianToolInput, GuardianToolResult } from "./types.ts";
+import type { NormalizedGuardianGoalConfig } from "./normalized-config.ts";
 import { guardianFinishWorkflow } from "./workflow.ts";
 
 const DONE_GOAL_KEYS = ["commitDirty", "landToBase", "pushBase", "cleanupWorktrees", "cleanupBranches"] as const;
 const WRITE_GOAL_KEYS = ["commitDirty", "landToBase", "pushBase"] as const;
 const CLEANUP_GOAL_KEYS = ["cleanupWorktrees", "cleanupBranches"] as const;
-const GOAL_HYGIENE_CATEGORIES = ["known-cleanable"] as const;
-
-type GoalBlocker = {
-  readonly tool: GoalTool | "guardian_goal";
-  readonly reason: string;
-};
-
-type GoalPlan = {
-  readonly ok: boolean;
-  readonly complete: null;
-  readonly status: "planned" | "planned-partial" | "blocked";
-  readonly lane: "goal";
-  readonly repoRoot: string;
-  readonly cwd: string;
-  readonly goal: NormalizedGuardianGoalConfig;
-  readonly steps: readonly GoalStep[];
-  readonly blockers: readonly GoalBlocker[];
-  readonly hygienePostcondition: GoalHygienePostcondition;
-  readonly cleanCompletion?: CleanCompletionPlan;
-  readonly confirmToken?: string;
-  readonly nextAction?: string;
-  readonly reason?: string;
-};
+const GOAL_HYGIENE_CATEGORIES = ["known-cleanable", "filesystem-only-empty-directory"] as const;
 
 function wantsDone(goal: NormalizedGuardianGoalConfig): boolean {
   return DONE_GOAL_KEYS.some((key) => goal[key]);
@@ -55,29 +32,23 @@ function isCleanupOnlyGoal(goal: NormalizedGuardianGoalConfig): boolean {
   return WRITE_GOAL_KEYS.every((key) => !goal[key]) && CLEANUP_GOAL_KEYS.some((key) => goal[key]);
 }
 
-async function resolveGoalContext(input: GuardianToolInput): Promise<{ readonly repoRoot: string; readonly cwd: string; readonly config: NormalizedGuardianConfig }> {
-  const cwdInput = typeof input.cwd === "string" ? input.cwd : typeof input.repoRoot === "string" ? input.repoRoot : process.cwd();
-  const cwd = path.resolve(cwdInput);
-  const repoRoot = path.resolve(typeof input.repoRoot === "string" ? input.repoRoot : await getRepoRoot(cwd));
-  const config = isRecordLike(input.config) ? normalizeConfig(input.config) : (await loadConfig(repoRoot)).config;
-  return { repoRoot, cwd, config };
-}
-
-async function buildGoalPlan(input: GuardianToolInput): Promise<GoalPlan> {
-  const { repoRoot, cwd, config } = await resolveGoalContext(input);
+async function buildGoalPlan(input: GuardianToolInput, context: GoalContext): Promise<GoalPlan> {
+  const { repoRoot, cwd, config, hygieneConfig, intentionalPaths } = context;
   const goal = config.goal;
   const steps: GoalStep[] = [];
   const blockers: GoalBlocker[] = [];
   const cleanCompletion = await planGoalCleanCompletion({ request: input, repoRoot, cwd, config });
   let hygienePostcondition: GoalHygienePostcondition;
+  let hygieneHasApprovedTargets = false;
 
   if (goal.cleanupHygiene) {
     let hygiene: GuardianToolResult | undefined;
     let approvedTargetPaths: readonly string[] = [];
     let step: GoalStep;
     try {
-      hygiene = await guardianHygiene({ ...input, repoRoot, cwd, config, mode: "plan", allowCategories: [...GOAL_HYGIENE_CATEGORIES], allowDirtyNestedGit: false });
+      hygiene = await guardianHygiene({ ...input, repoRoot: cwd, cwd, config: hygieneConfig, mode: "plan", allowCategories: [...GOAL_HYGIENE_CATEGORIES], allowDirtyNestedGit: false });
       approvedTargetPaths = approvedHygieneTargetPaths(hygiene);
+      hygieneHasApprovedTargets = approvedTargetPaths.length > 0;
       step = goalStepFromResult("guardian_hygiene", hygiene);
     } catch (error) {
       if (!(error instanceof Error)) throw error;
@@ -87,9 +58,9 @@ async function buildGoalPlan(input: GuardianToolInput): Promise<GoalPlan> {
     const blocker = goalBlockerFromStep(step);
     if (blocker) blockers.push(blocker);
     hygienePostcondition = await scanGoalHygienePostcondition({
-      repoRoot,
+      repoRoot: cwd,
       cwd,
-      config,
+      config: hygieneConfig,
       input,
       phase: "plan",
       approvedTargetPaths,
@@ -99,7 +70,7 @@ async function buildGoalPlan(input: GuardianToolInput): Promise<GoalPlan> {
     }
   } else {
     steps.push({ tool: "guardian_hygiene", ok: true, status: "skipped", reason: "cleanupHygiene=false" });
-    hygienePostcondition = await scanGoalHygienePostcondition({ repoRoot, cwd, config, input, phase: "plan" });
+    hygienePostcondition = await scanGoalHygienePostcondition({ repoRoot: cwd, cwd, config: hygieneConfig, input, phase: "plan" });
   }
 
   if (cleanCompletion) {
@@ -123,7 +94,8 @@ async function buildGoalPlan(input: GuardianToolInput): Promise<GoalPlan> {
     steps.push(step);
     blockers.push({ tool: "guardian_goal", reason });
   } else {
-    const done = await guardianDone({ ...input, repoRoot, cwd, config, mode: "plan", ...(cleanCompletion && goalCleanCompletionBlockReason(cleanCompletion) === null ? { allowIgnoredFiles: true } : {}) });
+    const forecastsIgnoredCleanup = hygieneHasApprovedTargets || cleanCompletion && goalCleanCompletionBlockReason(cleanCompletion) === null;
+    const done = await guardianDone({ ...input, repoRoot, cwd, config, mode: "plan", ...(forecastsIgnoredCleanup ? { allowIgnoredFiles: true } : {}) });
     const step = goalStepFromResult("guardian_done", done);
     steps.push(step);
     const blocker = goalBlockerFromStep(step);
@@ -138,6 +110,7 @@ async function buildGoalPlan(input: GuardianToolInput): Promise<GoalPlan> {
     lane: "goal",
     repoRoot,
     cwd,
+    intentionalPaths,
     goal,
     steps,
     blockers,
@@ -150,66 +123,23 @@ async function buildGoalPlan(input: GuardianToolInput): Promise<GoalPlan> {
   return { ...basePlan, confirmToken, nextAction: "guardian_goal mode=apply confirm=true" };
 }
 
-async function applyHygieneStep(input: GuardianToolInput, plan: GoalPlan, config: GuardianConfig): Promise<GoalStep> {
-  const step = findGoalStep(plan.steps, "guardian_hygiene");
-  const result = step?.result;
-  if (!step || step.status === "skipped" || step.status === "noop" || !isRecordLike(result) || result.ok !== true || typeof result.confirmToken !== "string") {
-    return step ?? { tool: "guardian_hygiene", ok: true, status: "skipped", reason: "cleanupHygiene=false" };
-  }
-  const applied = await guardianHygiene({
-    ...input,
-    repoRoot: plan.repoRoot,
-    cwd: plan.cwd,
-    config,
-    mode: "apply",
-    allowCategories: [...GOAL_HYGIENE_CATEGORIES],
-    allowDirtyNestedGit: false,
-    confirmDelete: true,
-    confirmToken: result.confirmToken,
-  });
-  const appliedStep = goalStepFromResult("guardian_hygiene", applied);
-  return appliedStep.ok ? { ...appliedStep, status: "applied" } : appliedStep;
-}
-
-async function applyDoneStep(input: GuardianToolInput, plan: GoalPlan, config: GuardianConfig): Promise<GoalStep> {
-  const plannedStep = findGoalStep(plan.steps, "guardian_done");
-  if (!plannedStep || plannedStep.status === "skipped") return plannedStep ?? { tool: "guardian_done", ok: true, status: "skipped" };
-  const freshPlan = await guardianDone({ ...input, repoRoot: plan.repoRoot, cwd: plan.cwd, config, mode: "plan" });
-  if (freshPlan.ok !== true) return goalStepFromResult("guardian_done", freshPlan);
-  const applied = await guardianDone({
-    ...input,
-    repoRoot: plan.repoRoot,
-    cwd: plan.cwd,
-    config,
-    mode: "apply",
-    confirm: true,
-    ...(typeof freshPlan.confirmToken === "string" ? { confirmToken: freshPlan.confirmToken } : {}),
-  });
-  const appliedStep = goalStepFromResult("guardian_done", applied);
-  return appliedStep.ok ? { ...appliedStep, status: "applied" } : appliedStep;
-}
-
-async function applyCleanupWorkflowStep(input: GuardianToolInput, plan: GoalPlan, config: GuardianConfig): Promise<GoalStep> {
-  const plannedStep = findGoalStep(plan.steps, "guardian_finish_workflow");
-  if (!plannedStep || plannedStep.status === "skipped") return plannedStep ?? { tool: "guardian_finish_workflow", ok: true, status: "skipped" };
-  const freshPlan = await guardianFinishWorkflow({ ...input, repoRoot: plan.repoRoot, cwd: plan.cwd, config, mode: "plan" });
-  if (freshPlan.ok !== true) return goalStepFromResult("guardian_finish_workflow", freshPlan);
-  const applied = await guardianFinishWorkflow({
-    ...input,
-    repoRoot: plan.repoRoot,
-    cwd: plan.cwd,
-    config,
-    mode: "apply",
-    ...(typeof freshPlan.confirmToken === "string" ? { confirmToken: freshPlan.confirmToken } : {}),
-  });
-  const appliedStep = goalStepFromResult("guardian_finish_workflow", applied);
-  return appliedStep.ok ? { ...appliedStep, status: "applied" } : appliedStep;
-}
-
 export async function guardianGoal(input: GuardianToolInput = {}): Promise<GuardianToolResult> {
   const requestedMode = input.mode ?? "plan";
   if (requestedMode !== "plan" && requestedMode !== "apply") return { ok: false, status: "blocked", lane: "goal", reason: "mode must be plan or apply", mode: requestedMode };
-  const plan = await buildGoalPlan(input);
+  const resolved = await resolveGoalContext(input);
+  if (!resolved.ok) {
+    return {
+      ok: false,
+      complete: requestedMode === "apply" ? false : null,
+      status: "blocked",
+      lane: "goal",
+      repoRoot: resolved.repoRoot,
+      cwd: resolved.cwd,
+      blockers: [{ tool: "guardian_goal", reason: resolved.reason }],
+      reason: resolved.reason,
+    };
+  }
+  const plan = await buildGoalPlan(input, resolved.context);
   if (requestedMode === "plan") return plan;
   if (plan.ok !== true) return { ...plan, ok: false, complete: false, status: "blocked", reason: "guardian_goal apply requires a blocker-free plan" };
   if (input.confirm !== true) {
@@ -223,6 +153,7 @@ export async function guardianGoal(input: GuardianToolInput = {}): Promise<Guard
       lane: "goal",
       repoRoot: plan.repoRoot,
       cwd: plan.cwd,
+      intentionalPaths: plan.intentionalPaths,
       goal: plan.goal,
       steps: plan.steps,
       blockers: [{ tool: "guardian_goal", reason: "confirm token mismatch; re-run mode=plan and use the returned confirmToken" }],
@@ -231,16 +162,11 @@ export async function guardianGoal(input: GuardianToolInput = {}): Promise<Guard
     };
   }
 
-  const { config } = await resolveGoalContext(input);
-  const appliedSteps = [
-    await applyHygieneStep(input, plan, config),
-    await applyGoalCleanCompletion(input, plan, config),
-    findGoalStep(plan.steps, "guardian_finish_workflow")
-      ? await applyCleanupWorkflowStep(input, plan, config)
-      : await applyDoneStep(input, plan, config),
-  ];
+  const { config, hygieneConfig } = resolved.context;
+  const applied = await applyGoalSteps({ request: input, plan, config, hygieneConfig });
+  const appliedSteps = applied.steps;
   const stepBlockers = appliedSteps.map(goalBlockerFromStep).filter((blocker): blocker is GoalStepBlocker => blocker !== null);
-  const hygienePostcondition = await scanGoalHygienePostcondition({ repoRoot: plan.repoRoot, cwd: plan.cwd, config, input, phase: "apply" });
+  const hygienePostcondition = applied.hygienePostcondition;
   const proofResult = plan.cleanCompletion?.applicable === true && stepBlockers.length === 0 && postconditionIsComplete(hygienePostcondition)
     ? await proveAndPersistCleanCompletion({ repoRoot: plan.repoRoot, config })
     : null;
@@ -256,6 +182,7 @@ export async function guardianGoal(input: GuardianToolInput = {}): Promise<Guard
     lane: "goal",
     repoRoot: plan.repoRoot,
     cwd: plan.cwd,
+    intentionalPaths: plan.intentionalPaths,
     goal: plan.goal,
     steps: appliedSteps,
     blockers,

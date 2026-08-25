@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { collectQuarantineEvidence, nextOperationTransition, normalizeQuarantineFingerprint, quarantineOperationPaths } from "./quarantine-evidence.ts";
+import { removeEmptyAncestorDirectories } from "./empty-directory-cleanup.ts";
 import { readQuarantineItem, writeQuarantineItemTransition, writeQuarantineOperationTransition, writeQuarantineOperationTransitionLocked } from "./quarantine-journal.ts";
 import { moveQuarantinePathCooperatively } from "./quarantine-move.ts";
 import { buildQuarantinePathPreflight } from "./quarantine-path-preflight.ts";
@@ -85,6 +86,7 @@ export async function executeQuarantine(input: ExecuteQuarantineInput): Promise<
   });
 
   await writeQuarantineOperationTransition({ paths, record: nextOperationTransition(renamed, "committed") });
+  await removeEmptyAncestorDirectories({ root: worktreePath, removedPath: locations.source });
 
   return { quarantineId, operationId, artifactPath: locations.artifact };
 }
