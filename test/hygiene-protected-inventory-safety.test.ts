@@ -9,7 +9,7 @@ import { guardianGoal } from "../src/goal.ts";
 import { scanWorkspaceHygiene } from "../src/hygiene.ts";
 import { buildProtectedInventory, PROTECTED_INVENTORY_MAX_ENTRIES_PER_ROOT, PROTECTED_INVENTORY_MAX_ROOTS } from "../src/hygiene-protected-inventory.ts";
 import { runProtectedInventoryWorker } from "../src/hygiene-protected-inventory-process.ts";
-import { createProtectedSeedCollector } from "../src/hygiene-protected-roots.ts";
+import { createProtectedRootCollector } from "../src/hygiene-protected-roots.ts";
 import type { GuardianConfig, RecordLike } from "../src/types.ts";
 import { isRecordLike } from "../src/types.ts";
 import { createRepo, createRepoWithOrigin, git } from "./helpers.ts";
@@ -88,17 +88,15 @@ test("tracked configured protected files remain visible in protected inventory",
   assert.equal(scan.exclusions.some((entry) => entry.path === "retained.txt" && entry.fileCount === 1 && entry.bytes === 9), true);
 });
 
-test("protected seed collection deduplicates generated-tree candidates before sorting", () => {
-  const collector = createProtectedSeedCollector();
-  collector.add({ path: "z-distinct", reason: "distinct protected root" });
+test("protected root collection stays capped for distinct generated-tree candidates", () => {
+  const collector = createProtectedRootCollector("/repo", PROTECTED_INVENTORY_MAX_ROOTS);
   for (let index = 0; index < 50_000; index += 1) {
-    collector.add({ path: "dist", reason: index === 0 ? "first protected reason" : "duplicate protected reason" });
+    collector.add({ path: `run-${String(index).padStart(5, "0")}/node_modules`, reason: "generated protected root" });
   }
 
-  assert.deepEqual(collector.entries(), [
-    { path: "dist", reason: "first protected reason" },
-    { path: "z-distinct", reason: "distinct protected root" },
-  ]);
+  assert.equal(collector.entries().length, PROTECTED_INVENTORY_MAX_ROOTS);
+  assert.equal(collector.entries().at(-1)?.path, "run-00127/node_modules");
+  assert.equal(collector.rootsTruncated(), true);
 });
 
 test("protected inventory caps root result cardinality", async (t) => {
@@ -142,7 +140,10 @@ test("hygiene scanner collapses a scan-derived protected parent before applying 
   const repo = await createRepo();
   t.after(() => fs.rm(repo, { recursive: true, force: true }));
   const nestedPaths = Array.from({ length: PROTECTED_INVENTORY_MAX_ROOTS + 1 }, (_, index) => `dist/nested-${String(index).padStart(3, "0")}`);
-  await Promise.all(nestedPaths.map((entry) => fs.mkdir(path.join(repo, entry), { recursive: true })));
+  await Promise.all(nestedPaths.map(async (entry) => {
+    await fs.mkdir(path.join(repo, entry), { recursive: true });
+    await fs.writeFile(path.join(repo, entry, "candidate.txt"), "candidate\n", "utf8");
+  }));
   await fs.writeFile(path.join(repo, "z-distinct"), "distinct\n", "utf8");
 
   const scan = await scanWorkspaceHygiene({ repoRoot: repo, config: observationOnlyConfig([...nestedPaths, "z-distinct"]) });
