@@ -112,6 +112,7 @@ test("package metadata excludes the vulnerable visual HUD dependency chain", asy
   const tsconfig = JSON.parse(tsconfigText);
   const prohibitedDependencies = ["@opentui/core", "@opentui/keymap", "@opentui/solid", "solid-js"];
 
+  assert.equal(packageJson.engines.node, ">=20.6.0");
   assert.deepEqual(prohibitedDependencies.filter((dependency) => dependency in packageJson.dependencies), []);
   for (const dependency of [...prohibitedDependencies, "brace-expansion"]) {
     assert.doesNotMatch(lockText, new RegExp(`node_modules/${dependency.replace("/", "\\/")}`));

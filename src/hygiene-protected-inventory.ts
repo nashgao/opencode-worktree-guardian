@@ -22,6 +22,7 @@ export type {
 
 type ProtectedInventoryOptions = {
   readonly rootsTruncated?: boolean;
+  readonly coverageIncomplete?: boolean;
 };
 
 export const EMPTY_PROTECTED_INVENTORY: ProtectedInventorySummary = {
@@ -46,11 +47,12 @@ export async function buildProtectedInventory(repoRoot: string, seeds: readonly 
   }
   const selectedSeeds = collapsedSeeds.slice(0, PROTECTED_INVENTORY_MAX_ROOTS);
   const rootsTruncated = options.rootsTruncated === true || selectedSeeds.length < collapsedSeeds.length;
+  const coverageIncomplete = options.coverageIncomplete === true;
   if (selectedSeeds.length === 0) {
     return {
       entries: [],
-      summary: { ...EMPTY_PROTECTED_INVENTORY, rootsTruncated, bytesTruncated: rootsTruncated },
+      summary: { ...EMPTY_PROTECTED_INVENTORY, rootsTruncated, bytesTruncated: rootsTruncated || coverageIncomplete },
     };
   }
-  return runProtectedInventoryWorker({ repoRoot: canonicalRepoRoot, seeds: selectedSeeds, rootsTruncated });
+  return runProtectedInventoryWorker({ repoRoot: canonicalRepoRoot, seeds: selectedSeeds, rootsTruncated, coverageIncomplete });
 }

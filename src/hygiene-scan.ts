@@ -234,7 +234,10 @@ export async function scanWorkspaceHygiene(input: Record<string, unknown> = {}):
       }
     }
     findings.sort((left, right) => String(left.path).localeCompare(String(right.path)) || String(left.category).localeCompare(String(right.category)));
-    const protectedInventory = await buildProtectedInventory(repoRoot, protectedRootCollector.entries(), { rootsTruncated: protectedRootCollector.rootsTruncated() || !emptyDirectoryScan.complete });
+    const protectedInventory = await buildProtectedInventory(repoRoot, protectedRootCollector.entries(), {
+      rootsTruncated: protectedRootCollector.rootsTruncated(),
+      coverageIncomplete: !emptyDirectoryScan.complete,
+    });
     const exclusions = protectedInventory.entries;
     const blockedReviewableRoots = new Set([...findings.map((finding) => String(finding.path)), ...exclusions.map((exclusion) => String(exclusion.path))]);
     const reviewableSummary = await buildReviewableCandidates(repoRoot, reviewableCandidateInputs, blockedReviewableRoots, null);

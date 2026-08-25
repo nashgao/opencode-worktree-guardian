@@ -26,7 +26,7 @@ opencode plug opencode-worktree-guardian
 
 The plugin package exposes both `./server` and `./tui`. After the package is published or otherwise made available to OpenCode's plugin installer, `opencode plug` can enable it in `opencode.json` and `tui.json`; OpenCode selects the right package export for the server or TUI plugin kind. That makes the Guardian slash commands visible in new OpenCode TUI sessions.
 
-The package currently ships TypeScript source entrypoints for OpenCode/plugin-compatible hosts. Package smoke tests verify import through a TypeScript loader, so generic Node consumers need an appropriate TypeScript-capable loader or host until a compiled build is introduced.
+The package requires Node.js 20.6 or newer and currently ships TypeScript source entrypoints for OpenCode/plugin-compatible hosts. Package smoke tests verify import through a TypeScript loader, so generic Node consumers need an appropriate TypeScript-capable loader or host until a compiled build is introduced.
 
 Manual config equivalent:
 
@@ -341,7 +341,7 @@ Terminal recovery plans are also read-only handoffs. When Guardian can prove a t
 [INFO] sessions: 1 | worktrees: 1 | risks: 0 | recoveryCandidates: 0
 ```
 
-`guardian_hygiene` without `mode` reports workspace residue without cleanup approval:
+`guardian_hygiene` without `mode` reports workspace hygiene evidence without cleanup approval:
 
 ```text
 [WARN] guardian_hygiene scan
@@ -431,9 +431,9 @@ Blocked `guardian_finish` exposes `preflight` and `report` for automation:
 - Intentional finish or preserve: use `guardian_finish` or `guardian_preserve`; `autoFinish` remains opt-in. Preservation creates a safety ref and terminal state, not a permanent worktree retention promise.
 - Dirty worktree: commit real source/config/doc changes or intentionally preserve. If the only dirt is runtime/local state, configure narrow `allowDirtyPaths`; file-specific patterns can match untracked runtime files. Guardian reports those files as `allowedDirtyFiles`, leaves them untouched, and still blocks any non-matching dirty path.
 - Dirty review artifact blocks finish: run `guardian_unblock_finish` with `mode: "plan"`, inspect the listed artifacts and confirm token, then apply only if the plan contains no source changes. If the session is unrecorded, include the explicit `branch` or `worktreePath` shown by `guardian_status`.
-- Workspace residue: run `guardian_hygiene`; with no `mode`, known artifacts, nested repos, suspicious paths, protected exclusions, and reviewable inventory are reported only.
+- Workspace hygiene evidence: run `guardian_hygiene`; with no `mode`, known artifacts, nested repos, suspicious paths, protected roots, and reviewable inventory are reported only. Protected roots remain explicitly not assessed and are never labeled trash or treated as cleanup authorization.
   If the user explicitly approves cleanup of hygiene findings, run `guardian_hygiene` with `mode: "plan"`, inspect exact targets/blockers, get explicit delete confirmation, then apply through the plugin with `mode: "apply"` and `confirmDelete: true` for approved targets. The internal token/fingerprint gate remains enforced.
-- Reviewable clutter: use the `suggestedDeletePathCommand` shown on a `reviewableCandidates` entry only as an exact-path planning handoff. Files use `guardian_delete_paths mode=plan paths=["..."]`; directories use `guardian_delete_paths mode=plan paths=["..."] allowRecursive=true`. Do not pass reviewable paths back to `guardian_hygiene` cleanup.
+- Reviewable unclassified paths: use the `suggestedDeletePathCommand` shown on a `reviewableCandidates` entry only as an exact-path planning handoff. Files use `guardian_delete_paths mode=plan paths=["..."]`; directories use `guardian_delete_paths mode=plan paths=["..."] allowRecursive=true`. Do not pass reviewable paths back to `guardian_hygiene` cleanup.
 - Intentional file or source deletion: use `guardian_delete_paths` with exact `paths`. Add `allowTracked: true` only for intended tracked-source deletion and `allowRecursive: true` only for intended directory deletion, then apply through the plugin with `confirmDelete: true` after inspecting the plan.
 - Stash exists: Guardian reports it as advisory inventory and continues by default. Inspect with `git stash list` and `git stash show -p`; Guardian will not mutate stashes. Repositories that intentionally require zero stashes can set `requireEmptyStashInventory: true`.
 - Orphaned worktree: run `guardian_recover` for evidence. If deletion is explicitly intended, run `guardian_delete_worktree` in `mode: "plan"`, inspect the preflight and confirm token, then re-run with `mode: "apply"` and that token.

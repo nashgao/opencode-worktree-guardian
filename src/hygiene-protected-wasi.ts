@@ -41,7 +41,10 @@ type DirectoryListing = {
   readonly truncated: boolean;
 };
 
-function invokeWasi(imports: object, name: string, args: readonly (number | bigint)[]): number {
+type WasiCallName = "fd_close" | "fd_filestat_get" | "fd_readdir" | "path_filestat_get" | "path_open";
+type WasiImportTable = { readonly [name in WasiCallName]?: unknown };
+
+function invokeWasi(imports: WasiImportTable, name: WasiCallName, args: readonly (number | bigint)[]): number {
   const candidate: unknown = Reflect.get(imports, name);
   if (typeof candidate !== "function") throw new Error(`WASI syscall is unavailable: ${name}`);
   const result: unknown = Reflect.apply(candidate, undefined, args);
@@ -59,7 +62,7 @@ function sameEntry(left: WasiDirectoryEntry, right: WasiDirectoryEntry): boolean
 }
 
 export class WasiDirectoryReader {
-  readonly #imports: object;
+  readonly #imports: WasiImportTable;
   readonly #memory: WebAssembly.Memory;
   readonly #view: DataView;
   readonly #bytes: Uint8Array;
@@ -142,7 +145,7 @@ export class WasiDirectoryReader {
     return left.truncated === right.truncated && left.entries.length === right.entries.length && left.entries.every((entry, index) => sameEntry(entry, right.entries[index] ?? entry));
   }
 
-  #call(name: string, args: readonly (number | bigint)[]): void {
+  #call(name: WasiCallName, args: readonly (number | bigint)[]): void {
     const errno = invokeWasi(this.#imports, name, args);
     if (errno !== 0) throw new Error(`Protected inventory WASI ${name} failed with errno ${errno}`);
   }
