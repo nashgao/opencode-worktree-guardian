@@ -38,6 +38,7 @@ export type ProtectedInventoryRequest = {
   readonly repoRoot: string;
   readonly seeds: readonly ProtectedInventorySeed[];
   readonly rootsTruncated: boolean;
+  readonly coverageIncomplete: boolean;
 };
 
 export type ProtectedInventoryWorkerInput = ProtectedInventoryRequest & {
@@ -60,6 +61,7 @@ export const protectedInventoryWorkerInputSchema = z.object({
   repoRoot: z.string(),
   seeds: z.array(seedSchema).max(PROTECTED_INVENTORY_MAX_ROOTS),
   rootsTruncated: z.boolean(),
+  coverageIncomplete: z.boolean(),
   repoDevice: z.string().regex(/^\d+$/),
   repoInode: z.string().regex(/^\d+$/),
 }).strict();

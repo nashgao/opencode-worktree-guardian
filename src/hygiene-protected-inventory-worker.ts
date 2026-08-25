@@ -103,9 +103,18 @@ function scanRoot(reader: WasiDirectoryReader, repoRoot: string, repoDevice: big
     assertSameGeneration(before, stat, seed.path);
     const childLimit = Math.max(0, limit - visited);
     const listing = reader.readDirectory(fd, childLimit);
-    if (listing.truncated) bytesTruncated = true;
+    if (listing.truncated) {
+      bytesTruncated = true;
+      const repeated = reader.readDirectory(fd, childLimit);
+      if (!reader.sameListing(listing, repeated)) throw new Error(`Protected inventory directory changed during enumeration: ${seed.path}`);
+      assertSameGeneration(reader.stat(fd), before, seed.path);
+      return;
+    }
     for (const child of listing.entries) {
-      if (visited >= limit) break;
+      if (visited >= limit) {
+        bytesTruncated = true;
+        break;
+      }
       const childStat = reader.statAt(fd, child.name);
       if (child.inode !== 0n && child.inode !== childStat.inode) throw new Error(`Protected inventory entry identity changed: ${seed.path}/${child.name}`);
       visited += 1;
@@ -172,7 +181,8 @@ function scanProtectedInventory(input: ProtectedInventoryWorkerInput): Protected
   const entries = input.seeds.map((seed) => {
     const limit = Math.min(PROTECTED_INVENTORY_MAX_ENTRIES_PER_ROOT, remainingEntries);
     const entry = scanRoot(reader, canonicalRepoRoot, repoStat.device, seed, limit);
-    remainingEntries = Math.max(0, remainingEntries - entry.fileCount - entry.directoryCount);
+    const consumedBudget = entry.bytesTruncated ? limit : entry.fileCount + entry.directoryCount;
+    remainingEntries = Math.max(0, remainingEntries - consumedBudget);
     return entry;
   });
   const repoAfter = fs.lstatSync(canonicalRepoRoot);
@@ -188,7 +198,7 @@ function scanProtectedInventory(input: ProtectedInventoryWorkerInput): Protected
       fileCount: entries.reduce((total, entry) => total + entry.fileCount, 0),
       directoryCount: entries.reduce((total, entry) => total + entry.directoryCount, 0),
       totalBytes: entries.reduce((total, entry) => total + entry.bytes, 0),
-      bytesTruncated: input.rootsTruncated || entries.some((entry) => entry.bytesTruncated),
+      bytesTruncated: input.rootsTruncated || input.coverageIncomplete || entries.some((entry) => entry.bytesTruncated),
       assessment: "not-assessed",
       cleanupAuthorized: false,
     },

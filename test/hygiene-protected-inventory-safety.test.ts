@@ -150,7 +150,27 @@ test("protected inventory caps entries before enumerating a wider directory", as
   const inventory = await buildProtectedInventory(repo, [{ path: ".wide", reason: "test wide root" }]);
 
   assert.equal(inventory.entries[0]?.directoryCount, 1);
-  assert.equal(inventory.entries[0]?.fileCount, PROTECTED_INVENTORY_MAX_ENTRIES_PER_ROOT - 1);
+  assert.equal(inventory.entries[0]?.fileCount, 0);
+  assert.equal(inventory.entries[0]?.bytesTruncated, true);
+});
+
+test("protected inventory marks a later sibling omitted after nested budget exhaustion", async (t) => {
+  const repo = await createRepo();
+  t.after(() => fs.rm(repo, { recursive: true, force: true }));
+  const root = path.join(repo, ".nested-budget");
+  const nested = path.join(root, "a");
+  await fs.mkdir(nested, { recursive: true });
+  const nestedFileCount = PROTECTED_INVENTORY_MAX_ENTRIES_PER_ROOT - 2;
+  for (let start = 0; start < nestedFileCount; start += 250) {
+    const count = Math.min(250, nestedFileCount - start);
+    await Promise.all(Array.from({ length: count }, (_, offset) => fs.writeFile(path.join(nested, String(start + offset).padStart(5, "0")), "x", "utf8")));
+  }
+  await fs.writeFile(path.join(root, "z"), "omitted\n", "utf8");
+
+  const inventory = await buildProtectedInventory(repo, [{ path: ".nested-budget", reason: "test nested budget" }]);
+
+  assert.equal(inventory.entries[0]?.directoryCount, 2);
+  assert.equal(inventory.entries[0]?.fileCount, nestedFileCount);
   assert.equal(inventory.entries[0]?.bytesTruncated, true);
 });
 
@@ -193,7 +213,7 @@ test("protected inventory worker rejects a substituted repository root", async (
   await fs.symlink(outside, alias, "dir");
 
   await assert.rejects(
-    runProtectedInventoryWorker({ repoRoot: alias, seeds: [{ path: "protected", reason: "test protected root" }], rootsTruncated: false }),
+    runProtectedInventoryWorker({ repoRoot: alias, seeds: [{ path: "protected", reason: "test protected root" }], rootsTruncated: false, coverageIncomplete: false }),
     /ELOOP|ENOTDIR|repository identity changed/,
   );
 });
