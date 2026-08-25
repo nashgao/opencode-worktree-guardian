@@ -43,6 +43,7 @@ type BoundedListInput = {
   readonly entries: readonly unknown[];
   readonly format: (entry: unknown) => string;
   readonly count?: unknown;
+  readonly countIsLowerBound?: boolean;
   readonly limit?: number;
   readonly afterEntry?: (entry: unknown) => void;
 };
@@ -52,13 +53,15 @@ function itemCount(entries: readonly unknown[], value: unknown): number {
   return Math.max(entries.length, reported);
 }
 
-export function appendBoundedList({ lines, heading, entries, format, count, limit = DETAIL_LIST_LIMIT, afterEntry }: BoundedListInput): void {
+export function appendBoundedList({ lines, heading, entries, format, count, countIsLowerBound = false, limit = DETAIL_LIST_LIMIT, afterEntry }: BoundedListInput): void {
   const total = itemCount(entries, count);
   if (total === 0) return;
   const boundedLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : DETAIL_LIST_LIMIT;
   const shown = Math.min(entries.length, boundedLimit);
   const omitted = Math.max(0, total - shown);
-  lines.push(`${heading}: ${total}${omitted > 0 ? ` | omitted: ${omitted}` : ""}`);
+  const displayedTotal = `${total}${countIsLowerBound ? "+" : ""}`;
+  const omittedSummary = countIsLowerBound ? ` | omitted: >${omitted}` : omitted > 0 ? ` | omitted: ${omitted}` : "";
+  lines.push(`${heading}: ${displayedTotal}${omittedSummary}`);
   for (const entry of entries.slice(0, boundedLimit)) {
     lines.push(format(entry));
     afterEntry?.(entry);

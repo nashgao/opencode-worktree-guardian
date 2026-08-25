@@ -3,6 +3,7 @@ import fs, { type FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { compareCodeUnits } from "./code-unit-order.ts";
 import { isSameOrInside } from "./filesystem-boundaries.ts";
+import { liveFileDescriptors } from "./live-file-descriptors.ts";
 
 export const PROTECTED_INVENTORY_MAX_ROOTS = 128;
 export const PROTECTED_INVENTORY_MAX_ENTRIES_PER_ROOT = 10_000;
@@ -64,8 +65,20 @@ export const EMPTY_PROTECTED_INVENTORY: ProtectedInventorySummary = {
   cleanupAuthorized: false,
 };
 
-function sameDirectory(left: Stats, right: Stats): boolean {
+function sameDirectoryNode(left: Stats, right: Stats): boolean {
   return left.isDirectory() && right.isDirectory() && left.dev === right.dev && left.ino === right.ino;
+}
+
+function sameDirectory(left: Stats, right: Stats): boolean {
+  return sameDirectoryNode(left, right) && left.ctimeMs === right.ctimeMs;
+}
+
+function directoryDescriptorCount(descriptors: Awaited<ReturnType<typeof liveFileDescriptors>>, expected: Stats): number {
+  return descriptors.filter((descriptor) => sameDirectoryNode(descriptor.stat, expected)).length;
+}
+
+function totalDirectoryDescriptorCount(descriptors: Awaited<ReturnType<typeof liveFileDescriptors>>): number {
+  return descriptors.filter((descriptor) => descriptor.stat.isDirectory()).length;
 }
 
 async function assertDirectoryIdentity(io: ProtectedInventoryIo, candidate: string, expected: Stats): Promise<void> {
@@ -74,12 +87,18 @@ async function assertDirectoryIdentity(io: ProtectedInventoryIo, candidate: stri
 }
 
 async function boundedChildNames(io: ProtectedInventoryIo, candidate: string, expected: Stats, limit: number): Promise<{ readonly names: readonly string[]; readonly truncated: boolean }> {
+  const descriptorsBefore = await liveFileDescriptors();
   const guard = await io.open(candidate, DIRECTORY_OPEN_FLAGS);
   let directory: Dir | undefined;
   try {
     const guarded = await guard.stat();
     if (!sameDirectory(guarded, expected)) throw new Error(`Protected inventory directory identity changed before scan: ${candidate}`);
     directory = await io.opendir(candidate);
+    const descriptorsAfter = await liveFileDescriptors();
+    if (totalDirectoryDescriptorCount(descriptorsAfter) !== totalDirectoryDescriptorCount(descriptorsBefore) + 2
+      || directoryDescriptorCount(descriptorsAfter, guarded) !== directoryDescriptorCount(descriptorsBefore, expected) + 2) {
+      throw new Error(`Protected inventory directory descriptor did not bind to the guarded path: ${candidate}`);
+    }
     await assertDirectoryIdentity(io, candidate, guarded);
     const names: string[] = [];
     let complete = false;
@@ -93,6 +112,8 @@ async function boundedChildNames(io: ProtectedInventoryIo, candidate: string, ex
     }
     if (!complete) complete = await directory.read() === null;
     await assertDirectoryIdentity(io, candidate, guarded);
+    const guardedAfter = await guard.stat();
+    if (!sameDirectory(guardedAfter, guarded)) throw new Error(`Protected inventory directory generation changed during scan: ${candidate}`);
     return { names: names.sort(compareCodeUnits), truncated: !complete };
   } finally {
     if (directory) await directory.close();

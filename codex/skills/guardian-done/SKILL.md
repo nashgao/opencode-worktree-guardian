@@ -21,4 +21,4 @@ For recovery, use `guardian_done` with `rescue: true` and `mode: "plan"` first. 
 
 Never replace `guardian_done` with raw push, merge, branch deletion, worktree deletion, stash mutation, force-push, or protected-branch bypass commands.
 
-After a successful apply, Guardian attaches `postCompletionHygiene`: a read-only full inventory of findings, reviewable paths, and filesystem-only empty directories. Show that section before reporting the task complete. If its status is `scan-failed` or `incomplete`, treat Guardian completion as partial; do not delete anything or declare full completion.
+After a successful apply, Guardian attaches `postCompletionHygiene`: a bounded read-only inventory of findings, protected roots, reviewable paths, and filesystem-only empty directories. Relay its counts and truncation markers before reporting the task complete. If its status is `scan-failed` or `incomplete`, treat Guardian completion as partial; do not delete anything or declare full completion.

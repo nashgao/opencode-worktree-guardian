@@ -16,10 +16,11 @@ function record(value: unknown, name: string): RecordLike {
   throw new TypeError(`${name} must be an object`);
 }
 
-function observationOnlyConfig(protectedPath: string): GuardianConfig {
+function observationOnlyConfig(protectedPath: string | readonly string[]): GuardianConfig {
+  const extraProtectedPaths = typeof protectedPath === "string" ? [protectedPath] : protectedPath;
   return {
     ...DEFAULT_CONFIG,
-    protectedPaths: [...DEFAULT_CONFIG.protectedPaths, protectedPath],
+    protectedPaths: [...DEFAULT_CONFIG.protectedPaths, ...extraProtectedPaths],
     goal: {
       ...DEFAULT_CONFIG.goal,
       commitDirty: false,
@@ -97,6 +98,11 @@ test("protected inventory caps root result cardinality", async (t) => {
   assert.equal(inventory.summary.rootsTruncated, true);
   assert.equal(inventory.summary.bytesTruncated, true);
   assert.equal(inventory.entries.at(-1)?.path, "protected-127");
+
+  const plan = await guardianGoal({ repoRoot: repo, cwd: repo, mode: "plan", config: observationOnlyConfig(seeds.map((seed) => seed.path)) });
+  const protectedInventory = record(record(plan.hygienePostcondition, "hygiene postcondition").protectedInventory, "protected inventory");
+  assert.equal(protectedInventory.rootsTruncated, true);
+  assert.equal(protectedInventory.rootsOmittedCount, null);
 });
 
 test("protected inventory collapses arbitrary nested protected roots", async (t) => {
@@ -114,6 +120,19 @@ test("protected inventory collapses arbitrary nested protected roots", async (t)
   assert.equal(inventory.entries[0]?.path, ".outer");
   assert.equal(inventory.summary.fileCount, 1);
   assert.equal(inventory.summary.directoryCount, 2);
+});
+
+test("hygiene scanner collapses a scan-derived protected parent before applying its root cap", async (t) => {
+  const repo = await createRepo();
+  t.after(() => fs.rm(repo, { recursive: true, force: true }));
+  const nestedPaths = Array.from({ length: PROTECTED_INVENTORY_MAX_ROOTS + 1 }, (_, index) => `dist/nested-${String(index).padStart(3, "0")}`);
+  await Promise.all(nestedPaths.map((entry) => fs.mkdir(path.join(repo, entry), { recursive: true })));
+  await fs.writeFile(path.join(repo, "z-distinct"), "distinct\n", "utf8");
+
+  const scan = await scanWorkspaceHygiene({ repoRoot: repo, config: observationOnlyConfig([...nestedPaths, "z-distinct"]) });
+
+  assert.deepEqual(scan.exclusions.map((entry) => entry.path), ["dist", "z-distinct"]);
+  assert.equal(scan.summary.protectedInventoryRootsTruncated, false);
 });
 
 test("protected inventory caps entries before enumerating a wider directory", async (t) => {
@@ -175,6 +194,39 @@ test("protected inventory fails closed when a directory is swapped for a symlink
         },
       },
     }),
-    /directory identity changed/,
+    /directory (descriptor did not bind|identity changed)/,
+  );
+});
+
+test("protected inventory rejects a directory swapped only for opendir and restored before identity checks", async (t) => {
+  const repo = await createRepo();
+  const outside = await fs.mkdtemp(path.join(os.tmpdir(), "guardian-protected-swap-back-"));
+  t.after(() => Promise.all([fs.rm(repo, { recursive: true, force: true }), fs.rm(outside, { recursive: true, force: true })]));
+  const protectedRoot = path.join(repo, ".agent-state");
+  const originalRoot = path.join(repo, ".agent-state-original");
+  await fs.mkdir(protectedRoot);
+  await fs.writeFile(path.join(protectedRoot, "inside.txt"), "inside\n", "utf8");
+  await fs.writeFile(path.join(outside, "outside.txt"), "outside\n", "utf8");
+  let swapped = false;
+
+  await assert.rejects(
+    buildProtectedInventory(repo, [{ path: ".agent-state", reason: "test protected root" }], {
+      io: {
+        lstat: fs.lstat,
+        realpath: fs.realpath,
+        open: fs.open,
+        opendir: async (candidate) => {
+          if (swapped || candidate !== protectedRoot) return fs.opendir(candidate);
+          swapped = true;
+          await fs.rename(protectedRoot, originalRoot);
+          await fs.symlink(outside, protectedRoot, "dir");
+          const outsideDirectory = await fs.opendir(candidate);
+          await fs.unlink(protectedRoot);
+          await fs.rename(originalRoot, protectedRoot);
+          return outsideDirectory;
+        },
+      },
+    }),
+    /directory descriptor did not bind/,
   );
 });

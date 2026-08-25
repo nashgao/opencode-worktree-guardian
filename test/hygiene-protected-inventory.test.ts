@@ -165,3 +165,15 @@ test("guardian_goal readable output shows every protected root in the standard r
   assert.equal(output.includes("protected-8"), true);
   assert.equal(output.includes("omitted: 1"), false);
 });
+
+test("readable protected inventory reports root-cap omissions as a lower bound", () => {
+  const exclusions = Array.from({ length: 128 }, (_, index) => ({ path: `protected-${index}`, reason: "configured protected path", assessment: "not-assessed", cleanupAuthorized: false, fileCount: 1, directoryCount: 0, bytes: 1, bytesTruncated: false }));
+  const summary = { findingCount: 0, exclusionCount: 128, protectedInventoryCount: 128, protectedInventoryRootsTruncated: true, protectedInventoryFileCount: 128, protectedInventoryDirectoryCount: 0, protectedInventoryTotalBytes: 128, protectedInventoryBytesTruncated: true, candidateCount: 128, reviewableCandidateCount: 0, bySeverity: { warn: 0, fail: 0 } };
+  const hygieneOutput = formatGuardianHygieneOutput({ ok: true, repoRoot: "/repo", summary, findings: [], exclusions, reviewableCandidates: [], suggestedCommands: [] });
+  const goalOutput = formatGuardianGoalOutput({ ok: true, status: "planned", complete: null, goal: {}, steps: [], blockers: [], hygienePostcondition: { mode: "no-unprotected-residue", phase: "plan", status: "satisfied", residualCount: 0, residualByCategory: {}, protectedExclusionCount: 128, reviewableCandidateCount: 0, reviewableInventoryComplete: true, protectedInventory: { rootCount: 128, rootsTruncated: true, rootsShown: exclusions.slice(0, 12).map((entry) => entry.path), rootsOmittedCount: null, fileCount: 128, directoryCount: 0, totalBytes: 128, bytesTruncated: true } } });
+
+  assert.match(hygieneOutput, /protected roots requiring retention review: 128\+ \| omitted: >116/);
+  assert.match(goalOutput, /protected roots requiring retention review: 128\+ \| omitted: >116/);
+  assert.match(hygieneOutput, /files: 128\+ \| directories: 0\+ \| bytes: 128\+/);
+  assert.match(goalOutput, /files=128\+ \| directories=0\+ \| bytes=128\+/);
+});

@@ -88,12 +88,14 @@ function appendHygienePostcondition(lines: string[], value: unknown, complete: b
   if (protectedRootCount > 0) {
     const protectedBytes = Number(protectedInventory.totalBytes ?? 0);
     const rootsTruncated = protectedInventory.rootsTruncated === true;
-    lines.push(`[WARN] protected inventory: ${protectedRootCount}${rootsTruncated ? "+" : ""} root${protectedRootCount === 1 && !rootsTruncated ? "" : "s"} | files=${Number(protectedInventory.fileCount ?? 0)} | directories=${Number(protectedInventory.directoryCount ?? 0)} | bytes=${protectedBytes}${protectedInventory.bytesTruncated === true ? "+" : ""} | assessment=not-assessed | cleanup-authorized=false`);
+    const protectedMeasurementSuffix = protectedInventory.bytesTruncated === true ? "+" : "";
+    lines.push(`[WARN] protected inventory: ${protectedRootCount}${rootsTruncated ? "+" : ""} root${protectedRootCount === 1 && !rootsTruncated ? "" : "s"} | files=${Number(protectedInventory.fileCount ?? 0)}${protectedMeasurementSuffix} | directories=${Number(protectedInventory.directoryCount ?? 0)}${protectedMeasurementSuffix} | bytes=${protectedBytes}${protectedMeasurementSuffix} | assessment=not-assessed | cleanup-authorized=false`);
     appendBoundedList({
       lines,
       heading: "[WARN] protected roots requiring retention review",
       entries: shownProtectedRoots,
       count: protectedRootCount,
+      countIsLowerBound: rootsTruncated,
       limit: 12,
       format: (entry) => `  - ${sanitizeGoalResidualText(entry)}`,
     });

@@ -20,7 +20,7 @@ export type GoalReviewableCandidate = {
 
 export type GoalProtectedInventory = ProtectedInventorySummary & {
   readonly rootsShown: readonly string[];
-  readonly rootsOmittedCount: number;
+  readonly rootsOmittedCount: number | null;
 };
 
 export type GoalHygienePostcondition = {
