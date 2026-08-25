@@ -99,6 +99,19 @@ test("protected root collection stays capped for distinct generated-tree candida
   assert.equal(collector.rootsTruncated(), true);
 });
 
+test("protected root truncation is invariant when an outer parent arrives last", () => {
+  const childSeeds = Array.from({ length: PROTECTED_INVENTORY_MAX_ROOTS + 1 }, (_, index) => ({ path: `outer/child-${String(index).padStart(3, "0")}`, reason: "protected child" }));
+  const collect = (seeds: readonly { path: string; reason: string }[]) => {
+    const collector = createProtectedRootCollector("/repo", PROTECTED_INVENTORY_MAX_ROOTS);
+    seeds.forEach((seed) => collector.add(seed));
+    return { entries: collector.entries(), rootsTruncated: collector.rootsTruncated() };
+  };
+
+  const parent = { path: "outer", reason: "protected parent" };
+  assert.deepEqual(collect([parent, ...childSeeds]), collect([...childSeeds, parent]));
+  assert.deepEqual(collect([...childSeeds, parent]), { entries: [parent], rootsTruncated: false });
+});
+
 test("protected inventory caps root result cardinality", async (t) => {
   const repo = await createRepo();
   t.after(() => fs.rm(repo, { recursive: true, force: true }));

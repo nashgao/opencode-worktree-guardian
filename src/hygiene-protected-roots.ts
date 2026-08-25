@@ -5,9 +5,17 @@ import type { ProtectedInventorySeed } from "./hygiene-protected-inventory.ts";
 
 export function createProtectedRootCollector(repoRoot: string, limit: number) {
   const roots = new Map<string, ProtectedInventorySeed>();
-  let rootsTruncated = false;
+  let omittedAncestor: string | null = null;
   let greatestPath: string | null = null;
   const absolute = (value: string) => path.resolve(repoRoot, value);
+  const recordOmitted = (candidate: string) => {
+    if (omittedAncestor === null) omittedAncestor = candidate;
+    while (omittedAncestor !== null && !isSameOrInside(candidate, omittedAncestor)) {
+      const parent = path.dirname(omittedAncestor);
+      if (parent === omittedAncestor) break;
+      omittedAncestor = parent;
+    }
+  };
   const refreshGreatestPath = () => {
     greatestPath = null;
     for (const candidate of roots.keys()) {
@@ -17,6 +25,7 @@ export function createProtectedRootCollector(repoRoot: string, limit: number) {
   return {
     add(seed: ProtectedInventorySeed): void {
       const candidate = absolute(seed.path);
+      if (omittedAncestor !== null && isSameOrInside(omittedAncestor, candidate)) omittedAncestor = null;
       for (const existing of roots.values()) {
         if (isSameOrInside(candidate, absolute(existing.path))) return;
       }
@@ -33,18 +42,20 @@ export function createProtectedRootCollector(repoRoot: string, limit: number) {
         if (greatestPath === null || compareCodeUnits(seed.path, greatestPath) > 0) greatestPath = seed.path;
         return;
       }
-      rootsTruncated = true;
       if (greatestPath !== null && compareCodeUnits(seed.path, greatestPath) < 0) {
+        recordOmitted(absolute(greatestPath));
         roots.delete(greatestPath);
         roots.set(seed.path, seed);
         refreshGreatestPath();
+      } else {
+        recordOmitted(candidate);
       }
     },
     entries(): readonly ProtectedInventorySeed[] {
       return [...roots.values()].sort((left, right) => compareCodeUnits(left.path, right.path));
     },
     rootsTruncated(): boolean {
-      return rootsTruncated;
+      return omittedAncestor !== null;
     },
   };
 }
