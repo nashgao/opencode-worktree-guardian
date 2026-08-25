@@ -14,6 +14,7 @@ All notable public-surface changes are tracked here.
 ### Changed
 
 - Strict goal hygiene does not broaden deletion. Every mode auto-deletes only token-bound `known-cleanable` findings. Residual `nested-git` and `suspicious` findings require direct explicit review and are never auto-authorized. Dirty nested Git additionally requires direct `allowDirtyNestedGit`. Configured `protectedPaths` deny deletion and remain excluded from strict completion, but their bounded contents are visible as retention-unassessed inventory. `reviewableCandidates` remain scan-only inventory; `no-unprotected-residue` makes unresolved entries a completion failure without authorizing their deletion. TUI, skill, command, and invisible policy prompts require agents to inspect `complete` and `hygienePostcondition` instead of treating `ok` as desired-state completion.
+- Protected inventory is authorization-neutral: changes to protected metadata do not stale `guardian_goal` confirmation. Directory handles, same-device identity checks, per-directory bounded reads, and capped protected-root results keep the read-only audit inside its repository and resource limits.
 
 ## 1.0.0 - 2026-08-08
 

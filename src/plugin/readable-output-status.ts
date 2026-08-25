@@ -102,12 +102,13 @@ function hygieneProblemLines(result: Record<string, unknown>): string[] {
   const warn = numberValue(recordValue(summary.bySeverity).warn);
   const total = numberValue(summary.findingCount);
   const protectedInventoryCount = numberValue(summary.protectedInventoryCount);
+  const protectedInventoryRootsTruncated = summary.protectedInventoryRootsTruncated === true;
   const lines: string[] = [];
   if (total > 0) {
     const severity = [fail > 0 ? `${fail} need manual review` : "", warn > 0 ? `${warn} warning${warn === 1 ? "" : "s"}` : ""].filter(Boolean).join(", ");
     lines.push(`Hygiene findings: ${total}${severity ? ` (${severity})` : ""}`);
   }
-  if (protectedInventoryCount > 0) lines.push(`Protected inventory not retention-assessed: ${protectedInventoryCount} root${protectedInventoryCount === 1 ? "" : "s"}`);
+  if (protectedInventoryCount > 0) lines.push(`Protected inventory not retention-assessed: ${protectedInventoryCount}${protectedInventoryRootsTruncated ? "+" : ""} root${protectedInventoryCount === 1 && !protectedInventoryRootsTruncated ? "" : "s"}`);
   return lines;
 }
 

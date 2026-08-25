@@ -45,6 +45,7 @@ function appendHygienePostcondition(lines: string[], value: unknown, complete: b
   if (Object.keys(postcondition).length === 0) return;
   const counts = recordValue(postcondition.residualByCategory);
   const protectedInventory = recordValue(postcondition.protectedInventory);
+  const shownProtectedRoots = arrayValue(protectedInventory.rootsShown);
   const shownFindings = arrayValue(postcondition.residualFindingsShown);
   const shownReviewables = arrayValue(postcondition.reviewableCandidatesShown);
   const residualCount = Number(postcondition.residualCount ?? 0);
@@ -86,7 +87,17 @@ function appendHygienePostcondition(lines: string[], value: unknown, complete: b
   const protectedRootCount = Number(protectedInventory.rootCount ?? 0);
   if (protectedRootCount > 0) {
     const protectedBytes = Number(protectedInventory.totalBytes ?? 0);
-    lines.push(`[WARN] protected inventory: ${protectedRootCount} root${protectedRootCount === 1 ? "" : "s"} | files=${Number(protectedInventory.fileCount ?? 0)} | directories=${Number(protectedInventory.directoryCount ?? 0)} | bytes=${protectedBytes}${protectedInventory.bytesTruncated === true ? "+" : ""} | assessment=not-assessed | cleanup-authorized=false`);
+    const rootsTruncated = protectedInventory.rootsTruncated === true;
+    lines.push(`[WARN] protected inventory: ${protectedRootCount}${rootsTruncated ? "+" : ""} root${protectedRootCount === 1 && !rootsTruncated ? "" : "s"} | files=${Number(protectedInventory.fileCount ?? 0)} | directories=${Number(protectedInventory.directoryCount ?? 0)} | bytes=${protectedBytes}${protectedInventory.bytesTruncated === true ? "+" : ""} | assessment=not-assessed | cleanup-authorized=false`);
+    appendBoundedList({
+      lines,
+      heading: "[WARN] protected roots requiring retention review",
+      entries: shownProtectedRoots,
+      count: protectedRootCount,
+      limit: 12,
+      format: (entry) => `  - ${sanitizeGoalResidualText(entry)}`,
+    });
+    if (rootsTruncated) lines.push("[WARN] additional protected roots were omitted by the bounded inventory");
   }
 }
 

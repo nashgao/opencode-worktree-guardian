@@ -250,7 +250,7 @@ Apply re-runs the same fingerprinted preflight immediately before deletion, dele
 
 ## `guardian_hygiene` Scan Policy
 
-`guardian_hygiene` without `mode` is report-only. It detects untracked or ignored scratch artifacts, nested Git repositories, suspicious research dumps, generated cache roots, protected exclusions, and scan-only `reviewableCandidates`. Scan output does not authorize deletion. Protection is an authority boundary rather than a retention judgment: every protected root is measured with bounded file, directory, and byte totals, marked `not-assessed`, and carries `cleanupAuthorized: false`.
+`guardian_hygiene` without `mode` is report-only. It detects untracked or ignored scratch artifacts, nested Git repositories, suspicious research dumps, generated cache roots, protected exclusions, and scan-only `reviewableCandidates`. Scan output does not authorize deletion. Protection is an authority boundary rather than a retention judgment: every shown protected root is measured with bounded file, directory, and byte totals, marked `not-assessed`, and carries `cleanupAuthorized: false`. Protected root and entry traversal is explicitly capped, directory identity and device boundaries are checked, and truncation is machine-visible. Because this evidence cannot authorize a mutation, its volatile counts and bytes are excluded from `guardian_goal` confirmation-token material.
 
 `reviewableCandidates` are the untracked or ignored candidate roots Guardian saw but did not classify as cleanup findings or protected exclusions. They are inventory for human review, not `findings`, not hygiene cleanup targets, and not accepted by the `guardian_hygiene` cleanup preflight. They do not increment finding, severity, category, risk, or approved-target counts.
 
