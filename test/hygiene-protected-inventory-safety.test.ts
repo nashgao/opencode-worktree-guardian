@@ -9,6 +9,7 @@ import { guardianGoal } from "../src/goal.ts";
 import { scanWorkspaceHygiene } from "../src/hygiene.ts";
 import { buildProtectedInventory, PROTECTED_INVENTORY_MAX_ENTRIES_PER_ROOT, PROTECTED_INVENTORY_MAX_ROOTS } from "../src/hygiene-protected-inventory.ts";
 import { runProtectedInventoryWorker } from "../src/hygiene-protected-inventory-process.ts";
+import { createProtectedSeedCollector } from "../src/hygiene-protected-roots.ts";
 import type { GuardianConfig, RecordLike } from "../src/types.ts";
 import { isRecordLike } from "../src/types.ts";
 import { createRepo, createRepoWithOrigin, git } from "./helpers.ts";
@@ -85,6 +86,19 @@ test("tracked configured protected files remain visible in protected inventory",
   const scan = await scanWorkspaceHygiene({ repoRoot: repo, config: observationOnlyConfig("retained.txt") });
 
   assert.equal(scan.exclusions.some((entry) => entry.path === "retained.txt" && entry.fileCount === 1 && entry.bytes === 9), true);
+});
+
+test("protected seed collection deduplicates generated-tree candidates before sorting", () => {
+  const collector = createProtectedSeedCollector();
+  collector.add({ path: "z-distinct", reason: "distinct protected root" });
+  for (let index = 0; index < 50_000; index += 1) {
+    collector.add({ path: "dist", reason: index === 0 ? "first protected reason" : "duplicate protected reason" });
+  }
+
+  assert.deepEqual(collector.entries(), [
+    { path: "dist", reason: "first protected reason" },
+    { path: "z-distinct", reason: "distinct protected root" },
+  ]);
 });
 
 test("protected inventory caps root result cardinality", async (t) => {
