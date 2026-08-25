@@ -3,10 +3,11 @@ import { compareCodeUnits } from "./code-unit-order.ts";
 import { isSameOrInside } from "./filesystem-boundaries.ts";
 import type { ProtectedInventorySeed } from "./hygiene-protected-inventory.ts";
 
-export function createProtectedRootCollector(repoRoot: string, limit: number) {
+function createProtectedRootCollector(repoRoot: string, limit: number) {
   const roots = new Map<string, ProtectedInventorySeed>();
   let omittedAncestor: string | null = null;
   let greatestPath: string | null = null;
+  let replayRequired = false;
   const absolute = (value: string) => path.resolve(repoRoot, value);
   const recordOmitted = (candidate: string) => {
     if (omittedAncestor === null) omittedAncestor = candidate;
@@ -25,7 +26,11 @@ export function createProtectedRootCollector(repoRoot: string, limit: number) {
   return {
     add(seed: ProtectedInventorySeed): void {
       const candidate = absolute(seed.path);
-      if (omittedAncestor !== null && isSameOrInside(omittedAncestor, candidate)) omittedAncestor = null;
+      const hadOmissions = omittedAncestor !== null;
+      if (omittedAncestor !== null && isSameOrInside(omittedAncestor, candidate)) {
+        omittedAncestor = null;
+        replayRequired = true;
+      }
       for (const existing of roots.values()) {
         if (isSameOrInside(candidate, absolute(existing.path))) return;
       }
@@ -36,6 +41,7 @@ export function createProtectedRootCollector(repoRoot: string, limit: number) {
           removedDescendant = true;
         }
       }
+      if (removedDescendant && hadOmissions) replayRequired = true;
       if (removedDescendant) refreshGreatestPath();
       if (roots.size < limit) {
         roots.set(seed.path, seed);
@@ -57,5 +63,27 @@ export function createProtectedRootCollector(repoRoot: string, limit: number) {
     rootsTruncated(): boolean {
       return omittedAncestor !== null;
     },
+    replayRequired(): boolean {
+      return replayRequired;
+    },
   };
+}
+
+export function collectProtectedRoots(repoRoot: string, limit: number, replay: () => Iterable<ProtectedInventorySeed>) {
+  let primedRoots: readonly ProtectedInventorySeed[] = [];
+  let previousResult: { entries: readonly ProtectedInventorySeed[]; rootsTruncated: boolean } | null = null;
+  for (let iteration = 0; iteration <= limit; iteration += 1) {
+    const collector = createProtectedRootCollector(repoRoot, limit);
+    primedRoots.forEach((seed) => collector.add(seed));
+    for (const seed of replay()) collector.add(seed);
+    const result = { entries: collector.entries(), rootsTruncated: collector.rootsTruncated() };
+    const stabilized = previousResult !== null
+      && previousResult.rootsTruncated === result.rootsTruncated
+      && previousResult.entries.length === result.entries.length
+      && previousResult.entries.every((entry, index) => entry.path === result.entries[index]?.path && entry.reason === result.entries[index]?.reason);
+    if (!collector.replayRequired() || stabilized) return result;
+    previousResult = result;
+    primedRoots = result.entries;
+  }
+  throw new Error("protected root collection did not stabilize within its bounded replay limit");
 }

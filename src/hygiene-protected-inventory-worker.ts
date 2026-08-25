@@ -79,7 +79,14 @@ function validateBindings(reader: WasiDirectoryReader, bindings: readonly PathBi
   for (const binding of bindings) assertSameNode(reader.statAt(binding.parentFd, binding.name), binding.stat, label);
 }
 
-function scanRoot(reader: WasiDirectoryReader, repoRoot: string, repoDevice: bigint, seed: ProtectedInventorySeed, limit: number): ProtectedInventoryEntry {
+function scanRoot(input: {
+  reader: WasiDirectoryReader;
+  repoRoot: string;
+  repoDevice: bigint;
+  seed: ProtectedInventorySeed;
+  limit: number;
+}): ProtectedInventoryEntry {
+  const { reader, repoRoot, repoDevice, seed, limit } = input;
   const opened = openRoot(reader, repoRoot, seed);
   let visited = 0;
   let fileCount = 0;
@@ -180,7 +187,7 @@ function scanProtectedInventory(input: ProtectedInventoryWorkerInput): Protected
   let remainingEntries = PROTECTED_INVENTORY_MAX_ENTRIES_TOTAL;
   const entries = input.seeds.map((seed) => {
     const limit = Math.min(PROTECTED_INVENTORY_MAX_ENTRIES_PER_ROOT, remainingEntries);
-    const entry = scanRoot(reader, canonicalRepoRoot, repoStat.device, seed, limit);
+    const entry = scanRoot({ reader, repoRoot: canonicalRepoRoot, repoDevice: repoStat.device, seed, limit });
     const consumedBudget = entry.bytesTruncated ? limit : entry.fileCount + entry.directoryCount;
     remainingEntries = Math.max(0, remainingEntries - consumedBudget);
     return entry;

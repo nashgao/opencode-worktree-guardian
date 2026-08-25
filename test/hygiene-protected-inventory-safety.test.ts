@@ -9,7 +9,7 @@ import { guardianGoal } from "../src/goal.ts";
 import { scanWorkspaceHygiene } from "../src/hygiene.ts";
 import { buildProtectedInventory, PROTECTED_INVENTORY_MAX_ENTRIES_PER_ROOT, PROTECTED_INVENTORY_MAX_ROOTS } from "../src/hygiene-protected-inventory.ts";
 import { runProtectedInventoryWorker } from "../src/hygiene-protected-inventory-process.ts";
-import { createProtectedRootCollector } from "../src/hygiene-protected-roots.ts";
+import { collectProtectedRoots } from "../src/hygiene-protected-roots.ts";
 import type { GuardianConfig, RecordLike } from "../src/types.ts";
 import { isRecordLike } from "../src/types.ts";
 import { createRepo, createRepoWithOrigin, git } from "./helpers.ts";
@@ -89,27 +89,27 @@ test("tracked configured protected files remain visible in protected inventory",
 });
 
 test("protected root collection stays capped for distinct generated-tree candidates", () => {
-  const collector = createProtectedRootCollector("/repo", PROTECTED_INVENTORY_MAX_ROOTS);
-  for (let index = 0; index < 50_000; index += 1) {
-    collector.add({ path: `run-${String(index).padStart(5, "0")}/node_modules`, reason: "generated protected root" });
-  }
+  const result = collectProtectedRoots("/repo", PROTECTED_INVENTORY_MAX_ROOTS, function* () {
+    for (let index = 0; index < 50_000; index += 1) {
+      yield { path: `run-${String(index).padStart(5, "0")}/node_modules`, reason: "generated protected root" };
+    }
+  });
 
-  assert.equal(collector.entries().length, PROTECTED_INVENTORY_MAX_ROOTS);
-  assert.equal(collector.entries().at(-1)?.path, "run-00127/node_modules");
-  assert.equal(collector.rootsTruncated(), true);
+  assert.equal(result.entries.length, PROTECTED_INVENTORY_MAX_ROOTS);
+  assert.equal(result.entries.at(-1)?.path, "run-00127/node_modules");
+  assert.equal(result.rootsTruncated, true);
 });
 
 test("protected root truncation is invariant when an outer parent arrives last", () => {
   const childSeeds = Array.from({ length: PROTECTED_INVENTORY_MAX_ROOTS + 1 }, (_, index) => ({ path: `outer/child-${String(index).padStart(3, "0")}`, reason: "protected child" }));
   const collect = (seeds: readonly { path: string; reason: string }[]) => {
-    const collector = createProtectedRootCollector("/repo", PROTECTED_INVENTORY_MAX_ROOTS);
-    seeds.forEach((seed) => collector.add(seed));
-    return { entries: collector.entries(), rootsTruncated: collector.rootsTruncated() };
+    return collectProtectedRoots("/repo", PROTECTED_INVENTORY_MAX_ROOTS, () => seeds);
   };
 
   const parent = { path: "outer", reason: "protected parent" };
-  assert.deepEqual(collect([parent, ...childSeeds]), collect([...childSeeds, parent]));
-  assert.deepEqual(collect([...childSeeds, parent]), { entries: [parent], rootsTruncated: false });
+  const distinct = { path: "z-distinct", reason: "distinct protected root" };
+  assert.deepEqual(collect([parent, ...childSeeds, distinct]), collect([...childSeeds, distinct, parent]));
+  assert.deepEqual(collect([...childSeeds, distinct, parent]), { entries: [parent, distinct], rootsTruncated: false });
 });
 
 test("protected inventory caps root result cardinality", async (t) => {
