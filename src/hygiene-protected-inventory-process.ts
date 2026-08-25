@@ -27,10 +27,10 @@ function workerEnvironment(): NodeJS.ProcessEnv {
   return environment;
 }
 
-function appendBounded(chunks: Buffer[], chunk: Buffer, currentBytes: number, maxBytes: number): number {
-  const nextBytes = currentBytes + chunk.length;
-  if (nextBytes > maxBytes) throw new Error("Protected inventory worker output exceeded its bound");
-  chunks.push(chunk);
+function appendBounded(input: { chunks: Buffer[]; chunk: Buffer; currentBytes: number; maxBytes: number }): number {
+  const nextBytes = input.currentBytes + input.chunk.length;
+  if (nextBytes > input.maxBytes) throw new Error("Protected inventory worker output exceeded its bound");
+  input.chunks.push(input.chunk);
   return nextBytes;
 }
 
@@ -74,7 +74,7 @@ function spawnProtectedInventoryWorker(input: ProtectedInventoryWorkerInput, rep
     let outputError: Error | undefined;
     stdoutStream.on("data", (chunk: Buffer) => {
       try {
-        stdoutBytes = appendBounded(stdout, chunk, stdoutBytes, MAX_STDOUT_BYTES);
+        stdoutBytes = appendBounded({ chunks: stdout, chunk, currentBytes: stdoutBytes, maxBytes: MAX_STDOUT_BYTES });
       } catch (error) {
         outputError = error instanceof Error ? error : new Error(String(error));
         child.kill("SIGTERM");
@@ -82,7 +82,7 @@ function spawnProtectedInventoryWorker(input: ProtectedInventoryWorkerInput, rep
     });
     stderrStream.on("data", (chunk: Buffer) => {
       try {
-        stderrBytes = appendBounded(stderr, chunk, stderrBytes, MAX_STDERR_BYTES);
+        stderrBytes = appendBounded({ chunks: stderr, chunk, currentBytes: stderrBytes, maxBytes: MAX_STDERR_BYTES });
       } catch (error) {
         outputError = error instanceof Error ? error : new Error(String(error));
         child.kill("SIGTERM");

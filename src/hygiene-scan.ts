@@ -9,61 +9,22 @@ import { isEnoent, isSameOrInside, relativePath } from "./filesystem-boundaries.
 import { listCandidatePaths } from "./hygiene-candidates.ts";
 import type { NullSeparatedRunner, ReviewableCandidateInput } from "./hygiene-candidates.ts";
 import { buildProtectedInventory, PROTECTED_INVENTORY_MAX_ROOTS } from "./hygiene-protected-inventory.ts";
-import type { ProtectedInventorySeed } from "./hygiene-protected-inventory.ts";
-import { createProtectedRootCollector } from "./hygiene-protected-roots.ts";
+import { collectProtectedRoots } from "./hygiene-protected-roots.ts";
+import { protectedDirReason, protectedSeedForRelative, replayProtectedSeeds } from "./hygiene-protected-seeds.ts";
 import { buildReviewableCandidates } from "./hygiene-reviewable.ts";
 import type { ReviewableCandidate } from "./hygiene-reviewable.ts";
 import type { FilesystemOnlyEmptyDirectory, HygieneScanResult, HygieneSummary } from "./hygiene-scan-result.ts";
 import { DEFAULT_EMPTY_DIRECTORY_MAX_DEPTH, DEFAULT_EMPTY_DIRECTORY_MAX_ENTRIES, scanEmptyDirectories } from "./hygiene-empty-directories.ts";
 import { HYGIENE_OPERATIONAL_SCOPE } from "./operational-scope.ts";
-import { protectedPathMatch, protectedPathsFromConfig } from "./protected-paths.ts";
+import { protectedPathsFromConfig } from "./protected-paths.ts";
 
 export type { HygieneCategory, HygieneSeverity } from "./hygiene-classification.ts";
 export type { FilesystemOnlyEmptyDirectory, HygieneScanResult, HygieneSummary } from "./hygiene-scan-result.ts";
 
-const PROTECTED_DIR_NAMES = new Set([
-  "node_modules", "vendor", "target", "dist", "build", "coverage",
-  ".cache", ".next", ".turbo", ".vite", ".parcel-cache", ".pnpm-store",
-  "out", "tmp", "temp",
-]);
-
 const SUSPICIOUS_NAME_PATTERN = /(^|[-_.])(clone|clones|research|dump|dumps|scratch|sandbox|experiment|prototype|poc|checkout|repo)([-_.]|$)/i;
 const RESIDUE_ROOT_PATTERN = /^(guardian-[^/]+|guardian-origin-[^/]+|opencode-temp-[^/]+|omo-research-[^/]+|opencode-research-[^/]+|git-docs-research)$/;
 
-
-export function protectedDirReason(relative: string, protectedPaths: readonly string[] = []) {
-  const parts = relative.split("/").filter(Boolean);
-  if (parts[0] === ".git") {
-    return relative === ".git/worktrees" || relative.startsWith(".git/worktrees/") ? "git worktree metadata" : "git metadata";
-  }
-  if (parts.includes(".git")) return "nested Git metadata";
-  const protectedPath = protectedPathMatch(relative, protectedPaths);
-  if (protectedPath) return protectedPath.reason;
-  const protectedPart = parts.find((part) => PROTECTED_DIR_NAMES.has(part));
-  return protectedPart ? `protected ${protectedPart} directory` : null;
-}
-
-function protectedDirExclusionPath(relative: string, protectedPaths: readonly string[]) {
-  const protectedPath = protectedPathMatch(relative, protectedPaths);
-  if (protectedPath) return protectedPath.path;
-  const parts = relative.split("/").filter(Boolean);
-  return parts.slice(0, parts.findIndex((part) => PROTECTED_DIR_NAMES.has(part)) + 1).join("/") || parts[0] || relative;
-}
-
-function protectedSeedForRelative(repoRoot: string, relative: string, protectedPaths: readonly string[], protectedRoots: readonly string[]): ProtectedInventorySeed | null {
-  const seeds: ProtectedInventorySeed[] = [];
-  const configured = protectedPathMatch(relative, protectedPaths);
-  if (configured) seeds.push({ path: configured.path, reason: configured.reason });
-  const absolutePath = path.resolve(repoRoot, relative);
-  const worktreeRoot = protectedRoots.find((root) => isSameOrInside(absolutePath, root));
-  if (worktreeRoot) seeds.push({ path: relativePath(repoRoot, worktreeRoot), reason: "configured or registered Git worktree path" });
-  const reason = protectedDirReason(relative);
-  if (reason) seeds.push({ path: protectedDirExclusionPath(relative, []), reason });
-  return seeds.reduce<ProtectedInventorySeed | null>((outer, seed) => {
-    if (!outer) return seed;
-    return outer.path !== seed.path && isSameOrInside(path.resolve(repoRoot, outer.path), path.resolve(repoRoot, seed.path)) ? seed : outer;
-  }, null);
-}
+export { protectedDirReason } from "./hygiene-protected-seeds.ts";
 
 
 function suspiciousPath(relative: string) {
@@ -153,45 +114,35 @@ export async function scanWorkspaceHygiene(input: Record<string, unknown> = {}):
     const configuredWorktreeRoot = path.resolve(repoRoot, expandWorktreeRoot(String(config.worktreeRoot), repoRoot));
     const protectedRoots = [configuredWorktreeRoot, ...worktrees.map((entry) => path.resolve(String(entry.path))).filter((entry) => entry !== path.resolve(repoRoot) && isSameOrInside(entry, path.resolve(repoRoot)))].sort(compareCodeUnits);
     const findings: Array<Record<string, unknown>> = [];
-    const protectedRootCollector = createProtectedRootCollector(repoRoot, PROTECTED_INVENTORY_MAX_ROOTS);
-    const recordProtectedExclusion = (seed: ProtectedInventorySeed) => protectedRootCollector.add(seed);
     const reviewableCandidateInputs: ReviewableCandidateInput[] = [];
     const seenFindings = new Set<string>();
     const candidates = await listCandidatePaths(
       repoRoot,
       typeof input.runGitNullSeparated === "function" ? input.runGitNullSeparated as NullSeparatedRunner : runGitNullSeparated,
     );
-    for (const candidate of candidates) {
-      const relative = relativePath(repoRoot, path.resolve(repoRoot, candidate.path));
-      const protectedSeed = protectedSeedForRelative(repoRoot, relative, protectedPaths, protectedRoots);
-      if (protectedSeed) recordProtectedExclusion(protectedSeed);
-    }
     const emptyDirectoryScan = await scanEmptyDirectories({
       repoRoot,
       maximumDepth: emptyDirectoryLimit(input, "emptyDirectoryMaxDepth", DEFAULT_EMPTY_DIRECTORY_MAX_DEPTH),
       maximumEntries: emptyDirectoryLimit(input, "emptyDirectoryMaxEntries", DEFAULT_EMPTY_DIRECTORY_MAX_ENTRIES),
       exclude: (relative) => {
-        return protectedSeedForRelative(repoRoot, relative, protectedPaths, protectedRoots)?.reason ?? null;
+        return protectedSeedForRelative({ repoRoot, relative, protectedPaths, protectedRoots })?.reason ?? null;
       },
     });
-    for (const exclusion of emptyDirectoryScan.excluded) {
-      const protectedSeed = protectedSeedForRelative(repoRoot, exclusion.path, protectedPaths, protectedRoots);
-      if (protectedSeed && exclusion.reason !== "git metadata" && exclusion.reason !== "git worktree metadata" && exclusion.reason !== "nested Git metadata") recordProtectedExclusion(protectedSeed);
-    }
+    const existingProtectedPaths: string[] = [];
     for (const protectedPath of protectedPaths) {
-      const protectedSeed = protectedSeedForRelative(repoRoot, protectedPath, protectedPaths, protectedRoots);
-      if (protectedSeed && await pathKind(path.resolve(repoRoot, protectedPath)) !== "missing") recordProtectedExclusion(protectedSeed);
+      if (await pathKind(path.resolve(repoRoot, protectedPath)) !== "missing") existingProtectedPaths.push(protectedPath);
     }
+    const existingProtectedRoots: string[] = [];
     for (const protectedRoot of protectedRoots) {
       if (isSameOrInside(protectedRoot, path.resolve(repoRoot)) && await pathKind(protectedRoot) !== "missing") {
-        const protectedSeed = protectedSeedForRelative(repoRoot, relativePath(repoRoot, protectedRoot), protectedPaths, protectedRoots);
-        if (protectedSeed) recordProtectedExclusion(protectedSeed);
+        existingProtectedRoots.push(relativePath(repoRoot, protectedRoot));
       }
     }
+    const protectedRootResult = collectProtectedRoots(repoRoot, PROTECTED_INVENTORY_MAX_ROOTS, () => replayProtectedSeeds({ repoRoot, protectedPaths, protectedRoots, candidates, exclusions: emptyDirectoryScan.excluded, existingProtectedPaths, existingProtectedRoots }));
     for (const candidate of candidates) {
       const absolutePath = path.resolve(repoRoot, candidate.path);
       const relative = relativePath(repoRoot, absolutePath);
-      if (protectedSeedForRelative(repoRoot, relative, protectedPaths, protectedRoots)) continue;
+      if (protectedSeedForRelative({ repoRoot, relative, protectedPaths, protectedRoots })) continue;
       const nestedRoot = await findNestedGitRoot(repoRoot, absolutePath);
       if (nestedRoot) {
         const nestedRelative = residueRoot(relative) ?? relativePath(repoRoot, nestedRoot);
@@ -241,8 +192,8 @@ export async function scanWorkspaceHygiene(input: Record<string, unknown> = {}):
       }
     }
     findings.sort((left, right) => String(left.path).localeCompare(String(right.path)) || String(left.category).localeCompare(String(right.category)));
-    const protectedInventory = await buildProtectedInventory(repoRoot, protectedRootCollector.entries(), {
-      rootsTruncated: protectedRootCollector.rootsTruncated(),
+    const protectedInventory = await buildProtectedInventory(repoRoot, protectedRootResult.entries, {
+      rootsTruncated: protectedRootResult.rootsTruncated,
       coverageIncomplete: !emptyDirectoryScan.complete,
     });
     const exclusions = protectedInventory.entries;
