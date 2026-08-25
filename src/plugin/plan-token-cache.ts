@@ -9,7 +9,9 @@ export function ensureToolArgs(output: GuardCommandPayload = {}) {
 }
 
 function sortedStringArgs(value: unknown) {
-  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string").sort((left, right) => left < right ? -1 : left > right ? 1 : 0) : [];
+  if (!Array.isArray(value)) return [];
+  const strings = value.filter((entry): entry is string => typeof entry === "string");
+  return [...new Set(strings)].sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
 }
 
 export function normalizeOptionalToolStrings(toolArgs: PlanCacheToolArgs) {
@@ -26,6 +28,7 @@ async function planCacheKey(name: GuardianToolName, toolArgs: PlanCacheToolArgs,
     repoRoot: typeof toolArgs.repoRoot === "string" ? toolArgs.repoRoot : "",
     cwd: typeof toolArgs.cwd === "string" ? toolArgs.cwd : "",
     paths: sortedStringArgs(toolArgs.paths),
+    intentionalPaths: sortedStringArgs(toolArgs.intentionalPaths),
     cleanupPaths: sortedStringArgs(toolArgs.cleanupPaths),
     allowCategories: sortedStringArgs(toolArgs.allowCategories),
     allowedRemoteBranches: normalizeAllowedRemoteBranches(toolArgs.allowedRemoteBranches),

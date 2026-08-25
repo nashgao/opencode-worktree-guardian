@@ -39,6 +39,7 @@ test("guardian_quarantine plans and confirmed-purges an available item", async (
   const paths = await getGuardianPaths(repo);
   const manifestDigest = String((started.session.provenance as { readonly manifest?: { readonly digest?: string } }).manifest?.digest);
   const quarantined = await executeQuarantine({ paths, repoRoot: repo, config: enabledConfig, session: started.session, relativePath, manifestDigest, doneIntentDigest: intent.digest });
+  await assert.rejects(fs.access(path.join(worktreePath, ".completion-cache")));
 
   const plan = await guardianQuarantine({ repoRoot: repo, config: enabledConfig, mode: "plan", action: "purge", quarantineId: quarantined.quarantineId });
   assert.equal(plan.ok, true);
@@ -138,11 +139,11 @@ test("guardian_goal quarantines eligible residue before its normal done apply", 
   await fs.writeFile(path.join(worktreePath, "implementation.txt"), "commit me\n");
   await installFakeGh(t, { repo, branch: String(started.session.branch), dynamicHead: true });
 
-  const plan = await guardianGoal({ repoRoot: repo, cwd: worktreePath, sessionId: started.session.session_id, mode: "plan", commitMessage: "feat: clean completion", config: enabledConfig });
+  const plan = await guardianGoal({ repoRoot: repo, cwd: worktreePath, sessionId: started.session.session_id, mode: "plan", commitMessage: "feat: clean completion", intentionalPaths: ["implementation.txt"], config: enabledConfig });
 
   assert.equal(plan.ok, true, JSON.stringify(plan));
-  assert.equal(plan.status, "planned");
-  const applied = await guardianGoal({ repoRoot: repo, cwd: worktreePath, sessionId: started.session.session_id, mode: "apply", confirm: true, confirmToken: plan.confirmToken, commitMessage: "feat: clean completion", config: enabledConfig });
+  assert.equal(plan.status, "planned-partial");
+  const applied = await guardianGoal({ repoRoot: repo, cwd: worktreePath, sessionId: started.session.session_id, mode: "apply", confirm: true, confirmToken: plan.confirmToken, commitMessage: "feat: clean completion", intentionalPaths: ["implementation.txt"], config: enabledConfig });
   assert.equal(applied.ok, true, JSON.stringify(applied));
   assert.equal(applied.complete, true, JSON.stringify(applied));
 });

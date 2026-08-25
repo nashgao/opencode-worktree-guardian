@@ -52,7 +52,7 @@ function appendHygienePostcondition(lines: string[], value: unknown, complete: b
   const reviewableCount = Number(postcondition.reviewableCandidateCount ?? 0);
   const completeText = complete === null ? "pending" : String(complete);
   lines.push(`[INFO] hygiene mode=${sanitizeGoalResidualText(postcondition.mode)} phase=${sanitizeGoalResidualText(postcondition.phase)} status=${sanitizeGoalResidualText(postcondition.status)} complete=${completeText}`);
-  lines.push(`[${residualCount > 0 ? "WARN" : "INFO"}] hygiene residuals: ${residualCount} | known-cleanable=${Number(counts["known-cleanable"] ?? 0)} | nested-git=${Number(counts["nested-git"] ?? 0)} | suspicious=${Number(counts.suspicious ?? 0)}`);
+  lines.push(`[${residualCount > 0 ? "WARN" : "INFO"}] hygiene residuals: ${residualCount} | known-cleanable=${Number(counts["known-cleanable"] ?? 0)} | empty-directory=${Number(counts["filesystem-only-empty-directory"] ?? 0)} | nested-git=${Number(counts["nested-git"] ?? 0)} | suspicious=${Number(counts.suspicious ?? 0)}`);
   if (shownFindings.length > 0) {
     appendBoundedList({
       lines,
@@ -80,7 +80,7 @@ function appendHygienePostcondition(lines: string[], value: unknown, complete: b
       },
     });
     lines.push(`[INFO] reviewable digest: ${sanitizeGoalResidualText(postcondition.reviewableDigest)}`);
-    lines.push("[INFO] reviewable resolution: add intentional paths to protectedPaths, move retained evidence under a configured protected path (.omo/evidence when .omo is protected), or use the exact guardian_delete_paths mode=plan command above");
+    lines.push("[INFO] reviewable resolution: pass exact current regular untracked files through intentionalPaths in both goal phases, add lasting non-cleanup roots to protectedPaths, or use the exact guardian_delete_paths mode=plan command above");
   }
   if (postcondition.reviewableInventoryComplete === false) lines.push("[WARN] hygiene inventory coverage is incomplete; strict residue completion remains partial");
   lines.push(`[INFO] hygiene exclusions: ${Number(postcondition.protectedExclusionCount ?? 0)} | reviewable inventory: ${reviewableCount}`);
@@ -108,11 +108,13 @@ export function formatGuardianGoalOutput(rawResult: unknown): string {
   const goal = recordValue(result.goal);
   const steps = arrayValue(result.steps);
   const blockers = arrayValue(result.blockers);
+  const intentionalPaths = arrayValue(result.intentionalPaths);
   const lines = [
     `${statusPrefix(result)} guardian_goal ${textValue(result.status)}`,
     `[INFO] desired: ${formatGoalFlags(goal)}`,
     `[INFO] steps: ${steps.length} | blockers: ${blockers.length}`,
   ];
+  appendBoundedList({ lines, heading: "[INFO] one-shot intentional paths", entries: intentionalPaths, limit: 12, format: (entry) => `  - ${sanitizeGoalResidualText(entry)}` });
   appendHygienePostcondition(lines, result.hygienePostcondition, result.complete === null ? null : result.complete === true);
   const doneStep = steps.map(recordValue).find((step) => step.tool === "guardian_done" || step.tool === "guardian_finish_workflow");
   const doneResult = recordValue(doneStep?.result);

@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { expandWorktreeRoot, loadConfig } from "./config.ts";
 import { collectCleanupFingerprint } from "./deletion-fingerprint.ts";
+import { removeEmptyAncestorDirectories } from "./empty-directory-cleanup.ts";
 import { getRepoRoot, listWorktrees, runGit } from "./git.ts";
 import { assertNoSymlinkAncestors, canonicalPathOrResolved, isEnoent, isSameOrInside, lstatOrMissing, normalizeRelativePath, parseNullSeparated, recordValue, relativePath, stringArray, uniqueSorted } from "./filesystem-boundaries.ts";
 import { getGuardianPaths, readState } from "./state.ts";
@@ -22,7 +23,7 @@ type CleanupTarget = {
   fingerprint: Array<Record<string, string | number>>;
 };
 
-const CLEANUP_CATEGORIES = new Set<HygieneCategory>(["known-cleanable", "nested-git", "suspicious"]);
+const CLEANUP_CATEGORIES = new Set<HygieneCategory>(["known-cleanable", "nested-git", "suspicious", "filesystem-only-empty-directory"]);
 
 function cleanupPathKindFromStat(stat: { isDirectory(): boolean; isFile(): boolean }): CleanupPathKind {
   if (stat.isDirectory()) return "directory";
@@ -85,7 +86,7 @@ function createCleanupConfirmToken(preflight: Record<string, unknown>) {
 }
 
 function cleanupSummary(targets: CleanupTarget[], blockers: CleanupBlocker[], findingCount: number, removedTargets: CleanupTarget[] = []) {
-  const byCategory: Record<string, number> = { "known-cleanable": 0, "nested-git": 0, suspicious: 0 };
+  const byCategory: Record<string, number> = { "known-cleanable": 0, "nested-git": 0, suspicious: 0, "filesystem-only-empty-directory": 0 };
   for (const target of targets) byCategory[target.category] = (byCategory[target.category] ?? 0) + 1;
   return {
     findingCount,
@@ -116,7 +117,8 @@ function cleanupReport(result: Record<string, unknown>, preflight: Record<string
 
 async function buildHygieneCleanupPreflight(input: Record<string, unknown>) {
   const cwd = typeof input.cwd === "string" ? input.cwd : typeof input.repoRoot === "string" ? input.repoRoot : process.cwd();
-  const repoRoot = typeof input.repoRoot === "string" ? input.repoRoot : await getRepoRoot(cwd);
+  const requestedRepoRoot = typeof input.repoRoot === "string" ? input.repoRoot : await getRepoRoot(cwd);
+  const repoRoot = await canonicalPathOrResolved(requestedRepoRoot);
   const loadedConfig = input.config && typeof input.config === "object" ? { config: input.config as Record<string, unknown> } : await loadConfig(repoRoot);
   const config = loadedConfig.config;
   const protectedPaths = protectedPathsFromConfig(config);
@@ -220,9 +222,11 @@ async function buildHygieneCleanupPreflight(input: Record<string, unknown>) {
   return preflight;
 }
 
-async function removeCleanupTarget(target: CleanupTarget) {
+async function removeCleanupTarget(repoRoot: string, target: CleanupTarget) {
   try {
-    await fs.rm(target.absolutePath, { recursive: target.kind === "directory", force: false });
+    if (target.category === "filesystem-only-empty-directory" && target.kind === "directory") await fs.rmdir(target.absolutePath);
+    else await fs.rm(target.absolutePath, { recursive: target.kind === "directory", force: false });
+    await removeEmptyAncestorDirectories({ root: repoRoot, removedPath: target.absolutePath });
   } catch (error) {
     if (!isEnoent(error)) throw error;
   }
@@ -252,7 +256,7 @@ export async function runGuardianHygieneMode(input: Record<string, unknown> = {}
   }
   const removedTargets: CleanupTarget[] = [];
   for (const target of targets) {
-    await removeCleanupTarget(target);
+    await removeCleanupTarget(String(preflight.repoRoot), target);
     removedTargets.push(target);
   }
   const finalSummary = cleanupSummary(targets, blockers, Number((preflight.scanSummary as Record<string, unknown> | undefined)?.findingCount ?? targets.length), removedTargets);

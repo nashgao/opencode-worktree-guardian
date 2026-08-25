@@ -150,7 +150,7 @@ test("guardian_goal retains the exact bounded hygiene child confirmation needed 
     cwd: repo,
     config,
     mode: "plan",
-    allowCategories: ["known-cleanable"],
+    allowCategories: ["known-cleanable", "filesystem-only-empty-directory"],
     allowDirtyNestedGit: false,
   }), "raw hygiene plan");
   const plan = record(await guardianGoal({ repoRoot: repo, cwd: repo, mode: "plan", config }), "goal plan");

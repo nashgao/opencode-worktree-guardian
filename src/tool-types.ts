@@ -189,6 +189,7 @@ export type PlanCacheToolArgs = MutableRecord & {
   repoRoot?: unknown;
   cwd?: unknown;
   paths?: unknown;
+  intentionalPaths?: unknown;
   cleanupPaths?: unknown;
   allowCategories?: unknown;
   allowTracked?: unknown;

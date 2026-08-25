@@ -20,7 +20,7 @@
     "cleanupWorktrees": true,
     "cleanupBranches": true,
     "cleanupHygiene": true,
-    "hygieneCompletion": "authorized-cleanup",
+    "hygieneCompletion": "no-unprotected-residue",
     "quarantineSessionResidue": false
   },
   "protectedPaths": [

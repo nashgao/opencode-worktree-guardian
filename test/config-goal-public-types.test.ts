@@ -71,7 +71,7 @@ test("legacy GuardianGoalConfig literals compile and normalize hygiene completio
   const hygieneCompletion: GuardianGoalHygieneCompletion = config.goal.hygieneCompletion;
 
   // Then
-  assert.equal(hygieneCompletion, "authorized-cleanup");
+  assert.equal(hygieneCompletion, "no-unprotected-residue");
 });
 
 test("legacy GuardianConfig literals compile and normalize hygiene completion", () => {
@@ -82,7 +82,7 @@ test("legacy GuardianConfig literals compile and normalize hygiene completion", 
   const hygieneCompletion: GuardianGoalHygieneCompletion = config.goal.hygieneCompletion;
 
   // Then
-  assert.equal(hygieneCompletion, "authorized-cleanup");
+  assert.equal(hygieneCompletion, "no-unprotected-residue");
 });
 
 test("public Guardian goal types expose strict residue completion", () => {

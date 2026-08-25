@@ -14,6 +14,7 @@ type GoalTokenStep = {
 type GoalTokenPlan = {
   readonly repoRoot: string;
   readonly cwd: string;
+  readonly intentionalPaths: readonly string[];
   readonly goal: unknown;
   readonly steps: readonly GoalTokenStep[];
   readonly blockers: unknown;
@@ -54,6 +55,7 @@ export function createGoalConfirmToken(plan: GoalTokenPlan): string {
     tool: "guardian_goal",
     repoRoot: plan.repoRoot,
     cwd: plan.cwd,
+    intentionalPaths: plan.intentionalPaths,
     goal: plan.goal,
     steps: plan.steps.map((step) => ({
       tool: step.tool,

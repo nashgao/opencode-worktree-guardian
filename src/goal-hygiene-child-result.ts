@@ -75,6 +75,7 @@ function projectSummary(value: unknown): MutableRecord {
     "known-cleanable": count(byCategory["known-cleanable"]),
     "nested-git": count(byCategory["nested-git"]),
     suspicious: count(byCategory.suspicious),
+    "filesystem-only-empty-directory": count(byCategory["filesystem-only-empty-directory"]),
   };
   for (const key of SUMMARY_BOOLEAN_KEYS) output[key] = summary[key] === true;
   return output;
@@ -133,7 +134,7 @@ function addSummaryTuples(tuples: Tuple[], scope: string, value: unknown): void 
   const byCategory = record(summary.byCategory);
   tuples.push(fieldTuple(`${scope}:summary`, summary, TOKEN_SUMMARY_NUMBER_KEYS));
   tuples.push(fieldTuple(`${scope}:severity`, bySeverity, ["warn", "fail"]));
-  tuples.push(fieldTuple(`${scope}:category`, byCategory, ["known-cleanable", "nested-git", "suspicious"]));
+  tuples.push(fieldTuple(`${scope}:category`, byCategory, ["known-cleanable", "nested-git", "suspicious", "filesystem-only-empty-directory"]));
   tuples.push(fieldTuple(`${scope}:flags`, summary, TOKEN_SUMMARY_BOOLEAN_KEYS));
 }
 
