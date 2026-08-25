@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import fs from "node:fs/promises";
+import { constants } from "node:fs";
+import fs, { type FileHandle } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -7,6 +8,7 @@ import { DEFAULT_CONFIG } from "../src/config.ts";
 import { guardianGoal } from "../src/goal.ts";
 import { scanWorkspaceHygiene } from "../src/hygiene.ts";
 import { buildProtectedInventory, PROTECTED_INVENTORY_MAX_ENTRIES_PER_ROOT, PROTECTED_INVENTORY_MAX_ROOTS } from "../src/hygiene-protected-inventory.ts";
+import { runProtectedInventoryWorker } from "../src/hygiene-protected-inventory-process.ts";
 import type { GuardianConfig, RecordLike } from "../src/types.ts";
 import { isRecordLike } from "../src/types.ts";
 import { createRepo, createRepoWithOrigin, git } from "./helpers.ts";
@@ -167,66 +169,58 @@ test("protected inventory treats a static symlink as a leaf", async (t) => {
   assert.equal(inventory.entries[0]?.bytesTruncated, false);
 });
 
-test("protected inventory fails closed when a directory is swapped for a symlink", async (t) => {
+test("protected inventory rejects a protected root beneath a symlink ancestor", async (t) => {
   const repo = await createRepo();
-  const outside = await fs.mkdtemp(path.join(os.tmpdir(), "guardian-protected-swap-"));
+  const outside = await fs.mkdtemp(path.join(os.tmpdir(), "guardian-protected-ancestor-"));
   t.after(() => Promise.all([fs.rm(repo, { recursive: true, force: true }), fs.rm(outside, { recursive: true, force: true })]));
-  const protectedRoot = path.join(repo, ".agent-state");
-  const originalRoot = path.join(repo, ".agent-state-original");
-  await fs.mkdir(protectedRoot);
-  await fs.writeFile(path.join(protectedRoot, "inside.txt"), "inside\n", "utf8");
-  await fs.writeFile(path.join(outside, "outside.txt"), "outside\n", "utf8");
-  let swapped = false;
+  await fs.mkdir(path.join(outside, "nested"));
+  await fs.writeFile(path.join(outside, "nested", "outside.txt"), "outside\n", "utf8");
+  await fs.symlink(outside, path.join(repo, "linked"), "dir");
 
   await assert.rejects(
-    buildProtectedInventory(repo, [{ path: ".agent-state", reason: "test protected root" }], {
-      io: {
-        lstat: fs.lstat,
-        realpath: fs.realpath,
-        open: fs.open,
-        opendir: async (candidate) => {
-          if (!swapped && candidate === protectedRoot) {
-            swapped = true;
-            await fs.rename(protectedRoot, originalRoot);
-            await fs.symlink(outside, protectedRoot, "dir");
-          }
-          return fs.opendir(candidate);
-        },
-      },
-    }),
-    /directory (descriptor did not bind|identity changed)/,
+    buildProtectedInventory(repo, [{ path: "linked/nested", reason: "test protected root" }]),
+    /crosses a non-directory component/,
   );
 });
 
-test("protected inventory rejects a directory swapped only for opendir and restored before identity checks", async (t) => {
-  const repo = await createRepo();
-  const outside = await fs.mkdtemp(path.join(os.tmpdir(), "guardian-protected-swap-back-"));
-  t.after(() => Promise.all([fs.rm(repo, { recursive: true, force: true }), fs.rm(outside, { recursive: true, force: true })]));
-  const protectedRoot = path.join(repo, ".agent-state");
-  const originalRoot = path.join(repo, ".agent-state-original");
-  await fs.mkdir(protectedRoot);
-  await fs.writeFile(path.join(protectedRoot, "inside.txt"), "inside\n", "utf8");
-  await fs.writeFile(path.join(outside, "outside.txt"), "outside\n", "utf8");
-  let swapped = false;
+test("protected inventory worker rejects a substituted repository root", async (t) => {
+  const outside = await fs.mkdtemp(path.join(os.tmpdir(), "guardian-protected-repo-substitution-"));
+  const aliasParent = await fs.mkdtemp(path.join(os.tmpdir(), "guardian-protected-repo-alias-"));
+  t.after(() => Promise.all([fs.rm(outside, { recursive: true, force: true }), fs.rm(aliasParent, { recursive: true, force: true })]));
+  await fs.mkdir(path.join(outside, "protected"));
+  await fs.writeFile(path.join(outside, "protected", "outside.txt"), "outside\n", "utf8");
+  const alias = path.join(aliasParent, "repo");
+  await fs.symlink(outside, alias, "dir");
 
   await assert.rejects(
-    buildProtectedInventory(repo, [{ path: ".agent-state", reason: "test protected root" }], {
-      io: {
-        lstat: fs.lstat,
-        realpath: fs.realpath,
-        open: fs.open,
-        opendir: async (candidate) => {
-          if (swapped || candidate !== protectedRoot) return fs.opendir(candidate);
-          swapped = true;
-          await fs.rename(protectedRoot, originalRoot);
-          await fs.symlink(outside, protectedRoot, "dir");
-          const outsideDirectory = await fs.opendir(candidate);
-          await fs.unlink(protectedRoot);
-          await fs.rename(originalRoot, protectedRoot);
-          return outsideDirectory;
-        },
-      },
-    }),
-    /directory descriptor did not bind/,
+    runProtectedInventoryWorker({ repoRoot: alias, seeds: [{ path: "protected", reason: "test protected root" }], rootsTruncated: false }),
+    /ELOOP|ENOTDIR|repository identity changed/,
   );
+});
+
+test("protected inventory is isolated from parent descriptor reuse", async (t) => {
+  const repo = await createRepo();
+  const outside = await fs.mkdtemp(path.join(os.tmpdir(), "guardian-protected-fd-reuse-"));
+  t.after(() => Promise.all([fs.rm(repo, { recursive: true, force: true }), fs.rm(outside, { recursive: true, force: true })]));
+  const protectedRoot = path.join(repo, ".agent-state");
+  await fs.mkdir(protectedRoot);
+  await fs.writeFile(path.join(protectedRoot, "inside.txt"), "inside\n", "utf8");
+  await fs.writeFile(path.join(outside, "outside-a.txt"), "outside a\n", "utf8");
+  await fs.writeFile(path.join(outside, "outside-b.txt"), "outside b\n", "utf8");
+  const heldProtected = await fs.open(protectedRoot, constants.O_RDONLY | constants.O_DIRECTORY);
+  const heldOutside = await fs.open(outside, constants.O_RDONLY | constants.O_DIRECTORY);
+  const replacements: FileHandle[] = [];
+  t.after(() => Promise.all(replacements.map((handle) => handle.close())));
+
+  const inventoryPromise = buildProtectedInventory(repo, [{ path: ".agent-state", reason: "test protected root" }]);
+  await heldProtected.close();
+  await heldOutside.close();
+  replacements.push(await fs.open(outside, constants.O_RDONLY | constants.O_DIRECTORY));
+  replacements.push(await fs.open(protectedRoot, constants.O_RDONLY | constants.O_DIRECTORY));
+  const inventory = await inventoryPromise;
+
+  assert.equal(inventory.entries[0]?.fileCount, 1);
+  assert.equal(inventory.entries[0]?.directoryCount, 1);
+  assert.equal(inventory.entries[0]?.bytes, 7);
+  assert.equal(inventory.entries[0]?.bytesTruncated, false);
 });
