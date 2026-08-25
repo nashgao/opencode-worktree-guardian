@@ -68,7 +68,7 @@ async function buildGoalPlan(input: GuardianToolInput): Promise<GoalPlan> {
   const goal = config.goal;
   const steps: GoalStep[] = [];
   const blockers: GoalBlocker[] = [];
-  const cleanCompletion = await planGoalCleanCompletion(input, repoRoot, cwd, config);
+  const cleanCompletion = await planGoalCleanCompletion({ request: input, repoRoot, cwd, config });
   let hygienePostcondition: GoalHygienePostcondition;
 
   if (goal.cleanupHygiene) {

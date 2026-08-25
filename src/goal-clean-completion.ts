@@ -20,6 +20,13 @@ type GoalCleanCompletionContext = {
   readonly cleanCompletion?: CleanCompletionPlan;
 };
 
+type GoalCleanCompletionPlanInput = {
+  readonly request: GuardianToolInput;
+  readonly repoRoot: string;
+  readonly cwd: string;
+  readonly config: GuardianConfig;
+};
+
 async function resolveCleanCompletionSession(repoRoot: string, config: GuardianConfig, sessionId: unknown) {
   if (typeof sessionId !== "string" || sessionId.length === 0) return null;
   const paths = await getGuardianPaths(repoRoot);
@@ -27,9 +34,10 @@ async function resolveCleanCompletionSession(repoRoot: string, config: GuardianC
   return state.sessions[sessionId] ?? null;
 }
 
-export async function planGoalCleanCompletion(input: GuardianToolInput, repoRoot: string, cwd: string, config: GuardianConfig): Promise<CleanCompletionPlan | undefined> {
+export async function planGoalCleanCompletion(input: GoalCleanCompletionPlanInput): Promise<CleanCompletionPlan | undefined> {
+  const { request, repoRoot, cwd, config } = input;
   if (!config.goal.quarantineSessionResidue) return undefined;
-  const session = await resolveCleanCompletionSession(repoRoot, config, input.sessionId);
+  const session = await resolveCleanCompletionSession(repoRoot, config, request.sessionId);
   if (!session) return { applicable: false, finalProof: { status: "not-applicable", reason: "no session resolved for quarantine session residue check", candidates: [] }, incompleteOperationCount: 0 };
   return planCleanCompletion({ repoRoot, cwd, config, session });
 }
