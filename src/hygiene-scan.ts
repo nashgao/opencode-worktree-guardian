@@ -10,6 +10,7 @@ import { listCandidatePaths } from "./hygiene-candidates.ts";
 import type { NullSeparatedRunner, ReviewableCandidateInput } from "./hygiene-candidates.ts";
 import { buildProtectedInventory, PROTECTED_INVENTORY_MAX_ROOTS } from "./hygiene-protected-inventory.ts";
 import type { ProtectedInventorySeed } from "./hygiene-protected-inventory.ts";
+import { createProtectedRootCollector } from "./hygiene-protected-roots.ts";
 import { buildReviewableCandidates } from "./hygiene-reviewable.ts";
 import type { ReviewableCandidate } from "./hygiene-reviewable.ts";
 import type { FilesystemOnlyEmptyDirectory, HygieneScanResult, HygieneSummary } from "./hygiene-scan-result.ts";
@@ -135,38 +136,22 @@ export async function scanWorkspaceHygiene(input: Record<string, unknown> = {}):
     const protectedPaths = protectedPathsFromConfig(config);
     const worktrees = await listWorktrees(repoRoot);
     const configuredWorktreeRoot = path.resolve(repoRoot, expandWorktreeRoot(String(config.worktreeRoot), repoRoot));
-    const protectedRoots = worktrees.map((entry) => path.resolve(String(entry.path))).filter((entry) => entry !== path.resolve(repoRoot) && isSameOrInside(entry, path.resolve(repoRoot)));
-    protectedRoots.push(configuredWorktreeRoot);
+    const protectedRoots = [configuredWorktreeRoot, ...worktrees.map((entry) => path.resolve(String(entry.path))).filter((entry) => entry !== path.resolve(repoRoot) && isSameOrInside(entry, path.resolve(repoRoot)))].sort(compareCodeUnits);
     const findings: Array<Record<string, unknown>> = [];
-    const exclusionsByPath = new Map<string, ProtectedInventorySeed>();
-    let protectedRootsTruncated = false;
-    const recordProtectedExclusion = (seed: ProtectedInventorySeed) => {
-      if (exclusionsByPath.has(seed.path)) return;
-      if (exclusionsByPath.size < PROTECTED_INVENTORY_MAX_ROOTS) {
-        exclusionsByPath.set(seed.path, seed);
-        return;
-      }
-      protectedRootsTruncated = true;
-      let largestPath: string | undefined;
-      for (const existingPath of exclusionsByPath.keys()) {
-        if (largestPath === undefined || compareCodeUnits(existingPath, largestPath) > 0) largestPath = existingPath;
-      }
-      if (largestPath !== undefined && compareCodeUnits(seed.path, largestPath) < 0) {
-        exclusionsByPath.delete(largestPath);
-        exclusionsByPath.set(seed.path, seed);
-      }
-    };
+    const protectedRootCollector = createProtectedRootCollector(repoRoot, PROTECTED_INVENTORY_MAX_ROOTS);
+    const recordProtectedExclusion = (seed: ProtectedInventorySeed) => protectedRootCollector.add(seed);
     const reviewableCandidateInputs: ReviewableCandidateInput[] = [];
     const seenFindings = new Set<string>();
+    const configuredProtectedSeeds: ProtectedInventorySeed[] = [];
     for (const protectedPath of protectedPaths) {
       if (await pathKind(path.resolve(repoRoot, protectedPath)) !== "missing") {
-        recordProtectedExclusion({ path: protectedPath, reason: `configured protected path ${protectedPath}` });
+        configuredProtectedSeeds.push({ path: protectedPath, reason: `configured protected path ${protectedPath}` });
       }
     }
     for (const protectedRoot of protectedRoots) {
       if (isSameOrInside(protectedRoot, path.resolve(repoRoot)) && await pathKind(protectedRoot) !== "missing") {
         const protectedRelative = relativePath(repoRoot, protectedRoot);
-        recordProtectedExclusion({ path: protectedRelative, reason: "configured or registered Git worktree path" });
+        configuredProtectedSeeds.push({ path: protectedRelative, reason: "configured or registered Git worktree path" });
       }
     }
     const candidates = await listCandidatePaths(
@@ -185,8 +170,9 @@ export async function scanWorkspaceHygiene(input: Record<string, unknown> = {}):
       },
     });
     for (const exclusion of emptyDirectoryScan.excluded) {
-      if (exclusion.reason !== "git metadata" && exclusion.reason !== "git worktree metadata" && exclusion.reason !== "nested Git metadata") recordProtectedExclusion({ path: exclusion.path, reason: exclusion.reason });
+      if (exclusion.reason !== "git metadata" && exclusion.reason !== "git worktree metadata" && exclusion.reason !== "nested Git metadata") configuredProtectedSeeds.push({ path: exclusion.path, reason: exclusion.reason });
     }
+    configuredProtectedSeeds.sort((left, right) => compareCodeUnits(left.path, right.path)).forEach(recordProtectedExclusion);
     for (const candidate of candidates) {
       const absolutePath = path.resolve(repoRoot, candidate.path);
       const relative = relativePath(repoRoot, absolutePath);
@@ -248,7 +234,7 @@ export async function scanWorkspaceHygiene(input: Record<string, unknown> = {}):
       }
     }
     findings.sort((left, right) => String(left.path).localeCompare(String(right.path)) || String(left.category).localeCompare(String(right.category)));
-    const protectedInventory = await buildProtectedInventory(repoRoot, [...exclusionsByPath.values()], { rootsTruncated: protectedRootsTruncated });
+    const protectedInventory = await buildProtectedInventory(repoRoot, protectedRootCollector.entries(), { rootsTruncated: protectedRootCollector.rootsTruncated() || !emptyDirectoryScan.complete });
     const exclusions = protectedInventory.entries;
     const blockedReviewableRoots = new Set([...findings.map((finding) => String(finding.path)), ...exclusions.map((exclusion) => String(exclusion.path))]);
     const reviewableSummary = await buildReviewableCandidates(repoRoot, reviewableCandidateInputs, blockedReviewableRoots, null);

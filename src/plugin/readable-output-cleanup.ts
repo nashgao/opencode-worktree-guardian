@@ -49,18 +49,21 @@ export function formatGuardianHygieneOutput(rawResult: unknown) {
     }
   }
   if (protectedInventoryCount > 0) {
-    lines.push(`[WARN] protected inventory: ${protectedInventoryCount}${protectedInventoryRootsTruncated ? "+" : ""} root${protectedInventoryCount === 1 && !protectedInventoryRootsTruncated ? "" : "s"} | files: ${protectedInventoryFileCount} | directories: ${protectedInventoryDirectoryCount} | bytes: ${protectedInventoryTotalBytes}${protectedInventoryBytesTruncated ? "+" : ""} | assessment: not-assessed | cleanup authorized: false`);
+    const protectedMeasurementSuffix = protectedInventoryBytesTruncated ? "+" : "";
+    lines.push(`[WARN] protected inventory: ${protectedInventoryCount}${protectedInventoryRootsTruncated ? "+" : ""} root${protectedInventoryCount === 1 && !protectedInventoryRootsTruncated ? "" : "s"} | files: ${protectedInventoryFileCount}${protectedMeasurementSuffix} | directories: ${protectedInventoryDirectoryCount}${protectedMeasurementSuffix} | bytes: ${protectedInventoryTotalBytes}${protectedMeasurementSuffix} | assessment: not-assessed | cleanup authorized: false`);
     lines.push("[INFO] protection prevents deletion; it does not prove that retained content is useful");
     appendBoundedList({
       lines,
       heading: "[WARN] protected roots requiring retention review",
       entries: exclusions,
       count: protectedInventoryCount,
+      countIsLowerBound: protectedInventoryRootsTruncated,
       limit: 12,
       format: (entry) => {
         const inventory = recordValue(entry);
         const bytes = Number(inventory.bytes ?? 0);
-        return `  - ${reviewableTextValue(inventory.path)} (${Number(inventory.fileCount ?? 0)} files, ${Number(inventory.directoryCount ?? 0)} directories, ${bytes}${inventory.bytesTruncated === true ? "+" : ""} bytes): ${reviewableTextValue(inventory.reason)}`;
+        const suffix = inventory.bytesTruncated === true ? "+" : "";
+        return `  - ${reviewableTextValue(inventory.path)} (${Number(inventory.fileCount ?? 0)}${suffix} files, ${Number(inventory.directoryCount ?? 0)}${suffix} directories, ${bytes}${suffix} bytes): ${reviewableTextValue(inventory.reason)}`;
       },
     });
   }

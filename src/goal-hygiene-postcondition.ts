@@ -182,7 +182,7 @@ export async function scanGoalHygienePostcondition(options: GoalHygienePostcondi
     rootCount: numericValue(summary.protectedInventoryCount),
     rootsTruncated: summary.protectedInventoryRootsTruncated === true,
     rootsShown: protectedRootsShown,
-    rootsOmittedCount: Math.max(0, protectedRoots.length - protectedRootsShown.length),
+    rootsOmittedCount: summary.protectedInventoryRootsTruncated === true ? null : Math.max(0, protectedRoots.length - protectedRootsShown.length),
     fileCount: numericValue(summary.protectedInventoryFileCount),
     directoryCount: numericValue(summary.protectedInventoryDirectoryCount),
     totalBytes: numericValue(summary.protectedInventoryTotalBytes),

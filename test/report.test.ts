@@ -81,6 +81,19 @@ test("Given reviewable workspace files, when querying Guardian status and recove
   assert.deepEqual(recover.hygiene.summary, status.hygiene.summary);
 });
 
+test("Given truncated protected inventory, when rendering evidence, then aggregate metrics remain lower bounds", async (t) => {
+  const fixture = await reportFixture();
+  t.after(() => fs.rm(fixture.repo, { recursive: true, force: true }));
+  const status = { ...fixture.status, hygiene: { ...fixture.status.hygiene, summary: { ...fixture.status.hygiene.summary, protectedInventoryCount: 128, protectedInventoryRootsTruncated: true, protectedInventoryFileCount: 10_000, protectedInventoryDirectoryCount: 500, protectedInventoryTotalBytes: 1_000_000, protectedInventoryBytesTruncated: true } } };
+
+  const html = renderGuardianReportHtml({ reportPath: "report.html", generatedAt: "2026-08-13T12:00:00.000Z", status, recover: fixture.recover });
+
+  assert.match(html, /Protected Roots<\/span><strong>128\+<\/strong>/);
+  assert.match(html, /Protected Files<\/span><strong>10000\+<\/strong>/);
+  assert.match(html, /Protected Directories<\/span><strong>500\+<\/strong>/);
+  assert.match(html, /Protected Bytes<\/span><strong>1000000\+<\/strong>/);
+});
+
 test("Given hostile typed Guardian data, when embedding the model payload, then it remains inert and parseable", async (t) => {
   // Given
   const fixture = await reportFixture();
