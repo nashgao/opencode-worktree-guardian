@@ -10,7 +10,7 @@ import { listCandidatePaths } from "./hygiene-candidates.ts";
 import type { NullSeparatedRunner, ReviewableCandidateInput } from "./hygiene-candidates.ts";
 import { buildProtectedInventory, PROTECTED_INVENTORY_MAX_ROOTS } from "./hygiene-protected-inventory.ts";
 import type { ProtectedInventorySeed } from "./hygiene-protected-inventory.ts";
-import { createProtectedRootCollector } from "./hygiene-protected-roots.ts";
+import { createProtectedRootCollector, createProtectedSeedCollector } from "./hygiene-protected-roots.ts";
 import { buildReviewableCandidates } from "./hygiene-reviewable.ts";
 import type { ReviewableCandidate } from "./hygiene-reviewable.ts";
 import type { FilesystemOnlyEmptyDirectory, HygieneScanResult, HygieneSummary } from "./hygiene-scan-result.ts";
@@ -140,18 +140,18 @@ export async function scanWorkspaceHygiene(input: Record<string, unknown> = {}):
     const findings: Array<Record<string, unknown>> = [];
     const protectedRootCollector = createProtectedRootCollector(repoRoot, PROTECTED_INVENTORY_MAX_ROOTS);
     const recordProtectedExclusion = (seed: ProtectedInventorySeed) => protectedRootCollector.add(seed);
+    const protectedSeedCollector = createProtectedSeedCollector();
     const reviewableCandidateInputs: ReviewableCandidateInput[] = [];
     const seenFindings = new Set<string>();
-    const configuredProtectedSeeds: ProtectedInventorySeed[] = [];
     for (const protectedPath of protectedPaths) {
       if (await pathKind(path.resolve(repoRoot, protectedPath)) !== "missing") {
-        configuredProtectedSeeds.push({ path: protectedPath, reason: `configured protected path ${protectedPath}` });
+        protectedSeedCollector.add({ path: protectedPath, reason: `configured protected path ${protectedPath}` });
       }
     }
     for (const protectedRoot of protectedRoots) {
       if (isSameOrInside(protectedRoot, path.resolve(repoRoot)) && await pathKind(protectedRoot) !== "missing") {
         const protectedRelative = relativePath(repoRoot, protectedRoot);
-        configuredProtectedSeeds.push({ path: protectedRelative, reason: "configured or registered Git worktree path" });
+        protectedSeedCollector.add({ path: protectedRelative, reason: "configured or registered Git worktree path" });
       }
     }
     const candidates = await listCandidatePaths(
@@ -170,7 +170,7 @@ export async function scanWorkspaceHygiene(input: Record<string, unknown> = {}):
       },
     });
     for (const exclusion of emptyDirectoryScan.excluded) {
-      if (exclusion.reason !== "git metadata" && exclusion.reason !== "git worktree metadata" && exclusion.reason !== "nested Git metadata") configuredProtectedSeeds.push({ path: exclusion.path, reason: exclusion.reason });
+      if (exclusion.reason !== "git metadata" && exclusion.reason !== "git worktree metadata" && exclusion.reason !== "nested Git metadata") protectedSeedCollector.add({ path: exclusion.path, reason: exclusion.reason });
     }
     for (const candidate of candidates) {
       const absolutePath = path.resolve(repoRoot, candidate.path);
@@ -181,7 +181,7 @@ export async function scanWorkspaceHygiene(input: Record<string, unknown> = {}):
         const exclusionPath = protectedReason
           ? protectedDirExclusionPath(relative, protectedPaths)
           : protectedRoot ? relativePath(repoRoot, protectedRoot) : relative;
-        configuredProtectedSeeds.push({ path: exclusionPath, reason: protectedReason ?? "configured or registered Git worktree path" });
+        protectedSeedCollector.add({ path: exclusionPath, reason: protectedReason ?? "configured or registered Git worktree path" });
         continue;
       }
       const nestedRoot = await findNestedGitRoot(repoRoot, absolutePath);
@@ -224,7 +224,7 @@ export async function scanWorkspaceHygiene(input: Record<string, unknown> = {}):
       }
       reviewableCandidateInputs.push({ path: relative, status: candidate.status });
     }
-    configuredProtectedSeeds.sort((left, right) => compareCodeUnits(left.path, right.path)).forEach(recordProtectedExclusion);
+    protectedSeedCollector.entries().forEach(recordProtectedExclusion);
     const filesystemOnlyEmptyDirectories = emptyDirectoryScan.directories.map(emptyDirectoryFinding);
     for (const directory of filesystemOnlyEmptyDirectories) {
       const key = `filesystem-only-empty-directory:${directory.path}`;

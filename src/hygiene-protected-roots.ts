@@ -3,6 +3,18 @@ import { compareCodeUnits } from "./code-unit-order.ts";
 import { isSameOrInside } from "./filesystem-boundaries.ts";
 import type { ProtectedInventorySeed } from "./hygiene-protected-inventory.ts";
 
+export function createProtectedSeedCollector() {
+  const seeds = new Map<string, ProtectedInventorySeed>();
+  return {
+    add(seed: ProtectedInventorySeed): void {
+      if (!seeds.has(seed.path)) seeds.set(seed.path, seed);
+    },
+    entries(): readonly ProtectedInventorySeed[] {
+      return [...seeds.values()].sort((left, right) => compareCodeUnits(left.path, right.path));
+    },
+  };
+}
+
 export function createProtectedRootCollector(repoRoot: string, limit: number) {
   const roots = new Map<string, ProtectedInventorySeed>();
   let rootsTruncated = false;
