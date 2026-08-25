@@ -172,7 +172,6 @@ export async function scanWorkspaceHygiene(input: Record<string, unknown> = {}):
     for (const exclusion of emptyDirectoryScan.excluded) {
       if (exclusion.reason !== "git metadata" && exclusion.reason !== "git worktree metadata" && exclusion.reason !== "nested Git metadata") configuredProtectedSeeds.push({ path: exclusion.path, reason: exclusion.reason });
     }
-    configuredProtectedSeeds.sort((left, right) => compareCodeUnits(left.path, right.path)).forEach(recordProtectedExclusion);
     for (const candidate of candidates) {
       const absolutePath = path.resolve(repoRoot, candidate.path);
       const relative = relativePath(repoRoot, absolutePath);
@@ -182,7 +181,7 @@ export async function scanWorkspaceHygiene(input: Record<string, unknown> = {}):
         const exclusionPath = protectedReason
           ? protectedDirExclusionPath(relative, protectedPaths)
           : protectedRoot ? relativePath(repoRoot, protectedRoot) : relative;
-        recordProtectedExclusion({ path: exclusionPath, reason: protectedReason ?? "configured or registered Git worktree path" });
+        configuredProtectedSeeds.push({ path: exclusionPath, reason: protectedReason ?? "configured or registered Git worktree path" });
         continue;
       }
       const nestedRoot = await findNestedGitRoot(repoRoot, absolutePath);
@@ -225,6 +224,7 @@ export async function scanWorkspaceHygiene(input: Record<string, unknown> = {}):
       }
       reviewableCandidateInputs.push({ path: relative, status: candidate.status });
     }
+    configuredProtectedSeeds.sort((left, right) => compareCodeUnits(left.path, right.path)).forEach(recordProtectedExclusion);
     const filesystemOnlyEmptyDirectories = emptyDirectoryScan.directories.map(emptyDirectoryFinding);
     for (const directory of filesystemOnlyEmptyDirectories) {
       const key = `filesystem-only-empty-directory:${directory.path}`;
