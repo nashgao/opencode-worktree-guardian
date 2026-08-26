@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import { buildDeletePathsPreflight, deleteSummary } from "./delete-paths-preflight.ts";
 import type { DeletePathBlocker, DeletePathTarget } from "./delete-paths-preflight.ts";
+import { runGit } from "./git.ts";
 
 function createDeleteConfirmToken(preflight: Record<string, unknown>) {
   const material = {
@@ -38,8 +39,9 @@ function deleteReport(result: Record<string, unknown>, preflight: Record<string,
   };
 }
 
-async function removeDeleteTarget(target: DeletePathTarget) {
+async function removeDeleteTarget(repoRoot: string, target: DeletePathTarget) {
   await fs.rm(target.absolutePath, { recursive: target.kind === "directory", force: false });
+  if (target.trackedContents.length > 0) await runGit(repoRoot, ["add", "-u", "--", target.path]);
 }
 
 export async function guardianDeletePaths(input: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
@@ -68,8 +70,9 @@ export async function guardianDeletePaths(input: Record<string, unknown> = {}): 
     return deleteReport({ ok: false, status: "blocked", reason: "confirm token mismatch; re-run mode=plan and apply with confirmDelete=true", tokenMatched: false, summary, targets, blockers }, preflight);
   }
   const removedTargets: DeletePathTarget[] = [];
+  const repoRoot = String(preflight.repoRoot);
   for (const target of targets) {
-    await removeDeleteTarget(target);
+    await removeDeleteTarget(repoRoot, target);
     removedTargets.push(target);
   }
   const finalSummary = deleteSummary(targets, blockers, removedTargets);

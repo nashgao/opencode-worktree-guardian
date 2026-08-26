@@ -2,9 +2,12 @@ import path from "node:path";
 import { loadConfig, normalizeConfig } from "./config.ts";
 import { getRepoRoot } from "./git.ts";
 import { normalizeGoalIntentionalPaths, validateGoalIntentionalPaths } from "./goal-intentional-paths.ts";
+import { resolveGoalTrackedBaseline } from "./goal-tracked-baseline.ts";
+import type { GoalTrackedBaseline } from "./goal-tracked-baseline.ts";
 import type { NormalizedGuardianConfig } from "./normalized-config.ts";
 import { resolveSessionWorktree } from "./session/worktree-binding.ts";
 import type { GuardianToolInput } from "./types.ts";
+import type { GuardianGoalHygieneCompletion } from "./types.ts";
 import { isRecordLike } from "./types.ts";
 
 export type GoalContext = {
@@ -13,13 +16,14 @@ export type GoalContext = {
   readonly config: NormalizedGuardianConfig;
   readonly hygieneConfig: NormalizedGuardianConfig;
   readonly intentionalPaths: readonly string[];
+  readonly trackedBaseline: GoalTrackedBaseline;
 };
 
 export type GoalContextResult =
   | { readonly ok: true; readonly context: GoalContext }
-  | { readonly ok: false; readonly repoRoot: string; readonly cwd: string; readonly reason: string };
+  | { readonly ok: false; readonly repoRoot: string; readonly cwd: string; readonly reason: string; readonly hygieneCompletion?: GuardianGoalHygieneCompletion };
 
-async function selectedSessionWorktree(input: GuardianToolInput, context: Omit<GoalContext, "cwd" | "hygieneConfig"> & { readonly cwd: string }): Promise<string | null> {
+async function selectedSessionWorktree(input: GuardianToolInput, context: Omit<GoalContext, "cwd" | "hygieneConfig" | "trackedBaseline"> & { readonly cwd: string }): Promise<string | null> {
   const first = await resolveSessionWorktree({ ...input, repoRoot: context.repoRoot, cwd: context.cwd, actualWorktree: context.cwd, config: context.config, validateBinding: true });
   if (first.sessionId == null) return context.cwd;
   if (first.terminal === true) return null;
@@ -39,9 +43,16 @@ export async function resolveGoalContext(input: GuardianToolInput): Promise<Goal
     const intentionalPaths = normalizeGoalIntentionalPaths(input.intentionalPaths);
     const cwd = await selectedSessionWorktree(input, { repoRoot, cwd: requestedCwd, config, intentionalPaths });
     if (!cwd) return { ok: false, repoRoot, cwd: requestedCwd, reason: "explicit Guardian session worktree binding is missing, terminal, or invalid" };
-    await validateGoalIntentionalPaths(cwd, intentionalPaths);
+    let trackedBaseline: GoalTrackedBaseline;
+    try {
+      trackedBaseline = await resolveGoalTrackedBaseline({ request: input, repoRoot, cwd, config });
+    } catch (error) {
+      if (!(error instanceof Error)) throw error;
+      return { ok: false, repoRoot, cwd, reason: error.message, hygieneCompletion: config.goal.hygieneCompletion };
+    }
+    await validateGoalIntentionalPaths(cwd, intentionalPaths, trackedBaseline.commit);
     const hygieneConfig = normalizeConfig({ ...config, protectedPaths: [...config.protectedPaths, ...intentionalPaths] });
-    return { ok: true, context: { repoRoot, cwd, config, hygieneConfig, intentionalPaths } };
+    return { ok: true, context: { repoRoot, cwd, config, hygieneConfig, intentionalPaths, trackedBaseline } };
   } catch (error) {
     if (!(error instanceof Error)) throw error;
     return { ok: false, repoRoot, cwd: requestedCwd, reason: error.message };

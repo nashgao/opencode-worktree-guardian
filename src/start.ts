@@ -139,6 +139,7 @@ export async function guardianStart(input: GuardianToolInput = {}): Promise<Guar
       worktree_path: created.worktreePath,
       base_ref: `${config.remote}/${config.baseBranch}`,
       head_commit: headCommit,
+      started_head_commit: headCommit,
       safety_refs: Array.isArray(existing.safety_refs) ? existing.safety_refs.filter((value): value is string => typeof value === "string") : [],
       ...ineligibleSessionProvenance(config),
     };
@@ -198,6 +199,7 @@ export async function guardianStart(input: GuardianToolInput = {}): Promise<Guar
     worktree_path: worktreePath,
     base_ref: `${config.remote}/${config.baseBranch}`,
     head_commit: headCommit,
+    started_head_commit: headCommit,
     safety_refs: [],
     ...provenance.fields,
   };

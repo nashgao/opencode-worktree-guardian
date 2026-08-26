@@ -1,7 +1,8 @@
+import { compareCodeUnits } from "./code-unit-order.ts";
 import { runGitNullSeparated } from "./git.ts";
 import { normalizeRelativePath } from "./filesystem-boundaries.ts";
 
-export type HygieneCandidateStatus = "ignored" | "untracked";
+export type HygieneCandidateStatus = "ignored" | "tracked-added" | "untracked";
 export type ReviewableCandidateInput = { readonly path: string; readonly status: HygieneCandidateStatus };
 export type NullSeparatedRunner = (repoPath: string, args: readonly string[]) => Promise<string[]>;
 
@@ -29,13 +30,22 @@ async function listIgnoredPaths(repoRoot: string, runNullSeparated: NullSeparate
   }
 }
 
-export async function listCandidatePaths(repoRoot: string, runNullSeparated: NullSeparatedRunner = runGitNullSeparated): Promise<readonly ReviewableCandidateInput[]> {
+export async function listTrackedAddedPaths(repoRoot: string, trackedBaselineCommit: string, runNullSeparated: NullSeparatedRunner = runGitNullSeparated): Promise<readonly string[]> {
+  const entries = await runNullSeparated(repoRoot, ["--literal-pathspecs", "diff", "--cached", "--name-only", "--diff-filter=A", "--no-renames", "-z", trackedBaselineCommit, "--"]);
+  return [...new Set(entries.map(normalizeRelativePath))].sort(compareCodeUnits);
+}
+
+export async function listCandidatePaths(repoRoot: string, runNullSeparated: NullSeparatedRunner = runGitNullSeparated, trackedBaselineCommit?: string): Promise<readonly ReviewableCandidateInput[]> {
   const untracked = await runNullSeparated(repoRoot, ["ls-files", "--others", "--exclude-standard", "-z"]);
   const ignored = await listIgnoredPaths(repoRoot, runNullSeparated);
+  const trackedAdded = trackedBaselineCommit
+    ? await listTrackedAddedPaths(repoRoot, trackedBaselineCommit, runNullSeparated)
+    : [];
   const candidatesByPath = new Map<string, HygieneCandidateStatus>();
   for (const entry of untracked) candidatesByPath.set(normalizeRelativePath(entry), "untracked");
   for (const entry of ignored) candidatesByPath.set(normalizeRelativePath(entry), "ignored");
+  for (const entry of trackedAdded) candidatesByPath.set(normalizeRelativePath(entry), "tracked-added");
   return [...candidatesByPath.entries()]
     .map(([candidatePath, status]) => ({ path: candidatePath, status }))
-    .sort((left, right) => left.path.localeCompare(right.path));
+    .sort((left, right) => compareCodeUnits(left.path, right.path));
 }

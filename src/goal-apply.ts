@@ -33,6 +33,9 @@ async function applyHygieneStep(context: ApplyStepInput): Promise<GoalStep> {
   }
   const applied = await guardianHygiene({
     ...context.input,
+    trackedBaselineCommit: context.plan.trackedBaseline.commit,
+    trackedBaselineSource: context.plan.trackedBaseline.source,
+    trackedIntentionalPaths: context.plan.intentionalPaths,
     repoRoot: context.plan.cwd,
     cwd: context.plan.cwd,
     config: context.config,
@@ -101,7 +104,7 @@ export async function applyGoalSteps(input: {
   const cleanCompletion = await applyGoalCleanCompletion(input.request, input.plan, input.config);
   const safeSteps = [hygiene, cleanCompletion];
   const safeBlocker = safeSteps.map(goalBlockerFromStep).find((blocker): blocker is GoalStepBlocker => blocker !== null) ?? null;
-  const hygienePostcondition = await scanGoalHygienePostcondition({ repoRoot: input.plan.cwd, cwd: input.plan.cwd, config: input.hygieneConfig, input: input.request, phase: "apply" });
+  const hygienePostcondition = await scanGoalHygienePostcondition({ repoRoot: input.plan.cwd, cwd: input.plan.cwd, config: input.hygieneConfig, input: { ...input.request, trackedBaselineCommit: input.plan.trackedBaseline.commit, trackedBaselineSource: input.plan.trackedBaseline.source, trackedIntentionalPaths: input.plan.intentionalPaths }, phase: "apply" });
   const tool = completionTool(input.plan);
   const plannedCompletion = findGoalStep(input.plan.steps, tool);
   const reason = plannedCompletion?.status === "skipped" ? null : gateReason(safeBlocker, hygienePostcondition);

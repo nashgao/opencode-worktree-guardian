@@ -3,6 +3,7 @@ import path from "node:path";
 import { compareCodeUnits } from "./code-unit-order.ts";
 import { parseNullSeparated } from "./filesystem-boundaries.ts";
 import { runGit } from "./git.ts";
+import { listTrackedAddedPaths } from "./hygiene-candidates.ts";
 
 const GLOB_META = /[*?\[\]{}]/;
 const MAX_INTENTIONAL_PATHS = 128;
@@ -37,7 +38,8 @@ export function normalizeGoalIntentionalPaths(value: unknown): readonly string[]
   return [...new Set(normalized)].sort(compareCodeUnits);
 }
 
-export async function validateGoalIntentionalPaths(cwd: string, intentionalPaths: readonly string[]): Promise<void> {
+export async function validateGoalIntentionalPaths(cwd: string, intentionalPaths: readonly string[], trackedBaselineCommit: string): Promise<void> {
+  const trackedAdded = new Set(await listTrackedAddedPaths(cwd, trackedBaselineCommit));
   for (const relative of intentionalPaths) {
     const absolute = path.resolve(cwd, relative);
     let stat: Awaited<ReturnType<typeof fs.lstat>>;
@@ -45,14 +47,16 @@ export async function validateGoalIntentionalPaths(cwd: string, intentionalPaths
       stat = await fs.lstat(absolute);
     } catch (error) {
       if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-        throw new GoalIntentionalPathsError(`intentionalPaths must name current regular untracked files: ${relative}`);
+        throw new GoalIntentionalPathsError(`intentionalPaths must name current regular newly added files: ${relative}`);
       }
       throw error;
     }
     if (!stat.isFile() || stat.isSymbolicLink()) {
-      throw new GoalIntentionalPathsError(`intentionalPaths must name current regular untracked files: ${relative}`);
+      throw new GoalIntentionalPathsError(`intentionalPaths must name current regular newly added files: ${relative}`);
     }
     const tracked = parseNullSeparated((await runGit(cwd, ["ls-files", "-z", "--", relative])).stdout);
-    if (tracked.length > 0) throw new GoalIntentionalPathsError(`intentionalPaths must not include tracked files: ${relative}`);
+    if (tracked.length > 0 && !trackedAdded.has(relative)) {
+      throw new GoalIntentionalPathsError(`intentionalPaths must not include baseline tracked files: ${relative}`);
+    }
   }
 }

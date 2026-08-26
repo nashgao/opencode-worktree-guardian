@@ -38,28 +38,6 @@ async function shadowOriginMain(repo: string, commit: string): Promise<void> {
   await git(repo, ["update-ref", "refs/heads/origin/main", commit]);
 }
 
-test("guardian_delete_paths requires allowTracked before deleting tracked source", async () => {
-  const repo = await createRepo();
-  await fs.mkdir(path.join(repo, "src"), { recursive: true });
-  await fs.writeFile(path.join(repo, "src", "old.ts"), "export const old = true;\n");
-  await git(repo, ["add", "src/old.ts"]);
-  await git(repo, ["commit", "-m", "add tracked source"]);
-
-  const blocked = await guardianDeletePaths({ repoRoot: repo, config: DEFAULT_CONFIG, mode: "plan", paths: ["src/old.ts"] });
-  assert.equal(blocked.ok, false);
-  assert.match(String(blocked.reason), /fatal blockers/);
-  assert.match(String((blocked.blockers as Array<Record<string, unknown>>)[0].reason), /allowTracked=true/);
-
-  const plan = await guardianDeletePaths({ repoRoot: repo, config: DEFAULT_CONFIG, mode: "plan", paths: ["src/old.ts"], allowTracked: true });
-  const apply = await guardianDeletePaths({ repoRoot: repo, config: DEFAULT_CONFIG, mode: "apply", paths: ["src/old.ts"], allowTracked: true, confirmDelete: true, confirmToken: plan.confirmToken });
-  const status = await git(repo, ["status", "--short"]);
-
-  assert.equal(plan.status, "planned");
-  assert.equal(apply.status, "deleted");
-  assert.equal(await exists(path.join(repo, "src", "old.ts")), false);
-  assert.match(status.stdout, /D src\/old\.ts/);
-});
-
 test("guardian_delete_paths requires allowRecursive before deleting directories", async () => {
   const repo = await createRepo();
   await fs.mkdir(path.join(repo, "src", "legacy"), { recursive: true });

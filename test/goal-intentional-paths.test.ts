@@ -8,6 +8,7 @@ function token(intentionalPaths: readonly string[]): string {
     repoRoot: "/repo",
     cwd: "/repo/.worktrees/repo/guardian-work",
     intentionalPaths,
+    trackedBaseline: { commit: "baseline", source: "session-start" },
     goal: { hygieneCompletion: "no-unprotected-residue" },
     steps: [],
     blockers: [],

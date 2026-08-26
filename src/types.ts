@@ -69,6 +69,7 @@ export type GuardianSession = {
   readonly worktreePath?: string;
   readonly base_ref?: string;
   readonly head_commit?: string;
+  readonly started_head_commit?: string;
   readonly safety_refs?: readonly string[];
   readonly dirty_commit_safety_ref_reservation?: DirtyCommitSafetyRefReservation;
   readonly deleted_worktree_path?: string;

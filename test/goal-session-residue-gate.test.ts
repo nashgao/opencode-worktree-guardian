@@ -177,3 +177,69 @@ test("guardian_goal commits a new file only when intentionalPaths acknowledges i
   const committed = (await git(fixture.repo, ["show", "origin/main:" + feature])).stdout;
   assert.match(committed, /feature = true/);
 });
+
+test("guardian_goal reports a staged artifact as tracked-added residue", async (t) => {
+  const fixture = await startFixture(t, "ses_goal_staged_artifact");
+  const artifact = "screenshots/staged-debug.png";
+  await fs.mkdir(path.join(fixture.worktree, "screenshots"), { recursive: true });
+  await fs.writeFile(path.join(fixture.worktree, artifact), "staged debug\n");
+  await git(fixture.worktree, ["add", "--", artifact]);
+  const remoteBefore = (await git(fixture.repo, ["rev-parse", "origin/main"])).stdout;
+
+  const plan = record(await guardianGoal({
+    repoRoot: fixture.repo,
+    cwd: fixture.repo,
+    sessionId: fixture.sessionId,
+    mode: "plan",
+    commitMessage: "feat: staged artifact gate",
+    config: STRICT_GOAL_CONFIG,
+  }), "goal plan");
+  const hygiene = record(plan.hygienePostcondition, "hygiene postcondition");
+  const shown = records(hygiene.reviewableCandidatesShown);
+
+  assert.equal(plan.status, "planned-partial", JSON.stringify(plan));
+  assert.equal(hygiene.reviewableCandidateCount, 1);
+  assert.equal(shown[0]?.path, artifact);
+  assert.equal(shown[0]?.status, "tracked-added");
+  const applied = record(await guardianGoal({
+    repoRoot: fixture.repo,
+    cwd: fixture.repo,
+    sessionId: fixture.sessionId,
+    mode: "apply",
+    confirm: true,
+    confirmToken: text(plan.confirmToken, "plan.confirmToken"),
+    commitMessage: "feat: staged artifact gate",
+    config: STRICT_GOAL_CONFIG,
+  }), "goal apply");
+  const doneStep = records(applied.steps).find((step) => step.tool === "guardian_done");
+  assert.equal(applied.complete, false);
+  assert.equal(doneStep?.status, "blocked");
+  assert.equal((await git(fixture.repo, ["rev-parse", "origin/main"])).stdout, remoteBefore);
+});
+
+test("guardian_goal reports a session-committed artifact as tracked-added residue", async (t) => {
+  const fixture = await startFixture(t, "ses_goal_committed_artifact");
+  const artifact = "screenshots/committed-debug.png";
+  await fs.mkdir(path.join(fixture.worktree, "screenshots"), { recursive: true });
+  await fs.writeFile(path.join(fixture.worktree, artifact), "committed debug\n");
+  await git(fixture.worktree, ["add", "--", artifact]);
+  await git(fixture.worktree, ["commit", "-m", "test: commit temporary artifact"]);
+  const remoteBefore = (await git(fixture.repo, ["rev-parse", "origin/main"])).stdout;
+
+  const plan = record(await guardianGoal({
+    repoRoot: fixture.repo,
+    cwd: fixture.repo,
+    sessionId: fixture.sessionId,
+    mode: "plan",
+    commitMessage: "feat: committed artifact gate",
+    config: STRICT_GOAL_CONFIG,
+  }), "goal plan");
+  const hygiene = record(plan.hygienePostcondition, "hygiene postcondition");
+  const shown = records(hygiene.reviewableCandidatesShown);
+
+  assert.equal(plan.status, "planned-partial", JSON.stringify(plan));
+  assert.equal(hygiene.reviewableCandidateCount, 1);
+  assert.equal(shown[0]?.path, artifact);
+  assert.equal(shown[0]?.status, "tracked-added");
+  assert.equal((await git(fixture.repo, ["rev-parse", "origin/main"])).stdout, remoteBefore);
+});

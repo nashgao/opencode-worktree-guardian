@@ -68,7 +68,7 @@ type HygieneSummary = Record<string, unknown> & {
 
 type HygieneReviewableCandidate = {
   readonly path: string;
-  readonly status: "ignored" | "untracked";
+  readonly status: "ignored" | "tracked-added" | "untracked";
   readonly fileCount: number;
   readonly reason: string;
   readonly source: string;

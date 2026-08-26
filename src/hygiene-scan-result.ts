@@ -31,6 +31,9 @@ export type HygieneSummary = {
   readonly reviewableTotalBytes: number;
   readonly reviewableBytesTruncated: boolean;
   readonly reviewableTruncated: boolean;
+  readonly trackedAddedCandidateCount: number;
+  readonly trackedBaselineCommit?: string;
+  readonly trackedBaselineSource?: string;
   readonly scanFailed?: boolean;
   readonly byCategory: Record<HygieneCategory, number>;
   readonly bySeverity: Record<HygieneSeverity, number>;
