@@ -11,8 +11,8 @@ export type ReviewableCandidate = {
   readonly fileCount: number;
   readonly bytes: number;
   readonly bytesTruncated: boolean;
-  readonly reason: "not matched by Guardian hygiene cleanup rules";
-  readonly source: "git ls-files --others/--ignored";
+  readonly reason: "new tracked path is not acknowledged by intentionalPaths" | "not matched by Guardian hygiene cleanup rules";
+  readonly source: "git diff --cached from tracked baseline" | "git ls-files --others/--ignored";
   readonly suggestedDeletePathCommand: string;
 };
 
@@ -92,6 +92,7 @@ async function reviewablePath(repoRoot: string, relative: string, blockedRoots: 
 }
 
 function mergedStatus(current: HygieneCandidateStatus | undefined, next: HygieneCandidateStatus): HygieneCandidateStatus {
+  if (current === "tracked-added" || next === "tracked-added") return "tracked-added";
   return current === "ignored" || next === "ignored" ? "ignored" : "untracked";
 }
 
@@ -108,7 +109,7 @@ export async function buildReviewableCandidates(repoRoot: string, candidates: re
   const collapsedByPath = new Map<string, HygieneCandidateStatus>();
   const fileCountByPath = new Map<string, number>();
   for (const candidate of candidates) {
-    const collapsedPath = await reviewablePath(repoRoot, candidate.path, blockedRoots);
+    const collapsedPath = candidate.status === "tracked-added" ? candidate.path : await reviewablePath(repoRoot, candidate.path, blockedRoots);
     if (collapsedPath === null) continue;
     collapsedByPath.set(collapsedPath, mergedStatus(collapsedByPath.get(collapsedPath), candidate.status));
     fileCountByPath.set(collapsedPath, (fileCountByPath.get(collapsedPath) ?? 0) + 1);
@@ -126,15 +127,16 @@ export async function buildReviewableCandidates(repoRoot: string, candidates: re
   for (const candidate of visible) {
     const kind = await pathKind(path.resolve(repoRoot, candidate.path));
     const recursiveFlag = kind === "directory" ? " allowRecursive=true" : "";
+    const trackedFlag = candidate.status === "tracked-added" ? " allowTracked=true" : "";
     reviewableCandidates.push({
       path: candidate.path,
       status: candidate.status,
       fileCount: candidate.fileCount,
       bytes: candidate.bytes,
       bytesTruncated: candidate.bytesTruncated,
-      reason: "not matched by Guardian hygiene cleanup rules",
-      source: "git ls-files --others/--ignored",
-      suggestedDeletePathCommand: `guardian_delete_paths mode=plan paths=${JSON.stringify([candidate.path])}${recursiveFlag}`,
+      reason: candidate.status === "tracked-added" ? "new tracked path is not acknowledged by intentionalPaths" : "not matched by Guardian hygiene cleanup rules",
+      source: candidate.status === "tracked-added" ? "git diff --cached from tracked baseline" : "git ls-files --others/--ignored",
+      suggestedDeletePathCommand: `guardian_delete_paths mode=plan paths=${JSON.stringify([candidate.path])}${trackedFlag}${recursiveFlag}`,
     });
   }
   const reviewableCandidateCount = collapsed.length;

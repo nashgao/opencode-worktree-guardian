@@ -1,5 +1,6 @@
 import type { CleanCompletionPlan } from "./clean-completion.ts";
 import type { GoalHygienePostcondition } from "./goal-hygiene-types.ts";
+import type { GoalTrackedBaseline } from "./goal-tracked-baseline.ts";
 import type { GoalStep, GoalTool } from "./goal-steps.ts";
 import type { NormalizedGuardianGoalConfig } from "./normalized-config.ts";
 
@@ -16,6 +17,7 @@ export type GoalPlan = {
   readonly repoRoot: string;
   readonly cwd: string;
   readonly intentionalPaths: readonly string[];
+  readonly trackedBaseline: GoalTrackedBaseline;
   readonly goal: NormalizedGuardianGoalConfig;
   readonly steps: readonly GoalStep[];
   readonly blockers: readonly GoalBlocker[];

@@ -80,7 +80,7 @@ function appendHygienePostcondition(lines: string[], value: unknown, complete: b
       },
     });
     lines.push(`[INFO] reviewable digest: ${sanitizeGoalResidualText(postcondition.reviewableDigest)}`);
-    lines.push("[INFO] reviewable resolution: pass exact current regular untracked files through intentionalPaths in both goal phases, add lasting non-cleanup roots to protectedPaths, or use the exact guardian_delete_paths mode=plan command above");
+    lines.push("[INFO] reviewable resolution: pass exact current regular newly added files through intentionalPaths in both goal phases, or use the exact guardian_delete_paths mode=plan command above; tracked additions require allowTracked=true");
   }
   if (postcondition.reviewableInventoryComplete === false) lines.push("[WARN] hygiene inventory coverage is incomplete; strict residue completion remains partial");
   lines.push(`[INFO] hygiene exclusions: ${Number(postcondition.protectedExclusionCount ?? 0)} | reviewable inventory: ${reviewableCount}`);
@@ -114,6 +114,8 @@ export function formatGuardianGoalOutput(rawResult: unknown): string {
     `[INFO] desired: ${formatGoalFlags(goal)}`,
     `[INFO] steps: ${steps.length} | blockers: ${blockers.length}`,
   ];
+  const trackedBaseline = recordValue(result.trackedBaseline);
+  if (typeof trackedBaseline.commit === "string") lines.push(`[INFO] tracked baseline: ${shortCommit(trackedBaseline.commit)} | source=${textValue(trackedBaseline.source)}`);
   appendBoundedList({ lines, heading: "[INFO] one-shot intentional paths", entries: intentionalPaths, limit: 12, format: (entry) => `  - ${sanitizeGoalResidualText(entry)}` });
   appendHygienePostcondition(lines, result.hygienePostcondition, result.complete === null ? null : result.complete === true);
   const doneStep = steps.map(recordValue).find((step) => step.tool === "guardian_done" || step.tool === "guardian_finish_workflow");

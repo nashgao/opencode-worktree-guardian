@@ -36,6 +36,7 @@ export function formatGuardianHygieneOutput(rawResult: unknown) {
   const scanFailed = result.ok === false || summary.scanFailed === true;
   const inventoryIncomplete = summary.filesystemOnlyEmptyDirectoryScanComplete === false;
   const lines = [`${scanFailed ? "[FAIL]" : findings.length > 0 || reviewableCount > 0 || protectedInventoryCount > 0 || inventoryIncomplete ? "[WARN]" : "[GOOD]"} guardian_hygiene scan`, `[INFO] repoRoot: ${textValue(result.repoRoot)}`];
+  if (typeof summary.trackedBaselineCommit === "string") lines.push(`[INFO] tracked additions: ${Number(summary.trackedAddedCandidateCount ?? 0)} | baseline: ${shortCommit(summary.trackedBaselineCommit)} | source: ${textValue(summary.trackedBaselineSource)}`);
   if (scanFailed) lines.push("[WARN] scan incomplete: findings and candidate counts are not trustworthy");
   else lines.push(`[INFO] findings: ${Number(summary.findingCount ?? findings.length)} | warn: ${warnCount} | fail: ${failCount} | exclusions: ${Number(summary.exclusionCount ?? exclusions.length)} | candidates: ${Number(summary.candidateCount ?? 0)} | reviewable: ${reviewableCount}`);
   if (!scanFailed && inventoryIncomplete) lines.push("[WARN] inventory coverage is incomplete: filesystem-only empty-directory scan was truncated");

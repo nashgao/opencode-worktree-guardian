@@ -5,7 +5,7 @@ import { goalCleanCompletionBlockReason, planGoalCleanCompletion, plannedGoalCle
 import { createGoalConfirmToken } from "./goal-confirm-token.ts";
 import { resolveGoalContext } from "./goal-context.ts";
 import type { GoalContext } from "./goal-context.ts";
-import { approvedHygieneTargetPaths, postconditionBlocksCompletion, postconditionIsComplete, postconditionReason, scanGoalHygienePostcondition } from "./goal-hygiene-postcondition.ts";
+import { approvedHygieneTargetPaths, failedGoalHygienePostcondition, postconditionBlocksCompletion, postconditionIsComplete, postconditionReason, scanGoalHygienePostcondition } from "./goal-hygiene-postcondition.ts";
 import type { GoalHygienePostcondition } from "./goal-hygiene-postcondition.ts";
 import { blockedGoalStep, goalBlockerFromStep, goalStepFromResult, topLevelGoalCommit } from "./goal-steps.ts";
 import type { GoalStep, GoalStepBlocker, GoalTool } from "./goal-steps.ts";
@@ -33,7 +33,8 @@ function isCleanupOnlyGoal(goal: NormalizedGuardianGoalConfig): boolean {
 }
 
 async function buildGoalPlan(input: GuardianToolInput, context: GoalContext): Promise<GoalPlan> {
-  const { repoRoot, cwd, config, hygieneConfig, intentionalPaths } = context;
+  const { repoRoot, cwd, config, hygieneConfig, intentionalPaths, trackedBaseline } = context;
+  const hygieneInput = { ...input, trackedBaselineCommit: trackedBaseline.commit, trackedBaselineSource: trackedBaseline.source, trackedIntentionalPaths: intentionalPaths };
   const goal = config.goal;
   const steps: GoalStep[] = [];
   const blockers: GoalBlocker[] = [];
@@ -46,7 +47,7 @@ async function buildGoalPlan(input: GuardianToolInput, context: GoalContext): Pr
     let approvedTargetPaths: readonly string[] = [];
     let step: GoalStep;
     try {
-      hygiene = await guardianHygiene({ ...input, repoRoot: cwd, cwd, config: hygieneConfig, mode: "plan", allowCategories: [...GOAL_HYGIENE_CATEGORIES], allowDirtyNestedGit: false });
+      hygiene = await guardianHygiene({ ...hygieneInput, repoRoot: cwd, cwd, config: hygieneConfig, mode: "plan", allowCategories: [...GOAL_HYGIENE_CATEGORIES], allowDirtyNestedGit: false });
       approvedTargetPaths = approvedHygieneTargetPaths(hygiene);
       hygieneHasApprovedTargets = approvedTargetPaths.length > 0;
       step = goalStepFromResult("guardian_hygiene", hygiene);
@@ -61,7 +62,7 @@ async function buildGoalPlan(input: GuardianToolInput, context: GoalContext): Pr
       repoRoot: cwd,
       cwd,
       config: hygieneConfig,
-      input,
+      input: hygieneInput,
       phase: "plan",
       approvedTargetPaths,
     });
@@ -70,7 +71,7 @@ async function buildGoalPlan(input: GuardianToolInput, context: GoalContext): Pr
     }
   } else {
     steps.push({ tool: "guardian_hygiene", ok: true, status: "skipped", reason: "cleanupHygiene=false" });
-    hygienePostcondition = await scanGoalHygienePostcondition({ repoRoot: cwd, cwd, config: hygieneConfig, input, phase: "plan" });
+    hygienePostcondition = await scanGoalHygienePostcondition({ repoRoot: cwd, cwd, config: hygieneConfig, input: hygieneInput, phase: "plan" });
   }
 
   if (cleanCompletion) {
@@ -111,6 +112,7 @@ async function buildGoalPlan(input: GuardianToolInput, context: GoalContext): Pr
     repoRoot,
     cwd,
     intentionalPaths,
+    trackedBaseline,
     goal,
     steps,
     blockers,
@@ -137,6 +139,7 @@ export async function guardianGoal(input: GuardianToolInput = {}): Promise<Guard
       cwd: resolved.cwd,
       blockers: [{ tool: "guardian_goal", reason: resolved.reason }],
       reason: resolved.reason,
+      ...(resolved.hygieneCompletion ? { hygienePostcondition: failedGoalHygienePostcondition(resolved.hygieneCompletion, requestedMode) } : {}),
     };
   }
   const plan = await buildGoalPlan(input, resolved.context);
@@ -154,6 +157,7 @@ export async function guardianGoal(input: GuardianToolInput = {}): Promise<Guard
       repoRoot: plan.repoRoot,
       cwd: plan.cwd,
       intentionalPaths: plan.intentionalPaths,
+      trackedBaseline: plan.trackedBaseline,
       goal: plan.goal,
       steps: plan.steps,
       blockers: [{ tool: "guardian_goal", reason: "confirm token mismatch; re-run mode=plan and use the returned confirmToken" }],
@@ -183,6 +187,7 @@ export async function guardianGoal(input: GuardianToolInput = {}): Promise<Guard
     repoRoot: plan.repoRoot,
     cwd: plan.cwd,
     intentionalPaths: plan.intentionalPaths,
+    trackedBaseline: plan.trackedBaseline,
     goal: plan.goal,
     steps: appliedSteps,
     blockers,

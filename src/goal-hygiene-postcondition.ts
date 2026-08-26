@@ -145,6 +145,10 @@ function noResiduals(mode: GuardianGoalHygieneCompletion, phase: "not-required" 
   };
 }
 
+export function failedGoalHygienePostcondition(mode: GuardianGoalHygieneCompletion, phase: "plan" | "apply"): GoalHygienePostcondition {
+  return noResiduals(mode, phase, "scan-failed", 0, 0, false);
+}
+
 function postconditionStatus(input: {
   readonly mode: GuardianGoalHygieneCompletion;
   readonly phase: "plan" | "apply";
@@ -171,7 +175,7 @@ export async function scanGoalHygienePostcondition(options: GoalHygienePostcondi
   const mode = options.config.goal.hygieneCompletion;
   if (!options.config.goal.cleanupHygiene && mode !== "no-unprotected-residue") return noResiduals(mode, "not-required", "not-required");
   const runner = scanRunner(options.input);
-  const scan = await scanWorkspaceHygiene({ repoRoot: options.repoRoot, cwd: options.cwd, config: options.config, ...(runner ? { runGitNullSeparated: runner } : {}), ...(options.input?.emptyDirectoryMaxDepth !== undefined ? { emptyDirectoryMaxDepth: options.input.emptyDirectoryMaxDepth } : {}), ...(options.input?.emptyDirectoryMaxEntries !== undefined ? { emptyDirectoryMaxEntries: options.input.emptyDirectoryMaxEntries } : {}) });
+  const scan = await scanWorkspaceHygiene({ repoRoot: options.repoRoot, cwd: options.cwd, config: options.config, ...(runner ? { runGitNullSeparated: runner } : {}), ...(typeof options.input?.trackedBaselineCommit === "string" ? { trackedBaselineCommit: options.input.trackedBaselineCommit } : {}), ...(typeof options.input?.trackedBaselineSource === "string" ? { trackedBaselineSource: options.input.trackedBaselineSource } : {}), ...(Array.isArray(options.input?.trackedIntentionalPaths) ? { trackedIntentionalPaths: options.input.trackedIntentionalPaths } : {}), ...(options.input?.emptyDirectoryMaxDepth !== undefined ? { emptyDirectoryMaxDepth: options.input.emptyDirectoryMaxDepth } : {}), ...(options.input?.emptyDirectoryMaxEntries !== undefined ? { emptyDirectoryMaxEntries: options.input.emptyDirectoryMaxEntries } : {}) });
   const summary: RecordLike = isRecordLike(scan.summary) ? scan.summary : {};
   const protectedExclusionCount = numericValue(summary.exclusionCount);
   const protectedRoots = records(scan.exclusions)

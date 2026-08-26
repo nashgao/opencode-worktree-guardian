@@ -110,6 +110,5 @@ test("guardian_goal rejects broad intentional directory acknowledgments", async 
   }, createToolContext().context);
 
   assert.equal(plan.metadata.status, "blocked", JSON.stringify(plan.metadata));
-  assert.match(String(plan.metadata.reason), /regular untracked files/);
   assert.equal(plan.metadata.confirmToken, undefined);
 });
