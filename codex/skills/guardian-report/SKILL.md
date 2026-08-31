@@ -1,6 +1,6 @@
 ---
 name: guardian-report
-description: Use when the user asks Guardian to write or open an offline HTML report of sessions, worktrees, branches, risks, and recovery evidence.
+description: Use when the user asks Guardian to write an offline HTML report of sessions, worktrees, branches, risks, and recovery evidence.
 ---
 
 # Guardian Report

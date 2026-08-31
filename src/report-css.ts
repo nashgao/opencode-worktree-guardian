@@ -1,4 +1,8 @@
-export const REPORT_CSS = `
+import { OPEN_DESIGN_DASHBOARD_CSS } from "./operations-center/open-design-dashboard-css.ts";
+import { OPEN_DESIGN_INTEGRATION_CSS } from "./operations-center/open-design-integration-css.ts";
+import { OPEN_DESIGN_TOPOLOGY_CSS } from "./operations-center/open-design-topology-css.ts";
+
+const LEGACY_REPORT_CSS = `
 :root {
   color-scheme: dark;
   --bg: #080b0d; --bg-lit: #17303a; --bg-edge: #121618;
@@ -191,3 +195,5 @@ kbd { padding: 1px 4px; border: 1px solid var(--border); border-radius: 4px; bac
 @media (max-width: 900px) { .topology-terminal-table, .topology-event-table { min-width: 0; width: 100%; table-layout: fixed; } .topology-stage { min-height: 17rem; padding: var(--space-2); } .topology-stage svg { min-height: 15rem; } .topology-terminal-row { width: 100%; } .topology-terminal-table, .topology-terminal-table tbody, .topology-terminal-table tr, .topology-terminal-table td, .topology-event-table, .topology-event-table tbody, .topology-event-table tr, .topology-event-table td { display: block; width: 100%; } .topology-terminal-table thead, .topology-event-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); } .topology-terminal-table tr, .topology-event-table tr { margin-bottom: var(--space-3); padding: var(--space-2); border: 1px solid var(--border-soft); border-radius: var(--radius-sm); } .topology-terminal-table td, .topology-event-table td { display: grid; grid-template-columns: minmax(7rem, 38%) minmax(0, 1fr); gap: var(--space-2); min-width: 0; padding: var(--space-1) 0; overflow-wrap: anywhere; white-space: normal; } .topology-terminal-table td::before, .topology-event-table td::before { content: attr(data-label); color: var(--muted); font: 600 .75rem/1.4 var(--font-body); letter-spacing: .06em; text-transform: uppercase; } }
 @media (max-width: 420px) { .topology-stage { min-height: 0; } .topology-stage svg { width: 100%; min-width: 0; } .topology-stage text { font-size: .8125rem; } #topology-mode-selector button, .topology-controls button, .topology-alternative summary, .topology-graphic summary { min-height: 2.75rem; display: flex; align-items: center; } .topology-terminal-table td, .topology-event-table td { grid-template-columns: 1fr; gap: var(--space-1); } .topology-terminal-table td:nth-child(5) { font-size: .875rem; } }
 `;
+
+export const REPORT_CSS = `${LEGACY_REPORT_CSS}${OPEN_DESIGN_DASHBOARD_CSS}${OPEN_DESIGN_TOPOLOGY_CSS}${OPEN_DESIGN_INTEGRATION_CSS}`;

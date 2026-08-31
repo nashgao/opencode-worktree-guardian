@@ -1,0 +1,115 @@
+- generic [active] [ref=f5e1]:
+  - banner [ref=f5e2]:
+    - generic [ref=f5e3]:
+      - generic [ref=f5e10]: Worktree
+      - generic [ref=f5e11]: acme/web-platform
+    - generic [ref=f5e12]:
+      - textbox "Filter branches or paths…" [ref=f5e17]
+      - button "Sync all" [ref=f5e18] [cursor=pointer]
+      - button "Add" [ref=f5e24] [cursor=pointer]
+  - generic [ref=f5e27]:
+    - main [ref=f5e28]:
+      - generic [ref=f5e29]:
+        - generic [ref=f5e30]:
+          - generic [ref=f5e31]:
+            - button "All 5" [ref=f5e32] [cursor=pointer]:
+              - text: All
+              - generic [ref=f5e33]: "5"
+            - button "Clean 2" [ref=f5e34] [cursor=pointer]:
+              - text: Clean
+              - generic [ref=f5e35]: "2"
+            - button "Dirty 2" [ref=f5e36] [cursor=pointer]:
+              - text: Dirty
+              - generic [ref=f5e37]: "2"
+            - button "Ahead 1" [ref=f5e38] [cursor=pointer]:
+              - text: Ahead
+              - generic [ref=f5e39]: "1"
+          - combobox [ref=f5e41]:
+            - option "Last activity" [selected]
+            - option "Branch name"
+            - option "Status"
+        - generic [ref=f5e43]:
+          - button "List view" [ref=f5e44] [cursor=pointer]
+          - button "Topology graph" [ref=f5e48] [cursor=pointer]
+      - table [ref=f5e56]:
+        - rowgroup [ref=f5e57]:
+          - row [ref=f5e58]:
+            - columnheader [ref=f5e59]:
+              - generic [ref=f5e60] [cursor=pointer]
+            - columnheader "Branch" [ref=f5e63]
+            - columnheader "Path" [ref=f5e64]
+            - columnheader "Status" [ref=f5e65]
+            - columnheader "Last commit" [ref=f5e66]
+            - columnheader "Actions" [ref=f5e67]
+        - rowgroup [ref=f5e68]:
+          - row [ref=f5e69] [cursor=pointer]:
+            - cell [ref=f5e70]
+            - cell "main main" [ref=f5e74]:
+              - generic [ref=f5e75]:
+                - generic [ref=f5e82]: main
+                - generic [ref=f5e83]: main
+            - cell "/Users/nash/acme/web-platform Copy path" [ref=f5e84]:
+              - generic [ref=f5e85]:
+                - generic [ref=f5e86]: /Users/nash/acme/web-platform
+                - button "Copy path" [ref=f5e87]
+            - cell "Clean" [ref=f5e91]
+            - 'cell "a4f7d2e · Merge pull request #482" [ref=f5e93]'
+            - cell [ref=f5e94]:
+              - generic [ref=f5e95]:
+                - button "Open folder" [ref=f5e96]
+                - button "Remove worktree" [ref=f5e101]
+          - row [ref=f5e105] [cursor=pointer]:
+            - cell [ref=f5e106]
+            - cell "feature/auth-refresh" [ref=f5e110]
+            - cell "/Users/nash/acme/web-platform-auth Copy path" [ref=f5e119]:
+              - generic [ref=f5e120]:
+                - generic [ref=f5e121]: /Users/nash/acme/web-platform-auth
+                - button "Copy path" [ref=f5e122]
+            - cell "2 files modified" [ref=f5e126]
+            - cell "c9e1b4a · Add OAuth retry logic" [ref=f5e128]
+            - cell [ref=f5e129]:
+              - generic [ref=f5e130]:
+                - button "Open folder" [ref=f5e131]
+                - button "Remove worktree" [ref=f5e136]
+          - row [ref=f5e140] [cursor=pointer]:
+            - cell [ref=f5e141]
+            - cell "feature/perf-audit" [ref=f5e145]
+            - cell "/Users/nash/acme/web-platform-perf Copy path" [ref=f5e154]:
+              - generic [ref=f5e155]:
+                - generic [ref=f5e156]: /Users/nash/acme/web-platform-perf
+                - button "Copy path" [ref=f5e157]
+            - cell "3 ahead / 1 behind" [ref=f5e161]
+            - cell "8d3c221 · Lazy-load chart module" [ref=f5e163]
+            - cell [ref=f5e164]:
+              - generic [ref=f5e165]:
+                - button "Open folder" [ref=f5e166]
+                - button "Remove worktree" [ref=f5e171]
+          - row [ref=f5e175] [cursor=pointer]:
+            - cell [ref=f5e176]
+            - cell "hotfix/cors-regression" [ref=f5e180]
+            - cell "/Users/nash/acme/web-platform-cors Copy path" [ref=f5e189]:
+              - generic [ref=f5e190]:
+                - generic [ref=f5e191]: /Users/nash/acme/web-platform-cors
+                - button "Copy path" [ref=f5e192]
+            - cell "Clean" [ref=f5e196]
+            - cell "f11a998 · Fix preflight caching" [ref=f5e198]
+            - cell [ref=f5e199]:
+              - generic [ref=f5e200]:
+                - button "Open folder" [ref=f5e201]
+                - button "Remove worktree" [ref=f5e206]
+          - row [ref=f5e210] [cursor=pointer]:
+            - cell [ref=f5e211]
+            - cell "experiment/ai-summary" [ref=f5e215]
+            - cell "/Users/nash/acme/web-platform-ai Copy path" [ref=f5e224]:
+              - generic [ref=f5e225]:
+                - generic [ref=f5e226]: /Users/nash/acme/web-platform-ai
+                - button "Copy path" [ref=f5e227]
+            - cell "Untracked files" [ref=f5e231]
+            - cell "b2e5540 · Spike summarization worker" [ref=f5e233]
+            - cell [ref=f5e234]:
+              - generic [ref=f5e235]:
+                - button "Open folder" [ref=f5e236]
+                - button "Remove worktree" [ref=f5e241]
+    - complementary [ref=f5e245]:
+      - generic [ref=f5e246]: Select a worktree to inspect
+  - generic [ref=f5e250]: / search · ↑↓ navigate · Enter inspect · Esc close
