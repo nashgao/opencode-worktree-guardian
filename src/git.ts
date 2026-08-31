@@ -243,7 +243,7 @@ export async function pushBranchNormally(repoRoot: string, remote: string, branc
 
 export async function fetchRemote(repoRoot: string, remote: string) {
   await validateConfiguredRemote(repoRoot, remote);
-  await runGit(repoRoot, ["fetch", remote]);
+  await runGit(repoRoot, ["fetch", "--no-prune", remote]);
 }
 
 export async function fetchRemotePrune(repoRoot: string, remote: string) {

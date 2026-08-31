@@ -7,6 +7,7 @@ export type {
   GuardianFinishMode,
   GuardianGoalConfig,
   GuardianGoalHygieneCompletion,
+  GuardianPullRequestMergeMethod,
   LoadedGuardianConfig,
   LoadConfigOptions,
 } from "./config-types.ts";

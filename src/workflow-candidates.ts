@@ -183,7 +183,8 @@ export async function discoverCandidates(repoRoot: string, cwd: string, config: 
       reservedRemoteBranches.add(remoteBranch.branch);
       continue;
     }
-    if (!(await isAncestor(repoRoot, remoteBranch.commit, baseAuthorityRef))) continue;
+    const reservedAtHead = reservation?.head === remoteBranch.commit;
+    if (!reservedAtHead && !(await isAncestor(repoRoot, remoteBranch.commit, baseAuthorityRef))) continue;
     candidates.push({ kind: "remote-branch", targetKind: "remote-branch", remote, remoteBranch: remoteBranch.branch, branch: remoteBranch.branch, head: remoteBranch.commit, safetyRef: reservation?.safety_ref ?? buildSafetyRef("remote-branch-cleanup", `${remote}/${remoteBranch.branch}`, safetyRefStamp), reservationPhase: reservation?.phase ?? "none", remoteAction: "delete-remote-branch", localBranchExists: localBranches.has(remoteBranch.branch) });
     reservedRemoteBranches.add(remoteBranch.branch);
   }

@@ -7,6 +7,7 @@ import type {
   GuardianCommandInterceptionMode,
   GuardianFinishMode,
   GuardianGoalHygieneCompletion,
+  GuardianPullRequestMergeMethod,
   LoadedGuardianConfig,
   LoadConfigOptions,
   RecordLike,
@@ -19,6 +20,7 @@ const DEFAULT_CONFIG_TEMPLATE_URL = new URL("../templates/worktree-guardian.json
 const DEFAULT_CONFIG_TEMPLATE = readFileSync(DEFAULT_CONFIG_TEMPLATE_URL, "utf8");
 
 export const FINISH_MODES = new Set(["preserve-only", "push-branch", "create-pr", "merge-to-base"]);
+export const PULL_REQUEST_MERGE_METHODS = new Set(["merge", "squash"]);
 export const AUTO_START_MODES = new Set(["eager", "lazy"]);
 export const COMMAND_INTERCEPTION_MODES = new Set(["audit", "strict"]);
 export const GOAL_HYGIENE_COMPLETIONS = new Set(["authorized-cleanup", "no-unprotected-findings", "no-unprotected-residue"]);
@@ -26,6 +28,7 @@ export const GOAL_HYGIENE_COMPLETIONS = new Set(["authorized-cleanup", "no-unpro
 export type ConfigErrorKind =
   | "invalid_config_root"
   | "unsupported_finish_mode"
+  | "unsupported_pull_request_merge_method"
   | "unsupported_auto_start_mode"
   | "unsupported_command_interception_mode"
   | "invalid_goal_config"
@@ -43,6 +46,10 @@ function uniqueStrings(values: readonly unknown[]): string[] {
 
 function isGuardianFinishMode(value: unknown): value is GuardianFinishMode {
   return typeof value === "string" && FINISH_MODES.has(value);
+}
+
+function isGuardianPullRequestMergeMethod(value: unknown): value is GuardianPullRequestMergeMethod {
+  return typeof value === "string" && PULL_REQUEST_MERGE_METHODS.has(value);
 }
 
 function isGuardianAutoStartMode(value: unknown): value is GuardianAutoStartMode {
@@ -107,6 +114,8 @@ function parseDefaultConfigTemplate(raw: string): NormalizedGuardianConfig {
   if (!isRecordLike(value)) throw templateError("root must be an object");
   const finishMode = value.finishMode;
   if (!isGuardianFinishMode(finishMode)) throw templateError("finishMode is unsupported");
+  const pullRequestMergeMethod = value.pullRequestMergeMethod;
+  if (!isGuardianPullRequestMergeMethod(pullRequestMergeMethod)) throw templateError("pullRequestMergeMethod is unsupported");
   const autoStartMode = value.autoStartMode;
   if (!isGuardianAutoStartMode(autoStartMode)) throw templateError("autoStartMode is unsupported");
   const commandInterceptionMode = value.commandInterceptionMode;
@@ -117,6 +126,7 @@ function parseDefaultConfigTemplate(raw: string): NormalizedGuardianConfig {
     worktreeRoot: stringField(value, "worktreeRoot"),
     branchPrefix: stringField(value, "branchPrefix"),
     finishMode,
+    pullRequestMergeMethod,
     commandInterceptionMode,
     autoStart: booleanField(value, "autoStart"),
     autoStartMode,
@@ -170,6 +180,9 @@ export function normalizeConfig(input: RecordLike = {}): NormalizedGuardianConfi
   if (!isGuardianFinishMode(config.finishMode)) {
     throw configError("unsupported_finish_mode", `Unsupported worktree guardian finishMode: ${String(config.finishMode)}`);
   }
+  if (!isGuardianPullRequestMergeMethod(config.pullRequestMergeMethod)) {
+    throw configError("unsupported_pull_request_merge_method", `Unsupported worktree guardian pullRequestMergeMethod: ${String(config.pullRequestMergeMethod)}`);
+  }
   if (!isGuardianAutoStartMode(config.autoStartMode)) {
     throw configError("unsupported_auto_start_mode", `Unsupported worktree guardian autoStartMode: ${String(config.autoStartMode)}`);
   }
@@ -184,6 +197,7 @@ export function normalizeConfig(input: RecordLike = {}): NormalizedGuardianConfi
 
   return {
     ...config,
+    pullRequestMergeMethod: config.pullRequestMergeMethod,
     commandInterceptionMode: config.commandInterceptionMode,
     autoStart: config.autoStart !== false,
     autoStartMode: config.autoStartMode,

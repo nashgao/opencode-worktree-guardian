@@ -5,7 +5,7 @@ import { classifyLandBaseTransition } from "./done-land-clean-consent.ts";
 import { candidateTokenMaterial } from "./workflow-candidates.ts";
 import { normalizeAllowedRemoteBranches } from "./final-postflight.ts";
 import { isRecordLike } from "./types.ts";
-import type { GuardianConfig } from "./types.ts";
+import type { GuardianConfig, GuardianPullRequestMergeMethod } from "./types.ts";
 
 export type DoneAllTokenPlan = {
   readonly session_id: string;
@@ -39,11 +39,16 @@ type CleanupSweepInput = {
   readonly cleanupApply: Record<string, unknown> | null;
 };
 
-export async function observeBaseTransition(repoRoot: string, baseAuthorityRef: string, remote: string, before: string, approvedHead: string) {
+export async function observeBaseTransition(repoRoot: string, baseAuthorityRef: string, remote: string, before: string, approvedHead: string, pullRequestMergeMethod: GuardianPullRequestMergeMethod) {
   await fetchRemote(repoRoot, remote);
   const after = await getRefCommit(repoRoot, baseAuthorityRef);
   const parents = after === before || after === approvedHead ? [] : (await runGit(repoRoot, ["show", "-s", "--format=%P", after])).stdout.split(" ").filter(Boolean);
-  return { ...classifyLandBaseTransition({ before, after, approvedHead, parents, approvedHeadIsAncestor: await isAncestor(repoRoot, approvedHead, baseAuthorityRef), beforeIsAncestor: await isAncestor(repoRoot, before, after) }), before, after, parents };
+  const approvedTree = (await runGit(repoRoot, ["show", "-s", "--format=%T", approvedHead])).stdout;
+  const afterTree = after === approvedHead ? approvedTree : (await runGit(repoRoot, ["show", "-s", "--format=%T", after])).stdout;
+  const approvedHeadIsAncestor = await isAncestor(repoRoot, approvedHead, baseAuthorityRef);
+  const approvedTreeMatches = approvedTree === afterTree;
+  const transition = classifyLandBaseTransition({ before, after, approvedHead, parents, approvedHeadIsAncestor, beforeIsAncestor: await isAncestor(repoRoot, before, after), approvedTreeMatches, pullRequestMergeMethod });
+  return { ...transition, before, after, parents, approvedTreeMatches, pullRequestMergeMethod };
 }
 
 function cleanupPlanTokenMaterial(cleanupPlan: Record<string, unknown>): Record<string, unknown> {

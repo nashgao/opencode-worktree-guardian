@@ -16,6 +16,7 @@ import {
 import path from "node:path";
 import { guardianDone } from "../src/done.ts";
 import { finalPostflightCommitsFromCleanupSweep } from "../src/done-cleanup-sweep.ts";
+import { observeBaseTransition } from "../src/done-all-cleanup.ts";
 import { guardianStart } from "../src/start.ts";
 import { batchChildFailureCanContinue, classifyLandBaseTransition } from "../src/done-land-clean-consent.ts";
 import { isRecordLike } from "../src/types.ts";
@@ -59,11 +60,16 @@ test("guardian_done all=true apply blocks a stale confirm token after a session 
 });
 
 test("batch ratchet accepts only the approved base topology", () => {
-  const base = { before: "base", approvedHead: "head", approvedHeadIsAncestor: true, beforeIsAncestor: true };
+  const base = { before: "base", approvedHead: "head", approvedHeadIsAncestor: true, beforeIsAncestor: true, approvedTreeMatches: false, pullRequestMergeMethod: "merge" as const };
   for (const [input, expected] of [
     [{ ...base, after: "base", parents: [] }, { ok: true, kind: "unchanged-approved" }],
     [{ ...base, after: "head", parents: [] }, { ok: true, kind: "fast-forward" }],
     [{ ...base, after: "merge", parents: ["base", "head"] }, { ok: true, kind: "merge" }],
+    [{ ...base, after: "squash", parents: ["base"], approvedTreeMatches: true, pullRequestMergeMethod: "squash" }, { ok: true, kind: "squash" }],
+    [{ ...base, after: "squash", parents: ["base"], approvedTreeMatches: true }, { ok: false, code: "unauthorized-base-transition" }],
+    [{ ...base, after: "merge", parents: ["base", "head"], approvedTreeMatches: true, pullRequestMergeMethod: "squash" }, { ok: false, code: "unauthorized-base-transition" }],
+    [{ ...base, after: "head", parents: [], approvedTreeMatches: true, pullRequestMergeMethod: "squash" }, { ok: false, code: "unauthorized-base-transition" }],
+    [{ ...base, after: "squash", parents: ["base"], pullRequestMergeMethod: "squash" }, { ok: false, code: "unauthorized-base-transition" }],
     [{ ...base, after: "base", parents: [], approvedHeadIsAncestor: false }, { ok: false, code: "approved-head-not-landed" }],
     [{ ...base, after: "head", parents: [], beforeIsAncestor: false }, { ok: false, code: "external-before" }],
     [{ ...base, after: "merge", parents: ["head", "base"] }, { ok: false, code: "unauthorized-base-transition" }],
@@ -71,6 +77,45 @@ test("batch ratchet accepts only the approved base topology", () => {
     [{ ...base, after: "octopus", parents: ["base", "head", "other"] }, { ok: false, code: "unauthorized-base-transition" }],
     [{ ...base, after: "unrelated", parents: ["other", "head"] }, { ok: false, code: "unauthorized-base-transition" }],
   ] as const) assert.deepEqual(classifyLandBaseTransition(input), expected);
+});
+
+test("batch ratchet enforces the configured merge method when observing the remote base", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const before = (await git(repo, ["rev-parse", "HEAD"])).stdout;
+  await git(repo, ["checkout", "-b", "guardian/batch-squash-observation"]);
+  await fs.writeFile(path.join(repo, "batch-squash.txt"), "batch squash\n");
+  await git(repo, ["add", "batch-squash.txt"]);
+  await git(repo, ["commit", "-m", "add batch squash fixture"]);
+  const approvedHead = (await git(repo, ["rev-parse", "HEAD"])).stdout;
+  await git(repo, ["checkout", "main"]);
+  await git(repo, ["merge", "--squash", "guardian/batch-squash-observation"]);
+  await git(repo, ["commit", "-m", "squash batch fixture"]);
+  await git(repo, ["push", "origin", "main"]);
+
+  const transition = await observeBaseTransition(repo, "refs/remotes/origin/main", "origin", before, approvedHead, "merge");
+
+  assert.equal(transition.ok, false, JSON.stringify(transition));
+  assert.equal(transition.code, "unauthorized-base-transition");
+});
+
+test("batch ratchet rejects a fast-forward when squash is configured", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const before = (await git(repo, ["rev-parse", "HEAD"])).stdout;
+  await git(repo, ["checkout", "-b", "guardian/batch-fast-forward-observation"]);
+  await fs.writeFile(path.join(repo, "batch-fast-forward.txt"), "batch fast-forward\n");
+  await git(repo, ["add", "batch-fast-forward.txt"]);
+  await git(repo, ["commit", "-m", "add batch fast-forward fixture"]);
+  const approvedHead = (await git(repo, ["rev-parse", "HEAD"])).stdout;
+  await git(repo, ["checkout", "main"]);
+  await git(repo, ["merge", "--ff-only", "guardian/batch-fast-forward-observation"]);
+  await git(repo, ["push", "origin", "main"]);
+
+  const transition = await observeBaseTransition(repo, "refs/remotes/origin/main", "origin", before, approvedHead, "squash");
+
+  assert.equal(transition.ok, false, JSON.stringify(transition));
+  assert.equal(transition.code, "unauthorized-base-transition");
 });
 
 test("batch child failure continues only when the base did not move", () => {

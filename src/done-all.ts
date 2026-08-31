@@ -219,7 +219,7 @@ export async function guardianDoneAll(input: Record<string, unknown> = {}): Prom
         config,
         batchAuthorization,
       });
-      const transition = await observeBaseTransition(repoRoot, baseAuthorityRef, String(config.remote), cursor, approvedHead);
+      const transition = await observeBaseTransition(repoRoot, baseAuthorityRef, String(config.remote), cursor, approvedHead, config.pullRequestMergeMethod ?? "merge");
       baseTransitions.push({ session_id: plan.session_id, ...transition });
       const childResult = {
         session_id: plan.session_id,
@@ -228,6 +228,7 @@ export async function guardianDoneAll(input: Record<string, unknown> = {}): Prom
         status: finish.status,
         reason: finish.reason,
         head: finish.head,
+        landedCommit: finish.ok === true && transition.ok ? transition.after : undefined,
         pr: finish.pr,
         worktreeRemoved: finish.worktreeRemoved === true,
         branchDeleted: finish.branchDeleted === true,
@@ -248,7 +249,7 @@ export async function guardianDoneAll(input: Record<string, unknown> = {}): Prom
       const childResult = { session_id: plan.session_id, branch: plan.branch, ok: false, status: "error", reason: error instanceof Error ? error.message : String(error) };
       results.push(childResult);
       try {
-        const transition = await observeBaseTransition(repoRoot, baseAuthorityRef, String(config.remote), cursor, approvedHead);
+        const transition = await observeBaseTransition(repoRoot, baseAuthorityRef, String(config.remote), cursor, approvedHead, config.pullRequestMergeMethod ?? "merge");
         baseTransitions.push({ session_id: plan.session_id, ...transition });
         if (transition.before === transition.after) continue;
         return { ok: false, status: "blocked", lane: "done-all", reason: "failed child moved the remote base; refusing to continue batch", results, baseTransitions, failedChildTransition: transition };
@@ -281,8 +282,8 @@ export async function guardianDoneAll(input: Record<string, unknown> = {}): Prom
   }
   const mainSync = await syncLocalBase(repoRoot, config);
   const requiredCommits = results
-    .filter((result) => result.ok === true && typeof result.head === "string")
-    .map((result) => ({ commit: String(result.head), source: typeof result.branch === "string" ? result.branch : "done-all-session", reason: "finished session commit must be present on final base" }));
+    .filter((result) => result.ok === true && typeof result.landedCommit === "string")
+    .map((result) => ({ commit: String(result.landedCommit), source: typeof result.branch === "string" ? result.branch : "done-all-session", reason: "authorized landed commit must be present on final base" }));
   const finalPostflight = await runFinalCleanupPostflight({ repoRoot, config, requiredCommits: [...requiredCommits, ...finalPostflightCommitsFromCleanupSweep(combinedCleanupSweep)], allowedRemoteBranches });
   const finalRemaining = finalPostflight.ok === true ? allRemaining : [...allRemaining, { kind: "final-postflight", status: "blocked", reason: finalPostflight.reason ?? "final cleanup postflight failed", finalPostflight }];
   const repoFinished = !hardFailure && combinedCleanupSweep.ok === true && mainSync.ok === true && finalPostflight.ok === true && finalRemaining.length === 0;

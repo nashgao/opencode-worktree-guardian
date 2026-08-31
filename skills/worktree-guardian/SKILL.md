@@ -33,6 +33,7 @@ Canonical safety policy: [ADR 0001: Guardian Safety Policy](../../docs/adr/0001-
 ## Defaults
 
 - `finishMode`: `create-pr`
+- `pullRequestMergeMethod`: `merge`; linear-history repositories may opt into `squash`, which remains bound to exact parent/tree landing proof
 - `branchPrefix`: default branch naming only, not ownership proof
 - `autoStart`: enabled by default; repo config `autoStart=false` opts out of automatic ownership
 - `autoFinish`: disabled unless repo config opts in

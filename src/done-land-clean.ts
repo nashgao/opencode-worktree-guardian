@@ -6,7 +6,7 @@ import { cleanupLandedSession, postFinishMaintenance, withMaintenanceOutcome } f
 import { planDoneHygienePreflight } from "./done-hygiene-preflight.ts";
 import { applyAlreadyLandedCleanup, planAlreadyLandedCleanup } from "./done-land-clean-already-landed.ts";
 import { observeBaseLineage } from "./base-lineage.ts";
-import { fetchRemote, getRefCommit, isAncestor, pushBranchWithLease, runGit } from "./git.ts";
+import { buildSafetyRef, fetchRemote, getRefCommit, isAncestor, pushBranchWithLease, runGit } from "./git.ts";
 import { configuredRemoteAuthority } from "./git-authority.ts";
 import { getOrCreatePullRequest, mergePullRequest } from "./done-github-pr.ts";
 import { hasBlockingStashInventory } from "./stash-policy.ts";
@@ -38,6 +38,11 @@ function stashInventory(preflight: SuccessfulLandCleanPreflight): Pick<Successfu
   return { stashCount: preflight.stashCount, stashes: preflight.stashes };
 }
 
+function approvedContentIsAlreadyLanded(preflight: SuccessfulLandCleanPreflight): boolean {
+  return preflight.headIsAncestorOfBase
+    || (preflight.pullRequestMergeMethod === "squash" && preflight.baseTreeMatchesCandidate && preflight.baseParentMatchesSessionStart);
+}
+
 function tokenMatches(context: LandCleanContext, action: "already-landed-clean" | "land-and-clean", preflight: SuccessfulLandCleanPreflight, commitMessage: string) {
   const originalToken = createSessionLandCleanConfirmToken({ action, context, preflight, commitMessage });
   if (!context.batchAuthorization) return context.input.confirmToken === originalToken ? { ok: true } : { ok: false, code: "preflight-drift" as const };
@@ -62,7 +67,7 @@ export async function guardianDoneLandClean(context: LandCleanContext): Promise<
   }
   const allowAdminBypass = context.input.allowAdminBypass === true;
   const message = sessionLandCleanCommitMessage(context.input);
-  const shouldCleanAlreadyLanded = preflight.headIsAncestorOfBase && (preflight.dirtyFiles.length === 0 || !message);
+  const shouldCleanAlreadyLanded = approvedContentIsAlreadyLanded(preflight) && (preflight.dirtyFiles.length === 0 || !message);
   const action = shouldCleanAlreadyLanded ? "already-landed-clean" : "land-and-clean";
   if (context.input.mode === "apply") {
     const localToken = tokenMatches(context, action, preflight, message);
@@ -76,7 +81,7 @@ export async function guardianDoneLandClean(context: LandCleanContext): Promise<
       const refreshedToken = tokenMatches(context, "already-landed-clean", preflight, "");
       if (!refreshedToken.ok) return blocked("plan changed; rerun plan and review the updated session cleanup before applying", { tokenMatched: false, code: refreshedToken.code });
     }
-    if (preflight.headIsAncestorOfBase) return context.input.mode === "apply"
+    if (approvedContentIsAlreadyLanded(preflight)) return context.input.mode === "apply"
       ? applyAlreadyLandedCleanup(context, preflight, preflight.baseRef)
       : planAlreadyLandedCleanup(context, preflight, preflight.baseRef);
   }
@@ -87,7 +92,7 @@ export async function guardianDoneLandClean(context: LandCleanContext): Promise<
     if (preflight.ok !== true) return preflight;
     const refreshedToken = tokenMatches(context, "already-landed-clean", preflight, "");
     if (!refreshedToken.ok) return blocked("plan changed; rerun plan and review the updated session cleanup before applying", { tokenMatched: false, code: refreshedToken.code });
-    if (preflight.headIsAncestorOfBase) return applyAlreadyLandedCleanup(context, preflight, preflight.baseRef);
+    if (approvedContentIsAlreadyLanded(preflight)) return applyAlreadyLandedCleanup(context, preflight, preflight.baseRef);
   }
   if (!preflight.baseIsAncestorOfHead) {
     return blocked("fresh remote base is not an ancestor of the session commit", {
@@ -190,20 +195,37 @@ export async function guardianDoneLandClean(context: LandCleanContext): Promise<
   const baseBeforeMerge = await observeBaseLineage(context.repoRoot, baseBeforeMergeOid, head);
   if (baseBeforeMergeOid !== preflight.baseRefOid) return blocked("remote base advanced after plan; refusing PR merge", { pr: prResult.pr, branch: preflight.branch, worktreePath: preflight.worktreePath, baseRef: preflight.baseRef, expectedBaseRefOid: preflight.baseRefOid, currentBaseRefOid: baseBeforeMergeOid, ...stashInventory(preflight) });
   if (!baseBeforeMerge.baseIsAncestorOfHead) return blocked("fresh remote base is not an ancestor of the session commit", { pr: prResult.pr, branch: preflight.branch, head, baseRef: preflight.baseRef, baseRefOid: baseBeforeMergeOid, ...stashInventory(preflight) });
-  const mergeResult = await mergePullRequest(context.repoRoot, prResult.pr, head, allowAdminBypass);
+  const mergeResult = await mergePullRequest({
+    repoRoot: context.repoRoot,
+    pr: prResult.pr,
+    head,
+    allowAdminBypass,
+    pullRequestMergeMethod: preflight.pullRequestMergeMethod,
+  });
   if (!mergeResult.ok) return { ...mergeResult.result, ...stashInventory(preflight) };
 
   await fetchRemote(context.repoRoot, preflight.remote);
-  if (!(await isAncestor(context.repoRoot, head, baseAuthorityRef))) {
-    return blocked("PR merge completed but the session commit is not reachable from the remote base branch", { pr: prResult.pr, head, baseRef, ...stashInventory(preflight) });
-  }
   const after = await getRefCommit(context.repoRoot, baseAuthorityRef);
   const parents = after === preflight.baseRefOid || after === head ? [] : (await runGit(context.repoRoot, ["show", "-s", "--format=%P", after])).stdout.split(" ").filter(Boolean);
-  const transition = classifyLandBaseTransition({ before: preflight.baseRefOid, after, approvedHead: head, parents, approvedHeadIsAncestor: true, beforeIsAncestor: await isAncestor(context.repoRoot, preflight.baseRefOid, head) });
-  if (!transition.ok) return blocked("PR merge changed the remote base outside the approved topology", { pr: prResult.pr, head, baseRef, transition });
-  const cleanup = await cleanupLandedSession(context, "PR landed", { ignoredFiles: preflight.ignoredFiles, ignoredFileFingerprint: preflight.ignoredFileFingerprint });
+  const afterTree = (await runGit(context.repoRoot, ["show", "-s", "--format=%T", after])).stdout;
+  const approvedTreeMatches = afterTree === preflight.candidateTree;
+  const transition = classifyLandBaseTransition({
+    before: preflight.baseRefOid,
+    after,
+    approvedHead: head,
+    parents,
+    approvedHeadIsAncestor: await isAncestor(context.repoRoot, head, baseAuthorityRef),
+    beforeIsAncestor: await isAncestor(context.repoRoot, preflight.baseRefOid, after),
+    approvedTreeMatches,
+    pullRequestMergeMethod: preflight.pullRequestMergeMethod,
+  });
+  if (!transition.ok) return blocked("PR merge changed the remote base outside the approved topology", { pr: prResult.pr, head, baseRef, after, afterTree, approvedTreeMatches, transition });
+  const cleanupAncestryBaseRef = preflight.pullRequestMergeMethod === "squash" ? `${preflight.remote}/${preflight.branch}` : undefined;
+  const remoteBranchCleanup = preflight.pullRequestMergeMethod === "squash" ? { remote: preflight.remote, remoteBranch: preflight.branch, head, safetyRef: buildSafetyRef("remote-branch-cleanup", `${preflight.remote}/${preflight.branch}`, after) } : undefined;
+  const cleanup = await cleanupLandedSession(context, "PR landed", { ancestryBaseRef: cleanupAncestryBaseRef, ignoredFiles: preflight.ignoredFiles, ignoredFileFingerprint: preflight.ignoredFileFingerprint, remoteBranchCleanup });
   if (cleanup.ok !== true) return { ...cleanup, pr: prResult.pr, ...stashInventory(preflight) };
-  const maintenance = await postFinishMaintenance(context, [{ commit: head, source: preflight.branch, reason: "landed session commit must be present on final base" }]);
+  const landedCommit = preflight.pullRequestMergeMethod === "squash" ? after : head;
+  const maintenance = await postFinishMaintenance(context, [{ commit: landedCommit, source: preflight.branch, reason: "verified landed session content must remain present on the final base" }]);
   return withMaintenanceOutcome({
     ok: true,
     status: "landed-and-cleaned",
@@ -217,6 +239,7 @@ export async function guardianDoneLandClean(context: LandCleanContext): Promise<
     pr: prResult.pr,
     prCreated: prResult.created,
     adminBypass: allowAdminBypass,
+    pullRequestMergeMethod: preflight.pullRequestMergeMethod,
     cleanup,
     worktreeRemoved: cleanup.worktreeRemoved === true,
     branchDeleted: cleanup.branchDeleted === true,

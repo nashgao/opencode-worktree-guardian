@@ -1,6 +1,8 @@
 import { guardianDeleteWorktree } from "./delete-worktree.ts";
 import { finalPostflightCommitsFromCleanupSweep, runCleanupSweep } from "./done-cleanup-sweep.ts";
 import { syncLocalBase } from "./done-main-sync.ts";
+import { deleteAbsentRemoteBranchAtExpectedAbsence, deleteRemoteBranch } from "./git.ts";
+import { completeRemoteBranchCleanupSafetyRefReservation, reserveRemoteBranchCleanupSafetyRef } from "./state-remote-branch-reservation.ts";
 import { normalizeAllowedRemoteBranches, runFinalCleanupPostflight, type FinalPostflightCommit } from "./final-postflight.ts";
 import type { GuardianConfig } from "./types.ts";
 import { isRecordLike } from "./types.ts";
@@ -17,6 +19,7 @@ type CleanupLandedSessionOptions = {
   readonly ancestryBaseRef?: string;
   readonly ignoredFiles: readonly string[];
   readonly ignoredFileFingerprint: readonly unknown[];
+  readonly remoteBranchCleanup?: { readonly remote: string; readonly remoteBranch: string; readonly head: string; readonly safetyRef: string };
 };
 
 function okField(value: unknown): unknown {
@@ -69,6 +72,14 @@ export async function cleanupLandedSession(context: LandCleanMaintenanceContext,
     || JSON.stringify(cleanupPreflight.ignoredFileFingerprint) !== JSON.stringify(options.ignoredFileFingerprint)) {
     return { ok: false, status: "cleanup-blocked", reason: `${failurePrefix} but ignored-file consent changed`, cleanup: cleanupPlan, ignoredFiles: options.ignoredFiles, ignoredFileFingerprint: options.ignoredFileFingerprint };
   }
+  const remoteBranchCleanupInput = options.remoteBranchCleanup ? { repoRoot: context.repoRoot, config: context.config, ...options.remoteBranchCleanup } : null;
+  if (remoteBranchCleanupInput) {
+    try {
+      await reserveRemoteBranchCleanupSafetyRef(remoteBranchCleanupInput);
+    } catch (error) {
+      return { ok: false, status: "cleanup-blocked", reason: `${failurePrefix} but remote branch cleanup safety could not be reserved`, cleanup: cleanupPlan, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
   const cleanup = await guardianDeleteWorktree({
     repoRoot: context.repoRoot,
     cwd: context.repoRoot,
@@ -83,5 +94,27 @@ export async function cleanupLandedSession(context: LandCleanMaintenanceContext,
     config: context.config,
   });
   if (cleanup.ok !== true) return { ok: false, status: "cleanup-blocked", reason: `${failurePrefix} but stale worktree cleanup failed`, cleanup };
-  return cleanup;
+  let remoteBranchDeleted = false;
+  let remoteBranchReconciled = false;
+  let expectedHeadDeleteError: string | undefined;
+  if (remoteBranchCleanupInput) {
+    try {
+      await deleteRemoteBranch(context.repoRoot, remoteBranchCleanupInput.remote, remoteBranchCleanupInput.remoteBranch, remoteBranchCleanupInput.head);
+      remoteBranchDeleted = true;
+    } catch (error) {
+      expectedHeadDeleteError = error instanceof Error ? error.message : String(error);
+      try {
+        await deleteAbsentRemoteBranchAtExpectedAbsence(context.repoRoot, remoteBranchCleanupInput.remote, remoteBranchCleanupInput.remoteBranch);
+        remoteBranchReconciled = true;
+      } catch (absenceError) {
+        return { ok: false, status: "cleanup-blocked", reason: `${failurePrefix} but remote branch cleanup failed`, cleanup, remoteBranchCleanup: options.remoteBranchCleanup, expectedHeadDeleteError, error: absenceError instanceof Error ? absenceError.message : String(absenceError) };
+      }
+    }
+    try {
+      await completeRemoteBranchCleanupSafetyRefReservation(remoteBranchCleanupInput);
+    } catch (error) {
+      return { ok: false, status: "cleanup-blocked", reason: `${failurePrefix} but remote branch cleanup failed`, cleanup, remoteBranchCleanup: options.remoteBranchCleanup, ...(expectedHeadDeleteError ? { expectedHeadDeleteError } : {}), error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+  return remoteBranchCleanupInput ? { ...cleanup, remoteBranchDeleted, remoteBranchReconciled, remoteBranch: remoteBranchCleanupInput.remoteBranch } : cleanup;
 }
