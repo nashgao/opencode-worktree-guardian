@@ -99,13 +99,25 @@ async function isRemoteBranchCleanupSafetyRef(repoRoot: string, entry: { readonl
   }
 }
 
+function isBranchOnlyCleanupSafetyRef(entry: { readonly name: string; readonly commit: string }): boolean {
+  const prefixes = ["refs/opencode-guardian/merged-local-branch/", "refs/opencode-guardian/orphan-guardian-branch/"];
+  const prefix = prefixes.find((candidate) => entry.name.startsWith(candidate));
+  if (!prefix) return false;
+  const segments = entry.name.slice(prefix.length).split("/").filter(Boolean);
+  const legacyRecordedHead = segments.at(-1);
+  if (segments.length >= 2 && typeof legacyRecordedHead === "string" && /^[0-9a-f]{40,64}$/.test(legacyRecordedHead) && entry.commit === legacyRecordedHead) return true;
+  const commitMarkerIndex = segments.lastIndexOf("commit");
+  const recordedHead = commitMarkerIndex >= 0 ? segments[commitMarkerIndex + 1] : undefined;
+  return commitMarkerIndex > 0 && commitMarkerIndex === segments.length - 3 && typeof recordedHead === "string" && /^[0-9a-f]{40,64}$/.test(recordedHead) && entry.commit === recordedHead;
+}
+
 async function guardianRefSnapshot(repoRoot: string, allowedRefs: ReadonlySet<string>): Promise<{ readonly refs: readonly string[]; readonly reason?: string }> {
   try {
     const refs = await listRefs(repoRoot, "refs/opencode-guardian");
     const activeLock = refs.find((entry) => entry.name === "refs/opencode-guardian/locks/state");
     if (activeLock) return { refs: [], reason: "Guardian state lock is active during clean-completion proof" };
     for (const entry of refs) {
-      if (!allowedRefs.has(entry.name) && !await isRemoteBranchCleanupSafetyRef(repoRoot, entry)) return { refs: [], reason: `unknown Guardian safety ref: ${entry.name}` };
+      if (!allowedRefs.has(entry.name) && !await isRemoteBranchCleanupSafetyRef(repoRoot, entry) && !isBranchOnlyCleanupSafetyRef(entry)) return { refs: [], reason: `unknown Guardian safety ref: ${entry.name}` };
     }
     return { refs: refs.map((entry) => `${entry.name}:${entry.commit}`).sort() };
   } catch (error) {

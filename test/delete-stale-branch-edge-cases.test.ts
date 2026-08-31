@@ -15,6 +15,7 @@ import {
   test,
   worktreePaths,
 } from "./delete-fixtures.js";
+import { proveCleanCompletionUniverse } from "../src/clean-completion-universe.ts";
 
 test("abandonUnmerged=true is required for unmerged stale branch deletion", async () => {
   const { base, repo } = await createRepoWithOrigin();
@@ -140,6 +141,32 @@ test("deleteBranch=true deletes a merged local non-Guardian branch through plan/
   assert.equal(result.worktreeRemoved, false);
   assert.match(result.safetyRef, /^refs\/opencode-guardian\/merged-local-branch\/feature\/delete-merged-local\//);
   assert.equal(await branchExists(repo, branch), false);
+});
+
+test("branch-only merged cleanup safety refs permit a stable clean-completion proof", async () => {
+  const { base, repo } = await createRepoWithOrigin();
+  test.after(() => fs.rm(base, { recursive: true, force: true }));
+  const branch = "feature/delete-merged-clean-proof";
+  await git(repo, ["branch", branch, "main"]);
+  const { stdout: head } = await git(repo, ["rev-parse", branch]);
+  await recordSession(repo, DEFAULT_CONFIG, {
+    session_id: "ses_delete_merged_clean_proof_baseline",
+    status: "deleted",
+    branch: "guardian/old-clean-proof",
+    worktree_path: path.join(repo, ".worktrees", "opencode-worktree-guardian", "guardian-old-clean-proof"),
+    base_ref: "origin/main",
+    head_commit: head,
+  });
+
+  const plan = await deleteWorktree({ repoRoot: repo, cwd: repo, mode: "plan", branch, deleteBranch: true, config: DEFAULT_CONFIG, timestamp: "20260601T201500" });
+  assert.equal(plan.ok, true);
+  const result = await deleteWorktree({ repoRoot: repo, cwd: repo, mode: "apply", branch, deleteBranch: true, confirmToken: plan.confirmToken, config: DEFAULT_CONFIG, timestamp: "20260601T201500" });
+  assert.equal(result.ok, true);
+  assert.equal(await branchExists(repo, branch), false);
+  assert.equal(result.safetyRef.endsWith(`/commit/${head}/20260601T201500`), true);
+
+  const proof = await proveCleanCompletionUniverse({ repoRoot: repo, config: DEFAULT_CONFIG });
+  assert.equal(proof.status, "stable", proof.reason);
 });
 
 test("deleteBranch=true blocks merged local branch cleanup when branch is checked out", async () => {

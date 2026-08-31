@@ -75,7 +75,8 @@ export async function preflightBranchOnlyDeletion(
   if (!proven && abandonUnmerged && preflight.unmergedCommitError) return blocked("unmerged commits could not be listed", { branch, head, baseRef, error: preflight.unmergedCommitError }, preflight);
   if (!proven && !abandonUnmerged) return blocked("branch head is not proven reachable from base ref", { branch, head, baseRef }, preflight);
   const safetySessionId = session?.session_id ?? (targetKind === "merged-branch" ? "merged-local-branch" : "orphan-guardian-branch");
-  preflight.safetyRef = buildSafetyRef(safetySessionId, branch, input.timestamp ?? session?.created_at ?? session?.session_id ?? head);
+  const safetyBranch = session ? branch : `${branch}/commit/${head}`;
+  preflight.safetyRef = buildSafetyRef(safetySessionId, safetyBranch, input.timestamp ?? session?.created_at ?? session?.session_id ?? head);
   const confirmToken = createConfirmToken(preflight);
   if (input.mode === "plan") return withDeleteReport({ ok: true, status: "planned", confirmToken }, preflight, { action: "planned" });
   if (input.confirmToken !== confirmToken) return blocked("confirm token mismatch; re-run mode=plan and use the returned confirmToken", { tokenMatched: false }, preflight);
