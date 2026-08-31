@@ -1,6 +1,7 @@
 export type GuardianFinishMode = "preserve-only" | "push-branch" | "create-pr" | "merge-to-base";
 export type GuardianAutoStartMode = "eager" | "lazy";
 export type GuardianCommandInterceptionMode = "audit" | "strict";
+export type GuardianPullRequestMergeMethod = "merge" | "squash";
 export type GuardianGoalHygieneCompletion = "authorized-cleanup" | "no-unprotected-findings" | "no-unprotected-residue";
 
 export type GuardianGoalConfig = {
@@ -20,6 +21,7 @@ export type GuardianConfig = {
   readonly worktreeRoot: string;
   readonly branchPrefix: string;
   readonly finishMode: GuardianFinishMode;
+  readonly pullRequestMergeMethod?: GuardianPullRequestMergeMethod;
   readonly commandInterceptionMode: GuardianCommandInterceptionMode;
   readonly autoStart: boolean;
   readonly autoStartMode: GuardianAutoStartMode;

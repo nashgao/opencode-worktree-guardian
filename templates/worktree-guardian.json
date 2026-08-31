@@ -4,6 +4,7 @@
   "worktreeRoot": ".worktrees/$REPO",
   "branchPrefix": "guardian/",
   "finishMode": "create-pr",
+  "pullRequestMergeMethod": "merge",
   "commandInterceptionMode": "audit",
   "autoStart": true,
   "autoStartMode": "eager",

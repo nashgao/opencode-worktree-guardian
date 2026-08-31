@@ -190,7 +190,7 @@ test("reference transaction hook refuses a direct fake-gh merge before invocatio
   await fs.writeFile(path.join(hooks, "reference-transaction"), `#!/bin/sh\nprintf hook > ${JSON.stringify(marker)}\n`, "utf8");
   await fs.chmod(path.join(hooks, "reference-transaction"), 0o755); await git(repo, ["config", "core.hooksPath", hooks]);
 
-  const result = await mergePullRequest(repo, { number: 1, url: "https://github.example/acme/widget/pull/1", headRefName: "guardian/merge-probe", headRefOid: head }, head, false);
+  const result = await mergePullRequest({ repoRoot: repo, pr: { number: 1, url: "https://github.example/acme/widget/pull/1", headRefName: "guardian/merge-probe", headRefOid: head }, head, allowAdminBypass: false, pullRequestMergeMethod: "merge" });
 
   assert.equal(result.ok, false, JSON.stringify(result));
   await assert.rejects(fs.access(marker));

@@ -8,7 +8,7 @@ import { buildSafetyRef, fetchRemote, getCurrentBranch, getHeadCommit, getRefCom
 import type { GitStashEntry } from "./git.ts";
 import { configuredRemoteAuthority } from "./git-authority.ts";
 import { dirtyCommitPolicyBlocker } from "./state-dirty-commit-reservation.ts";
-import type { GuardianConfig, GuardianSession } from "./types.ts";
+import type { GuardianConfig, GuardianPullRequestMergeMethod, GuardianSession } from "./types.ts";
 
 type SessionLandCleanTokenContext = {
   readonly input: Record<string, unknown>;
@@ -34,6 +34,10 @@ type SessionLandCleanTokenPreflight = {
   readonly ignoredFileFingerprint: readonly DeletionFingerprintEntry[];
   readonly sourceIndexTree: string;
   readonly candidateTree: string;
+  readonly pullRequestMergeMethod?: GuardianPullRequestMergeMethod;
+  readonly baseTreeMatchesCandidate?: boolean;
+  readonly baseParents?: readonly string[];
+  readonly baseParentMatchesSessionStart?: boolean;
 };
 
 type SessionLandCleanTokenInput = {
@@ -66,6 +70,10 @@ export type LandCleanPreflight =
        readonly ignoredFileFingerprint: readonly DeletionFingerprintEntry[];
        readonly sourceIndexTree: string;
        readonly candidateTree: string;
+       readonly pullRequestMergeMethod: GuardianPullRequestMergeMethod;
+       readonly baseTreeMatchesCandidate: boolean;
+       readonly baseParents: readonly string[];
+       readonly baseParentMatchesSessionStart: boolean;
      };
 
 export type SuccessfulLandCleanPreflight = Extract<LandCleanPreflight, { readonly ok: true }>;
@@ -77,10 +85,21 @@ export type BatchLandAuthorization = {
   readonly authorizedBaseRefOid: string;
 };
 
-export function classifyLandBaseTransition(input: { readonly before: string; readonly after: string; readonly approvedHead: string; readonly parents: readonly string[]; readonly approvedHeadIsAncestor: boolean; readonly beforeIsAncestor: boolean }) {
+export function classifyLandBaseTransition(input: { readonly before: string; readonly after: string; readonly approvedHead: string; readonly parents: readonly string[]; readonly approvedHeadIsAncestor: boolean; readonly beforeIsAncestor: boolean; readonly approvedTreeMatches: boolean; readonly pullRequestMergeMethod: GuardianPullRequestMergeMethod }) {
   if (input.after === input.before) return input.approvedHeadIsAncestor ? { ok: true, kind: "unchanged-approved" } : { ok: false, code: "approved-head-not-landed" };
-  if (input.after === input.approvedHead) return input.beforeIsAncestor ? { ok: true, kind: "fast-forward" } : { ok: false, code: "external-before" };
-  return input.parents.length === 2 && input.parents[0] === input.before && input.parents[1] === input.approvedHead ? { ok: true, kind: "merge" } : { ok: false, code: "unauthorized-base-transition" };
+  if (input.after === input.approvedHead) return input.pullRequestMergeMethod === "merge"
+    ? input.beforeIsAncestor ? { ok: true, kind: "fast-forward" } : { ok: false, code: "external-before" }
+    : { ok: false, code: "unauthorized-base-transition" };
+  switch (input.pullRequestMergeMethod) {
+    case "merge":
+      return input.parents.length === 2 && input.parents[0] === input.before && input.parents[1] === input.approvedHead ? { ok: true, kind: "merge" } : { ok: false, code: "unauthorized-base-transition" };
+    case "squash":
+      return input.parents.length === 1 && input.parents[0] === input.before && input.approvedTreeMatches ? { ok: true, kind: "squash" } : { ok: false, code: "unauthorized-base-transition" };
+    default: {
+      const exhaustive: never = input.pullRequestMergeMethod;
+      throw new Error(`Unsupported pull request merge method: ${exhaustive}`);
+    }
+  }
 }
 
 export function batchChildFailureCanContinue(finishOk: boolean, before: string, after: string): boolean {
@@ -167,10 +186,20 @@ export async function sessionLandCleanPreflight(context: SessionLandCleanPreflig
     }
     if (options.refreshRemote !== false) await fetchRemote(context.repoRoot, remote);
     const baseRefOid = await getRefCommit(context.repoRoot, baseAuthorityRef);
+    const baseTree = (await runGit(context.repoRoot, ["show", "-s", "--format=%T", baseRefOid])).stdout;
+    const baseParents = (await runGit(context.repoRoot, ["show", "-s", "--format=%P", baseRefOid])).stdout.split(" ").filter(Boolean);
+    const baseParentMatchesSessionStart = baseParents.length === 1 && baseParents[0] === context.session.started_head_commit;
     const baseLineage = await observeBaseLineage(context.repoRoot, baseRefOid, head);
     const remoteBranch = await tryGit(context.repoRoot, ["rev-parse", "--verify", `${remoteBranchRef}^{commit}`]);
     const stamp = context.input.timestamp ?? context.session.created_at ?? context.sessionId;
-    return { ok: true, branch, worktreePath, head, dirtyFiles, snapshot, stashCount: stashes.length, stashes, remote, baseBranch, baseRef, baseRefOid, baseIsAncestorOfHead: baseLineage.baseIsAncestorOfHead, headIsAncestorOfBase: baseLineage.headIsAncestorOfBase, remoteBranchOid: remoteBranch.ok ? remoteBranch.stdout : null, safetyRef: buildSafetyRef(context.sessionId, `commit/${branch}`, stamp), ignoredFiles: intent.ignoredFiles, ignoredFileFingerprint: intent.ignoredFileFingerprint, sourceIndexTree: intent.sourceIndexTree, candidateTree: intent.candidateTree };
+    const initialSafetyRef = buildSafetyRef(context.sessionId, `commit/${branch}`, stamp);
+    const activeReservation = context.session.dirty_commit_safety_ref_reservation;
+    const safetyRef = activeReservation?.branch === branch && activeReservation.expected_head === head
+      ? activeReservation.safety_ref
+      : context.session.safety_refs?.includes(initialSafetyRef)
+        ? buildSafetyRef(context.sessionId, `commit/${branch}`, `${String(stamp)}-${head}`)
+        : initialSafetyRef;
+    return { ok: true, branch, worktreePath, head, dirtyFiles, snapshot, stashCount: stashes.length, stashes, remote, baseBranch, baseRef, baseRefOid, baseIsAncestorOfHead: baseLineage.baseIsAncestorOfHead, headIsAncestorOfBase: baseLineage.headIsAncestorOfBase, remoteBranchOid: remoteBranch.ok ? remoteBranch.stdout : null, safetyRef, ignoredFiles: intent.ignoredFiles, ignoredFileFingerprint: intent.ignoredFileFingerprint, sourceIndexTree: intent.sourceIndexTree, candidateTree: intent.candidateTree, pullRequestMergeMethod: context.config.pullRequestMergeMethod ?? "merge", baseTreeMatchesCandidate: baseTree === intent.candidateTree, baseParents, baseParentMatchesSessionStart };
   } catch (error) {
     return { ok: false, status: "blocked", reason: "remote base ref could not be fetched or resolved", sessionId: context.sessionId, remote, baseBranch, baseRef, error: error instanceof Error ? error.message : String(error) };
   }
@@ -212,6 +241,10 @@ export function createSessionLandCleanConfirmToken(input: SessionLandCleanTokenI
     ignoredFileFingerprint: input.preflight.ignoredFileFingerprint,
     sourceIndexTree: input.preflight.sourceIndexTree,
     candidateTree: input.preflight.candidateTree,
+    pullRequestMergeMethod: input.preflight.pullRequestMergeMethod ?? "merge",
+    baseTreeMatchesCandidate: input.preflight.baseTreeMatchesCandidate === true,
+    baseParents: input.preflight.baseParents ?? [],
+    baseParentMatchesSessionStart: input.preflight.baseParentMatchesSessionStart === true,
   };
   return crypto.createHash("sha256").update(JSON.stringify(material)).digest("hex");
 }

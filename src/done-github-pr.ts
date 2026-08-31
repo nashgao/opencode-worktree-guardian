@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { assertReferenceTransactionHookSafe, controlledGitEnvironment, GUARDIAN_SUBPROCESS_TIMEOUT_MS } from "./git-process.ts";
 import { isRecordLike } from "./types.ts";
+import type { GuardianPullRequestMergeMethod } from "./types.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -14,6 +15,14 @@ export type PullRequestInfo = {
   readonly url: string;
   readonly headRefName: string;
   readonly headRefOid: string | null;
+};
+
+type MergePullRequestInput = {
+  readonly repoRoot: string;
+  readonly pr: PullRequestInfo;
+  readonly head: string;
+  readonly allowAdminBypass: boolean;
+  readonly pullRequestMergeMethod: GuardianPullRequestMergeMethod;
 };
 
 function outputText(value: unknown): string {
@@ -121,9 +130,9 @@ export async function getOrCreatePullRequest(repoRoot: string, branch: string, b
   return { ok: true, pr: created.pr, created: true };
 }
 
-export async function mergePullRequest(repoRoot: string, pr: PullRequestInfo, head: string, allowAdminBypass: boolean): Promise<{ readonly ok: true } | { readonly ok: false; readonly result: Record<string, unknown> }> {
+export async function mergePullRequest(input: MergePullRequestInput): Promise<{ readonly ok: true } | { readonly ok: false; readonly result: Record<string, unknown> }> {
   try {
-    await assertReferenceTransactionHookSafe(repoRoot);
+    await assertReferenceTransactionHookSafe(input.repoRoot);
   } catch (error) {
     return {
       ok: false,
@@ -131,24 +140,25 @@ export async function mergePullRequest(repoRoot: string, pr: PullRequestInfo, he
         ok: false,
         status: "blocked",
         reason: "Guardian refuses PR merge while the reference-transaction policy is indeterminate or executable",
-        pr,
+        pr: input.pr,
         error: errorMessage(error),
       },
     };
   }
-  const args = ["pr", "merge", String(pr.number), "--merge", "--match-head-commit", head];
-  if (allowAdminBypass) args.push("--admin");
-  const merged = await runGh(repoRoot, args);
+  const args = ["pr", "merge", String(input.pr.number), `--${input.pullRequestMergeMethod}`, "--match-head-commit", input.head];
+  if (input.allowAdminBypass) args.push("--admin");
+  const merged = await runGh(input.repoRoot, args);
   if (merged.ok) return { ok: true };
   return {
     ok: false,
     result: {
       ok: false,
-      status: allowAdminBypass ? "blocked" : "waiting",
+      status: input.allowAdminBypass ? "blocked" : "waiting",
       reason: "gh pr merge did not complete; Guardian will not clean up until the PR is landed",
-      pr,
+      pr: input.pr,
       gh: merged,
-      adminBypass: allowAdminBypass,
+      adminBypass: input.allowAdminBypass,
+      pullRequestMergeMethod: input.pullRequestMergeMethod,
     },
   };
 }

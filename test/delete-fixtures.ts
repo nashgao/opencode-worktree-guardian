@@ -109,6 +109,9 @@ type FakeGhOptions = {
   readonly existingPr?: boolean;
   readonly mergeFails?: boolean;
   readonly expectAdmin?: boolean;
+  readonly mergeMethod?: "merge" | "squash";
+  readonly resultMethod?: "merge" | "squash";
+  readonly autoDeleteBranch?: boolean;
 };
 
 function restoreEnv(key: string, value: string | undefined): void {
@@ -155,9 +158,15 @@ elif [ "$1" = "pr" ] && [ "\${2:-}" = "view" ]; then
   pr_view_json
 elif [ "$1" = "pr" ] && [ "\${2:-}" = "merge" ]; then
   has_admin=0
+  has_merge_method=0
   for arg in "$@"; do
     if [ "$arg" = "--admin" ]; then has_admin=1; fi
+    if [ "$arg" = "--$GUARDIAN_TEST_MERGE_METHOD" ]; then has_merge_method=1; fi
   done
+  if [ "$has_merge_method" != "1" ]; then
+    echo "$GUARDIAN_TEST_MERGE_METHOD merge method was expected" >&2
+    exit 7
+  fi
   if [ "\${GUARDIAN_TEST_EXPECT_ADMIN:-0}" = "1" ] && [ "$has_admin" != "1" ]; then
     echo "admin bypass was expected" >&2
     exit 8
@@ -171,8 +180,17 @@ elif [ "$1" = "pr" ] && [ "\${2:-}" = "merge" ]; then
     exit 4
   fi
   git -C "$GUARDIAN_TEST_REPO" checkout main >/dev/null
-  git -C "$GUARDIAN_TEST_REPO" merge --ff-only "$GUARDIAN_TEST_BRANCH" >/dev/null
+  if [ "$GUARDIAN_TEST_RESULT_METHOD" = "squash" ]; then
+    git -C "$GUARDIAN_TEST_REPO" merge --squash "$GUARDIAN_TEST_BRANCH" >/dev/null
+    git -C "$GUARDIAN_TEST_REPO" commit -m "squash merged pull request" >/dev/null
+  else
+    git -C "$GUARDIAN_TEST_REPO" merge --ff-only "$GUARDIAN_TEST_BRANCH" >/dev/null
+  fi
   git -C "$GUARDIAN_TEST_REPO" push origin main >/dev/null
+  if [ "\${GUARDIAN_TEST_AUTO_DELETE_BRANCH:-0}" = "1" ]; then
+    remote_path="$(git -C "$GUARDIAN_TEST_REPO" remote get-url origin)"
+    git --git-dir="$remote_path" update-ref -d "refs/heads/$GUARDIAN_TEST_BRANCH"
+  fi
 else
   echo "unexpected gh invocation: $*" >&2
   exit 2
@@ -193,6 +211,9 @@ fi
     GUARDIAN_TEST_PR_URL: process.env.GUARDIAN_TEST_PR_URL,
     GUARDIAN_TEST_MERGE_FAILS: process.env.GUARDIAN_TEST_MERGE_FAILS,
     GUARDIAN_TEST_EXPECT_ADMIN: process.env.GUARDIAN_TEST_EXPECT_ADMIN,
+    GUARDIAN_TEST_MERGE_METHOD: process.env.GUARDIAN_TEST_MERGE_METHOD,
+    GUARDIAN_TEST_RESULT_METHOD: process.env.GUARDIAN_TEST_RESULT_METHOD,
+    GUARDIAN_TEST_AUTO_DELETE_BRANCH: process.env.GUARDIAN_TEST_AUTO_DELETE_BRANCH,
   };
   process.env.PATH = `${binDir}${path.delimiter}${process.env.PATH ?? ""}`;
   process.env.GUARDIAN_TEST_REPO = options.repo;
@@ -204,6 +225,9 @@ fi
   process.env.GUARDIAN_TEST_PR_URL = url;
   process.env.GUARDIAN_TEST_MERGE_FAILS = options.mergeFails === true ? "1" : "0";
   process.env.GUARDIAN_TEST_EXPECT_ADMIN = options.expectAdmin === true ? "1" : "0";
+  process.env.GUARDIAN_TEST_MERGE_METHOD = options.mergeMethod ?? "merge";
+  process.env.GUARDIAN_TEST_RESULT_METHOD = options.resultMethod ?? options.mergeMethod ?? "merge";
+  process.env.GUARDIAN_TEST_AUTO_DELETE_BRANCH = options.autoDeleteBranch === true ? "1" : "0";
   t.after(() => {
     for (const [key, value] of Object.entries(originalEnv)) restoreEnv(key, value);
   });

@@ -13,6 +13,8 @@ node <adapter-path> tool guardian_done '{"mode":"plan"}'
 
 Inspect the selected lane, dirty files, blockers, and cleanup preview. Only after explicit user confirmation, continue with the same plan options plus `confirm: true`; the adapter may reuse a matching plan token, but a token never authorizes apply and the adapter never creates confirmation. Include an explicit `commitMessage` when Guardian needs to commit dirty work. Add `allowAdminBypass: true` only when the user explicitly approves a branch-protection bypass for that run.
 
+For session landing, repo config `pullRequestMergeMethod` defaults to `merge`; linear-history repositories may opt into `squash`. Guardian token-binds the selected method and accepts cleanup only after the matching exact base transition proof succeeds.
+
 `guardian_done` resolves the target from repo-wide inventory, not from whichever cwd Codex happens to be in. Bare `guardian_done` auto-selects exactly one dirty implementation target. If multiple dirty targets exist, stop on `needs-selection` and rerun the exact `primary=true`, `sessionId=...`, or `branch=...` option shown in the output. Use explicit `primary=true`, `sessionId=...`, or `branch=...` from any cwd when the user already selected the target.
 
 Terminal reattach and stale cleanup are plan-only handoffs. Treat an old terminal id as metadata; only confirmed apply may establish pending-to-active proof. Treat absent empty-lease reconciliation as native evidence, not cleanup authority. For advanced state-only retirement, preserve the branch/proof or report pending proof absent; do no sync, postflight, or deletion, and obtain a fresh plan before another tool acts.

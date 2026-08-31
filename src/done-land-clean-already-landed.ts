@@ -3,6 +3,7 @@ import { createSessionLandCleanConfirmToken } from "./done-land-clean-consent.ts
 import type { SuccessfulLandCleanPreflight } from "./done-land-clean-consent.ts";
 import { cleanupLandedSession, postFinishMaintenance, withMaintenanceOutcome } from "./done-land-clean-maintenance.ts";
 import type { LandCleanContext } from "./done-land-clean.ts";
+import { buildSafetyRef } from "./git.ts";
 
 function blocked(reason: string, extra: Record<string, unknown> = {}): Record<string, unknown> {
   return { ok: false, status: "blocked", reason, ...extra };
@@ -13,6 +14,8 @@ function stashInventory(preflight: SuccessfulLandCleanPreflight): Pick<Successfu
 }
 
 export async function planAlreadyLandedCleanup(context: LandCleanContext, preflight: SuccessfulLandCleanPreflight, baseRef: string): Promise<Record<string, unknown>> {
+  const squashEquivalent = preflight.pullRequestMergeMethod === "squash" && !preflight.headIsAncestorOfBase && preflight.baseTreeMatchesCandidate && preflight.baseParentMatchesSessionStart;
+  const ancestryBaseRef = squashEquivalent ? `${preflight.remote}/${preflight.branch}` : baseRef;
   const cleanup = await guardianDeleteWorktree({
     repoRoot: context.repoRoot,
     cwd: context.repoRoot,
@@ -21,7 +24,7 @@ export async function planAlreadyLandedCleanup(context: LandCleanContext, prefli
     deleteBranch: true,
     allowIgnoredFiles: context.input.allowIgnoredFiles === true,
     allowRedundantDirtyPaths: true,
-    ancestryBaseRef: baseRef,
+    ancestryBaseRef,
     timestamp: context.input.timestamp,
     config: context.config,
   });
@@ -45,9 +48,13 @@ export async function planAlreadyLandedCleanup(context: LandCleanContext, prefli
 }
 
 export async function applyAlreadyLandedCleanup(context: LandCleanContext, preflight: SuccessfulLandCleanPreflight, baseRef: string): Promise<Record<string, unknown>> {
-  const cleanup = await cleanupLandedSession(context, "session commit is already reachable from the remote base branch", { allowRedundantDirtyPaths: true, ancestryBaseRef: baseRef, ignoredFiles: preflight.ignoredFiles, ignoredFileFingerprint: preflight.ignoredFileFingerprint });
+  const squashEquivalent = preflight.pullRequestMergeMethod === "squash" && !preflight.headIsAncestorOfBase && preflight.baseTreeMatchesCandidate && preflight.baseParentMatchesSessionStart;
+  const ancestryBaseRef = squashEquivalent ? `${preflight.remote}/${preflight.branch}` : baseRef;
+  const remoteBranchCleanup = squashEquivalent ? { remote: preflight.remote, remoteBranch: preflight.branch, head: preflight.head, safetyRef: buildSafetyRef("remote-branch-cleanup", `${preflight.remote}/${preflight.branch}`, preflight.baseRefOid) } : undefined;
+  const cleanup = await cleanupLandedSession(context, "approved session content is already present on the remote base branch", { allowRedundantDirtyPaths: true, ancestryBaseRef, ignoredFiles: preflight.ignoredFiles, ignoredFileFingerprint: preflight.ignoredFileFingerprint, remoteBranchCleanup });
   if (cleanup.ok !== true) return { ...cleanup, ...stashInventory(preflight) };
-  const maintenance = await postFinishMaintenance(context, [{ commit: preflight.head, source: preflight.branch, reason: "landed session commit must be present on final base" }]);
+  const landedCommit = squashEquivalent ? preflight.baseRefOid : preflight.head;
+  const maintenance = await postFinishMaintenance(context, [{ commit: landedCommit, source: preflight.branch, reason: "verified landed session content must remain present on the final base" }]);
   return withMaintenanceOutcome({
     ok: true,
     status: "already-landed-and-cleaned",
@@ -58,6 +65,7 @@ export async function applyAlreadyLandedCleanup(context: LandCleanContext, prefl
     stashCount: preflight.stashCount,
     stashes: preflight.stashes,
     baseRef,
+    pullRequestMergeMethod: preflight.pullRequestMergeMethod,
     cleanup,
     worktreeRemoved: cleanup.worktreeRemoved === true,
     branchDeleted: cleanup.branchDeleted === true,

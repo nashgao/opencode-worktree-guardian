@@ -1,4 +1,4 @@
-import type { GuardianConfig, GuardianGoalConfig, GuardianGoalHygieneCompletion } from "./types.ts";
+import type { GuardianConfig, GuardianGoalConfig, GuardianGoalHygieneCompletion, GuardianPullRequestMergeMethod } from "./types.ts";
 
 export type NormalizedGuardianGoalConfig = Omit<GuardianGoalConfig, "hygieneCompletion"> & {
   readonly hygieneCompletion: GuardianGoalHygieneCompletion;
@@ -6,4 +6,5 @@ export type NormalizedGuardianGoalConfig = Omit<GuardianGoalConfig, "hygieneComp
 
 export type NormalizedGuardianConfig = GuardianConfig & {
   readonly goal: NormalizedGuardianGoalConfig;
+  readonly pullRequestMergeMethod: GuardianPullRequestMergeMethod;
 };
