@@ -12,6 +12,7 @@
   },
   "files": [
     "CHANGELOG.md",
+    "DESIGN.md",
     "codex",
     "commands",
     "docs",

@@ -298,7 +298,7 @@ test("Given timestamped observed events, when selecting Timeline or Swimlanes, t
   assert.match(document.getElementById("topology-stage")?.textContent ?? "", /State.*Branch.*Path.*HEAD.*Owner\/activity.*Action/);
 });
 
-test("Given dense timestamped events, when rendering Timeline, then labels occupy staggered rows while every marker remains present", () => {
+test("Given dense timestamped events, when rendering Timeline, then every marker stays on an observed-worktree row", () => {
   // Given
   const events = Array.from({ length: 12 }, (_, index) => ({ kind: `event-${index}`, sessionId: index % 2 === 0 ? "ses_a" : "ses_b", at: `2026-08-13T12:${String(index).padStart(2, "0")}:00.000Z`, action: null }));
   const { document } = runtime(events);
@@ -310,9 +310,8 @@ test("Given dense timestamped events, when rendering Timeline, then labels occup
 
   // Then
   assert.equal(document.query("[data-topology-event]").length, events.length);
-  assert.match(OPERATIONS_CENTER_CONTROLLER, /const labelEvery = Math\.max\(1, Math\.ceil\(events\.length \/ 4\)\)/);
-  assert.match(OPERATIONS_CENTER_CONTROLLER, /const labelRow = Math\.floor\(index \/ labelEvery\) % 3/);
-  assert.match(OPERATIONS_CENTER_CONTROLLER, /132 - labelRow \* 28/);
+  assert.equal(document.query("[class]").filter((element) => element.getAttribute("class") === "topology-timeline-row-bg").length, 2);
+  for (const event of events) assert.ok(document.query("[data-topology-event]").some((element) => element.textContent.includes(event.at)));
 });
 
 test("Given a pan-capable topology mode, when dragging, zooming, and resetting, then viewport state persists and non-pan modes stay static", () => {
@@ -429,7 +428,7 @@ test("Given dense Swimlanes, when rendering five or twenty-five observed worktre
     assert.equal(document.query("[class]").filter((element) => element.getAttribute("class") === "topology-swimlane").length, worktreeCount);
     const drawing = document.query("[role]").find((element) => element.getAttribute("role") === "group" && element.getAttribute("aria-label")?.startsWith("swimlanes"));
     assert.ok(drawing);
-    assert.match(drawing.getAttribute("viewBox") ?? "", new RegExp(`0 0 800 ${(worktreeCount * 64) + 104}`));
+    assert.match(drawing.getAttribute("viewBox") ?? "", new RegExp(`0 0 800 ${Math.max(720, (worktreeCount * 90) + 150)}`));
     assert.match(document.getElementById("topology-stage")?.textContent ?? "", /Unavailable: no timestamped observed events/);
   }
 });
@@ -446,7 +445,7 @@ test("Given a dense GitTree, when rendering twenty-five observed worktrees, then
   // Then
   const drawing = document.query("[role]").find((element) => element.getAttribute("role") === "group" && element.getAttribute("aria-label")?.startsWith("gittree"));
   assert.ok(drawing);
-  assert.match(drawing.getAttribute("viewBox") ?? "", /0 0 800 488/);
+  assert.match(drawing.getAttribute("viewBox") ?? "", /0 0 800 1020/);
   assert.equal(document.query("[role]").filter((element) => element.id.startsWith("topology-option-") && element.getAttribute("role") === "button").length, 25);
 });
 
@@ -526,19 +525,33 @@ test("Given dense radial topologies, when rendering radar and sunburst, then sho
     assert.equal(nodes.length, 25);
     assert.ok(labels.length <= 8);
     for (const node of nodes) assert.match(node.getAttribute("aria-label") ?? "", /guardian\/.*select observed worktree/);
+    if (mode === "radar") {
+      assert.equal(document.query("[class]").filter((element) => element.getAttribute("class") === "topology-radar-ring").length, 5);
+      assert.equal(document.query("[class]").filter((element) => element.getAttribute("class") === "topology-radar-axis").length, 6);
+    } else {
+      assert.equal(document.query("[class]").filter((element) => element.getAttribute("class")?.startsWith("topology-sunburst-sector ")).length, 24);
+      assert.equal(document.query("[class]").filter((element) => element.getAttribute("class") === "topology-sunburst-ring").length, 4);
+    }
   }
-  assert.match(OPERATIONS_CENTER_CONTROLLER, /topologyNode = \(viewport, items, worktree, x, y, labelOffset = 0, maxLabels = 12\)/);
-  assert.match(OPERATIONS_CENTER_CONTROLLER, /topologyNode\(viewport, items, item, 400 \+ Math\.cos\(angle\) \* 105, 160 \+ Math\.sin\(angle\) \* 105, 0, 8\)/);
-  assert.match(OPERATIONS_CENTER_CONTROLLER, /topologyNode\(viewport, items, item, 400 \+ Math\.cos\(\(start \+ end\) \/ 2\) \* 74, 155 \+ Math\.sin\(\(start \+ end\) \/ 2\) \* 74, 0, 8\)/);
 });
 
-test("Given the Metro topology, when positioning node labels and the trunk, then their baselines remain separate", () => {
+test("Given the Metro topology, when rendering observed worktrees, then the trunk, curved branch, station, and lifecycle pill remain distinct", () => {
+  // Given
+  const { document } = runtime();
+  const metro = document.query("[data-topology-mode]").find((button) => button.getAttribute("data-topology-mode") === "metro");
+  assert.ok(metro);
+
+  // When
+  metro.dispatch(new RuntimeEvent("click", metro));
+
   // Then
-  assert.match(OPERATIONS_CENTER_CONTROLLER, /topology-metro-trunk", 70, 180, 730, 180/);
-  assert.match(OPERATIONS_CENTER_CONTROLLER, /topology-metro-connector", x, 180, x, 130/);
-  assert.match(OPERATIONS_CENTER_CONTROLLER, /topologyNode\(viewport, items, item, x, 130, 22\)/);
-  assert.match(OPERATIONS_CENTER_CONTROLLER, /text\.setAttribute\("x", String\(x \+ labelOffset\)\)/);
-  assert.doesNotMatch(OPERATIONS_CENTER_CONTROLLER, /topology-metro-trunk", 70, 155, 730, 155/);
+  const trunk = document.query("[class]").find((element) => element.getAttribute("class") === "topology-metro-trunk");
+  const branch = document.query("[class]").find((element) => element.getAttribute("class")?.startsWith("topology-metro-branch "));
+  assert.equal(trunk?.getAttribute("y1"), "360");
+  assert.equal(trunk?.getAttribute("y2"), "360");
+  assert.match(branch?.getAttribute("d") ?? "", /^M.*C/);
+  assert.equal(document.query("[class]").filter((element) => element.getAttribute("class")?.startsWith("topology-metro-station ")).length, 1);
+  assert.equal(document.query("[class]").filter((element) => element.getAttribute("class")?.startsWith("topology-lifecycle-pill ")).length, 1);
 });
 
 test("Given unordered, repeated, unmatched, and unavailable observed events, when rendering topology modes, then event facts, selection, and keyboard pan remain complete", () => {
@@ -570,7 +583,7 @@ test("Given unordered, repeated, unmatched, and unavailable observed events, whe
 
   // Then
   assert.match(document.getElementById("topology-stage")?.textContent ?? "", /Session.*Kind.*Timestamp.*Action\/availability.*ses_missing.*Unavailable/);
-  assert.match(OPERATIONS_CENTER_CONTROLLER, /Observed sequence; spacing does not represent elapsed duration/);
+  assert.match(OPERATIONS_CENTER_CONTROLLER, /Only observed timestamps are positioned; lifecycle intervals are never inferred/);
   assert.match(panned ?? "", /translate\(24,0\)/);
   assert.equal(reset, "translate(0,0) scale(1)");
   assert.equal(document.getElementById("topology-terminal-option-a")?.getAttribute("aria-pressed"), "true");

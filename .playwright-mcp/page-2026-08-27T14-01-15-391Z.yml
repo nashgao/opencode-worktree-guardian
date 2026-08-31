@@ -1,0 +1,70 @@
+- generic [ref=f4e2]:
+  - banner [ref=f4e3]:
+    - generic [ref=f4e4]:
+      - generic [ref=f4e5]: Worktree Lifecycle Map
+      - heading "Git Topology" [level=1] [ref=f4e6]
+    - link "← All visualizations" [ref=f4e7] [cursor=pointer]:
+      - /url: worktree-visualizations.html
+  - paragraph [ref=f4e8]:
+    - text: "A multi-style view of worktrees: where they branched from"
+    - code [ref=f4e9]: main
+    - text: ", how they evolved, which are running in parallel, and how stale each HEAD is."
+  - generic [ref=f4e10]:
+    - button "Metro Map" [ref=f4e11] [cursor=pointer]
+    - button "Radar Scope" [ref=f4e12] [cursor=pointer]
+    - button "Timeline" [ref=f4e13] [cursor=pointer]
+    - button "Git Tree" [ref=f4e14] [cursor=pointer]
+    - button "Sunburst" [ref=f4e15] [cursor=pointer]
+    - button "Swimlanes" [ref=f4e16] [cursor=pointer]
+    - button "Terminal" [ref=f4e17] [cursor=pointer]
+  - generic [ref=f4e18]:
+    - generic [ref=f4e19]:
+      - generic [ref=f4e20]:
+        - button "+" [ref=f4e21] [cursor=pointer]
+        - button "−" [ref=f4e22] [cursor=pointer]
+        - button "⌖" [ref=f4e23] [cursor=pointer]
+      - img [ref=f4e24]:
+        - generic [ref=f4e25]:
+          - generic [ref=f4e26]:
+            - generic [ref=f4e28]: 9a8b7c6
+            - generic [ref=f4e29]: 2026-06-14
+            - generic [ref=f4e31]: 3c4d5e6
+            - generic [ref=f4e32]: 2026-06-15
+            - generic [ref=f4e34]: 1a2b3c4
+            - generic [ref=f4e35]: 2026-06-16
+            - generic [ref=f4e37]: 2b3c4d5
+            - generic [ref=f4e38]: 2026-06-17
+            - generic [ref=f4e40]: 4a2e8f9
+            - generic [ref=f4e41]: 2026-06-20
+          - generic [ref=f4e43]: auth-refactor
+          - generic [ref=f4e44] [cursor=pointer]
+          - generic [ref=f4e46] [cursor=pointer]
+          - generic [ref=f4e48] [cursor=pointer]: active
+          - generic [ref=f4e52]: payment-race
+          - generic [ref=f4e53] [cursor=pointer]
+          - generic [ref=f4e55] [cursor=pointer]
+          - generic [ref=f4e57] [cursor=pointer]: active
+          - generic [ref=f4e60] [cursor=pointer]: preserved
+          - generic [ref=f4e64]: update-readme
+          - generic [ref=f4e65] [cursor=pointer]
+          - generic [ref=f4e70] [cursor=pointer]
+          - generic [ref=f4e72] [cursor=pointer]: active
+          - generic [ref=f4e75] [cursor=pointer]: finished
+          - generic [ref=f4e78] [cursor=pointer]: orphaned
+          - generic [ref=f4e82]: hotfix-july
+          - generic [ref=f4e83] [cursor=pointer]
+          - generic [ref=f4e88] [cursor=pointer]
+          - generic [ref=f4e90] [cursor=pointer]: no state
+          - generic [ref=f4e93] [cursor=pointer]
+          - generic [ref=f4e95]: main
+          - generic [ref=f4e96]: 2 parallel active
+    - generic [ref=f4e99]:
+      - heading "Lines" [level=2] [ref=f4e100]
+      - generic [ref=f4e101]:
+        - generic [ref=f4e102] [cursor=pointer]: main
+        - generic [ref=f4e105] [cursor=pointer]: feature/auth-refactor
+        - generic [ref=f4e108] [cursor=pointer]: fix/payment-race
+        - generic [ref=f4e111] [cursor=pointer]: docs/update-readme
+        - generic [ref=f4e114] [cursor=pointer]: fix/hotfix-july
+      - paragraph [ref=f4e118]: Hover or click an element to inspect.
+      - paragraph [ref=f4e119]: Scroll or drag the map to pan/zoom. Trains run on active branches.
