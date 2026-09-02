@@ -85,8 +85,8 @@ function emptyDirectoryLimit(input: Record<string, unknown>, key: "emptyDirector
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : fallback;
 }
 
-function emptyDirectoryFinding(directory: string): FilesystemOnlyEmptyDirectory {
-  const known = knownCleanableMatch(directory);
+function emptyDirectoryFinding(directory: string, repoRoot?: string): FilesystemOnlyEmptyDirectory {
+  const known = knownCleanableMatch(directory, repoRoot);
   return known
     ? { path: directory, classification: "known-cleanable", reason: known.reason, source: "filesystem empty-directory scan" }
     : { path: directory, classification: "reviewable", reason: "filesystem-only empty directory requires review", source: "filesystem empty-directory scan" };
@@ -162,7 +162,7 @@ export async function scanWorkspaceHygiene(input: Record<string, unknown> = {}):
         }
         continue;
       }
-      const knownMatch = knownCleanableMatch(relative);
+      const knownMatch = knownCleanableMatch(relative, repoRoot);
       if (knownMatch) {
         const key = `known-cleanable:${knownMatch.path}`;
         if (!seenFindings.has(key)) {
@@ -191,7 +191,7 @@ export async function scanWorkspaceHygiene(input: Record<string, unknown> = {}):
       }
       reviewableCandidateInputs.push({ path: relative, status: candidate.status });
     }
-    const filesystemOnlyEmptyDirectories = emptyDirectoryScan.directories.map(emptyDirectoryFinding);
+    const filesystemOnlyEmptyDirectories = emptyDirectoryScan.directories.map((directory) => emptyDirectoryFinding(directory, repoRoot));
     for (const directory of filesystemOnlyEmptyDirectories) {
       const key = `filesystem-only-empty-directory:${directory.path}`;
       if (!seenFindings.has(key)) {
