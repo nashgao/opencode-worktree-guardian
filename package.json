@@ -44,6 +44,7 @@
   },
   "dependencies": {
     "@opencode-ai/plugin": "^1.14.48",
+    "picomatch": "^4.0.7",
     "tsx": "^4.22.4",
     "zod": "^4.4.3"
   },
