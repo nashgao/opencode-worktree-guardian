@@ -70,6 +70,7 @@
   ],
   "devDependencies": {
     "@types/node": "^25.7.0",
+    "@types/picomatch": "^4.0.3",
     "typescript": "^6.0.3"
   },
   "types": "./src/index.ts",

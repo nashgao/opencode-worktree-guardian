@@ -2,8 +2,10 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { compareCodeUnits } from "./code-unit-order.ts";
 import { expandWorktreeRoot, loadConfig } from "./config.ts";
-import { knownCleanableMatch } from "./hygiene-classification.ts";
+import { alwaysKeepMatch, knownCleanableMatch } from "./hygiene-classification.ts";
 import type { HygieneCategory, HygieneSeverity } from "./hygiene-classification.ts";
+import { loadGuardianConfig } from "./hygiene-config.ts";
+import type { GuardianConfig as GuardianHygieneConfig } from "./hygiene-config.ts";
 import { getRepoRoot, listWorktrees, runGitNullSeparated, tryGit } from "./git.ts";
 import { isEnoent, isSameOrInside, relativePath } from "./filesystem-boundaries.ts";
 import { listCandidatePaths } from "./hygiene-candidates.ts";
@@ -85,8 +87,13 @@ function emptyDirectoryLimit(input: Record<string, unknown>, key: "emptyDirector
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : fallback;
 }
 
-function emptyDirectoryFinding(directory: string, repoRoot?: string): FilesystemOnlyEmptyDirectory {
-  const known = knownCleanableMatch(directory, repoRoot);
+function containsAlwaysKeptPath(repoRoot: string, cleanupRoot: string, alwaysKeptPaths: readonly string[]): boolean {
+  const absoluteRoot = path.resolve(repoRoot, cleanupRoot);
+  return alwaysKeptPaths.some((retainedPath) => isSameOrInside(path.resolve(repoRoot, retainedPath), absoluteRoot));
+}
+
+function emptyDirectoryFinding(directory: string, repoRoot: string, config: GuardianHygieneConfig | null, alwaysKeptPaths: readonly string[]): FilesystemOnlyEmptyDirectory {
+  const known = containsAlwaysKeptPath(repoRoot, directory, alwaysKeptPaths) ? null : knownCleanableMatch(directory, undefined, config);
   return known
     ? { path: directory, classification: "known-cleanable", reason: known.reason, source: "filesystem empty-directory scan" }
     : { path: directory, classification: "reviewable", reason: "filesystem-only empty directory requires review", source: "filesystem empty-directory scan" };
@@ -107,6 +114,7 @@ export async function scanWorkspaceHygiene(input: Record<string, unknown> = {}):
   try {
     const cwd = typeof input.cwd === "string" ? input.cwd : typeof input.repoRoot === "string" ? input.repoRoot : process.cwd();
     const repoRoot = typeof input.repoRoot === "string" ? input.repoRoot : await getRepoRoot(cwd);
+    const hygieneConfig = loadGuardianConfig(repoRoot);
     const loadedConfig = input.config && typeof input.config === "object" ? { config: input.config as Record<string, string> } : await loadConfig(repoRoot);
     const config = loadedConfig.config;
     const protectedPaths = protectedPathsFromConfig(config);
@@ -131,6 +139,8 @@ export async function scanWorkspaceHygiene(input: Record<string, unknown> = {}):
         return protectedSeedForRelative({ repoRoot, relative, protectedPaths, protectedRoots })?.reason ?? null;
       },
     });
+    const alwaysKeptPaths = [...candidates.map((candidate) => candidate.path), ...emptyDirectoryScan.directories]
+      .filter((candidate) => alwaysKeepMatch(candidate, hygieneConfig));
     const existingProtectedPaths: string[] = [];
     for (const protectedPath of protectedPaths) {
       if (await pathKind(path.resolve(repoRoot, protectedPath)) !== "missing") existingProtectedPaths.push(protectedPath);
@@ -141,7 +151,10 @@ export async function scanWorkspaceHygiene(input: Record<string, unknown> = {}):
         existingProtectedRoots.push(relativePath(repoRoot, protectedRoot));
       }
     }
-    const protectedRootResult = collectProtectedRoots(repoRoot, PROTECTED_INVENTORY_MAX_ROOTS, () => replayProtectedSeeds({ repoRoot, protectedPaths, protectedRoots, candidates, exclusions: emptyDirectoryScan.excluded, existingProtectedPaths, existingProtectedRoots }));
+    const protectedRootResult = collectProtectedRoots(repoRoot, PROTECTED_INVENTORY_MAX_ROOTS, () => [
+      ...replayProtectedSeeds({ repoRoot, protectedPaths, protectedRoots, candidates, exclusions: emptyDirectoryScan.excluded, existingProtectedPaths, existingProtectedRoots }),
+      ...alwaysKeptPaths.map((retainedPath) => ({ path: retainedPath, reason: "matched .guardian.json alwaysKeep pattern" })),
+    ]);
     for (const candidate of candidates) {
       const absolutePath = path.resolve(repoRoot, candidate.path);
       const relative = relativePath(repoRoot, absolutePath);
@@ -162,8 +175,12 @@ export async function scanWorkspaceHygiene(input: Record<string, unknown> = {}):
         }
         continue;
       }
-      const knownMatch = knownCleanableMatch(relative, repoRoot);
+      const knownMatch = knownCleanableMatch(relative, undefined, hygieneConfig);
       if (knownMatch) {
+        if (containsAlwaysKeptPath(repoRoot, knownMatch.path, alwaysKeptPaths)) {
+          reviewableCandidateInputs.push({ path: relative, status: candidate.status });
+          continue;
+        }
         const key = `known-cleanable:${knownMatch.path}`;
         if (!seenFindings.has(key)) {
           findings.push({ path: knownMatch.path, category: "known-cleanable" satisfies HygieneCategory, severity: "warn" satisfies HygieneSeverity, reason: knownMatch.reason, source: "git ls-files --others/--ignored" });
@@ -191,8 +208,9 @@ export async function scanWorkspaceHygiene(input: Record<string, unknown> = {}):
       }
       reviewableCandidateInputs.push({ path: relative, status: candidate.status });
     }
-    const filesystemOnlyEmptyDirectories = emptyDirectoryScan.directories.map((directory) => emptyDirectoryFinding(directory, repoRoot));
+    const filesystemOnlyEmptyDirectories = emptyDirectoryScan.directories.map((directory) => emptyDirectoryFinding(directory, repoRoot, hygieneConfig, alwaysKeptPaths));
     for (const directory of filesystemOnlyEmptyDirectories) {
+      if (containsAlwaysKeptPath(repoRoot, directory.path, alwaysKeptPaths)) continue;
       const key = `filesystem-only-empty-directory:${directory.path}`;
       if (!seenFindings.has(key)) {
         findings.push({ path: directory.path, category: "filesystem-only-empty-directory" satisfies HygieneCategory, classification: directory.classification, severity: "warn" satisfies HygieneSeverity, reason: directory.reason, source: directory.source });

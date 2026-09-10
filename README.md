@@ -50,6 +50,8 @@ Do not put `opencode-worktree-guardian/server` or `opencode-worktree-guardian/tu
 
 Repo-local config lives at `.opencode/worktree-guardian.json`. The current supported OpenCode/plugin API baseline is OpenCode `1.14.48` with `@opencode-ai/plugin` `^1.14.48`. A new repo does not need a config file before Guardian is safe: Guardian uses the same defaults in memory and `guardian_status` reports that defaults are active. Run `guardian_init` when you want to write the editable repo config file.
 
+Optional hygiene classification overrides live separately at repository-root `.guardian.json`. Its strict shape is `{ "hygiene": { "knownCleanable": ["repo-relative/**"], "alwaysKeep": ["repo-relative/retained/**"] } }`; patterns use picomatch semantics and include dotfiles. With no file, Guardian preserves its built-in classifications. `knownCleanable` can approve additional paths, while `alwaysKeep` takes precedence over configured and built-in cleanup, including cleanup ancestors that contain a matching retained path and filesystem-only empty-directory cleanup. Guardian re-reads this file for every scan, plan, and apply. Invalid JSON, an invalid schema, an unreadable file, or a symlinked policy fails the hygiene operation closed instead of falling back to cleanup defaults. Evidence, image, preview, and report names such as root-level images, `.previews`, `.playwright-mcp`, and `e2e-test-report` remain reviewable unless explicitly approved by `knownCleanable`.
+
 ```json
 {
   "remote": "origin",

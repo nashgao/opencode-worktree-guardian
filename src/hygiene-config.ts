@@ -1,45 +1,40 @@
-import { readFileSync } from "node:fs";
-import { createRequire } from "node:module";
+import { lstatSync, readFileSync } from "node:fs";
 import path from "node:path";
+import picomatch from "picomatch";
+import { z } from "zod";
+import { errorCode } from "./types.ts";
 
-const require = createRequire(import.meta.url);
-const picomatch = require("picomatch") as { isMatch(str: string, pattern: string | string[], options?: { dot?: boolean }): boolean };
+const GuardianHygieneConfigSchema = z.object({
+  knownCleanable: z.array(z.string().min(1)).readonly().optional(),
+  alwaysKeep: z.array(z.string().min(1)).readonly().optional(),
+}).strict().readonly();
 
-export interface GuardianHygieneConfig {
-  knownCleanable?: string[];
-  alwaysKeep?: string[];
-}
+const GuardianConfigSchema = z.object({ hygiene: GuardianHygieneConfigSchema.optional() }).strict().readonly();
 
-export interface GuardianConfig {
-  hygiene?: GuardianHygieneConfig;
-}
+export type GuardianHygieneConfig = z.infer<typeof GuardianHygieneConfigSchema>;
+export type GuardianConfig = z.infer<typeof GuardianConfigSchema>;
 
-const configCache = new Map<string, GuardianConfig | null>();
+export class GuardianHygieneConfigError extends Error {
+  override readonly name = "GuardianHygieneConfigError";
 
-export function loadGuardianConfig(repoRoot: string): GuardianConfig | null {
-  const cached = configCache.get(repoRoot);
-  if (cached !== undefined) return cached;
-
-  const configPath = path.join(repoRoot, ".guardian.json");
-  try {
-    const content = readFileSync(configPath, "utf8");
-    const parsed = JSON.parse(content) as GuardianConfig;
-    configCache.set(repoRoot, parsed);
-    return parsed;
-  } catch (error: unknown) {
-    const code = error && typeof error === "object" && "code" in error ? (error as { code: string }).code : undefined;
-    if (code !== "ENOENT") {
-      process.stderr.write(`guardian: failed to parse .guardian.json: ${error instanceof Error ? error.message : String(error)}\n`);
-    }
-    configCache.set(repoRoot, null);
-    return null;
+  constructor(readonly configPath: string, cause: unknown) {
+    super(`invalid or unreadable hygiene config ${configPath}: ${cause instanceof Error ? cause.message : String(cause)}`, { cause });
   }
 }
 
-export function matchesConfigPattern(relative: string, patterns: string[]): boolean {
-  return picomatch.isMatch(relative, patterns, { dot: true });
+export function loadGuardianConfig(repoRoot: string): GuardianConfig | null {
+  const configPath = path.join(repoRoot, ".guardian.json");
+  try {
+    if (lstatSync(configPath).isSymbolicLink()) throw new GuardianHygieneConfigError(configPath, "symbolic links are not accepted");
+    const content = readFileSync(configPath, "utf8");
+    return GuardianConfigSchema.parse(JSON.parse(content));
+  } catch (error: unknown) {
+    if (errorCode(error) === "ENOENT") return null;
+    if (error instanceof GuardianHygieneConfigError) throw error;
+    throw new GuardianHygieneConfigError(configPath, error);
+  }
 }
 
-export function clearConfigCache(): void {
-  configCache.clear();
+export function matchesConfigPattern(relative: string, patterns: readonly string[]): boolean {
+  return patterns.some((pattern) => picomatch.isMatch(relative, pattern, { dot: true }));
 }
