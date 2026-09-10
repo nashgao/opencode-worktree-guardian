@@ -16,9 +16,11 @@ export type GuardianConfig = z.infer<typeof GuardianConfigSchema>;
 
 export class GuardianHygieneConfigError extends Error {
   override readonly name = "GuardianHygieneConfigError";
+  readonly configPath: string;
 
-  constructor(readonly configPath: string, cause: unknown) {
+  constructor(configPath: string, cause: unknown) {
     super(`invalid or unreadable hygiene config ${configPath}: ${cause instanceof Error ? cause.message : String(cause)}`, { cause });
+    this.configPath = configPath;
   }
 }
 
