@@ -1,7 +1,4 @@
 import { execFile, spawn } from "node:child_process";
-import fs from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { promisify } from "node:util";
 import { assertReferenceTransactionHookSafe, assertSafeGitGlobalOptions, controlledGitEnvironment, runGitNullSeparatedInArtifactSandbox as runGitNullSeparatedInSandbox, runGitWithEnvironment, requiresReferenceTransactionFirewall, withGitArtifactSandbox as withGitArtifactSandboxInClassifier } from "./git-command-classifier.ts";
@@ -238,21 +235,8 @@ export async function listWorktrees(repoRoot: string): Promise<WorktreeEntry[]> 
   return entries;
 }
 
-export type SnapshotWorktreeDirtOptions = { readonly parentCommit: string; readonly paths: readonly string[]; readonly message: string };
-
-export async function snapshotWorktreeDirtCommit(repoPath: string, { parentCommit, paths, message }: SnapshotWorktreeDirtOptions): Promise<string> {
-  if (paths.length === 0) throw new Error("snapshotWorktreeDirtCommit requires at least one path");
-  const tempIndex = path.join(os.tmpdir(), `guardian-snapshot-index-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-  const env = { GIT_INDEX_FILE: tempIndex, GIT_AUTHOR_NAME: "opencode-worktree-guardian", GIT_AUTHOR_EMAIL: "guardian@opencode.local", GIT_COMMITTER_NAME: "opencode-worktree-guardian", GIT_COMMITTER_EMAIL: "guardian@opencode.local" };
-  try {
-    await runGit(repoPath, ["read-tree", parentCommit], { env });
-    await runGit(repoPath, ["--literal-pathspecs", "add", "-A", "--", ...paths], { env });
-    const tree = (await runGit(repoPath, ["write-tree"], { env })).stdout;
-    return (await runGit(repoPath, ["commit-tree", tree, "-p", parentCommit, "-m", message], { env })).stdout;
-  } finally {
-    await fs.rm(tempIndex, { force: true });
-  }
-}
+export { snapshotWorktreeDirtCommit } from "./git-dirt-snapshot.ts";
+export type { SnapshotWorktreeDirtOptions } from "./git-dirt-snapshot.ts";
 
 type ReadEffectiveGitConfigOptions = { readonly pathValue?: boolean; readonly booleanValue?: boolean };
 
