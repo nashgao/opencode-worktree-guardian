@@ -1,7 +1,24 @@
+import { loadGuardianConfig, matchesConfigPattern } from "./hygiene-config.ts";
+import type { GuardianConfig } from "./hygiene-config.ts";
+
 export type HygieneSeverity = "warn" | "fail";
 export type HygieneCategory = "known-cleanable" | "nested-git" | "suspicious" | "filesystem-only-empty-directory";
 
-export function knownCleanableMatch(relative: string) {
+export function alwaysKeepMatch(relative: string, config: GuardianConfig | null): boolean {
+  const patterns = config?.hygiene?.alwaysKeep;
+  if (!patterns || patterns.length === 0) return false;
+  const parts = relative.split("/").filter(Boolean);
+  return parts.some((_part, index) => matchesConfigPattern(parts.slice(0, index + 1).join("/"), patterns));
+}
+
+export function knownCleanableMatch(relative: string, repoRoot?: string, loadedConfig?: GuardianConfig | null) {
+  const config = loadedConfig === undefined && repoRoot ? loadGuardianConfig(repoRoot) : loadedConfig;
+  if (alwaysKeepMatch(relative, config ?? null)) return null;
+  const knownCleanable = config?.hygiene?.knownCleanable;
+  if (knownCleanable && knownCleanable.length > 0 && matchesConfigPattern(relative, knownCleanable)) {
+    return { path: relative, reason: "matched .guardian.json knownCleanable pattern" };
+  }
+
   const parts = relative.split("/").filter(Boolean);
   if (parts.length === 1 && /^[^/]+\.tsv$/i.test(parts[0] ?? "")) return { path: parts[0], reason: "generated TSV artifact" };
   if (parts[0] === "data" && /^test-wal-[^/]+$/.test(parts[1] ?? "")) return { path: `data/${parts[1]}`, reason: "known test WAL scratch artifact" };
