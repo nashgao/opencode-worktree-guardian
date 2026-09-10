@@ -1,4 +1,6 @@
+import path from "node:path";
 import { expandWorktreeRoot } from "./config.ts";
+import { getDirtyFiles, listWorktrees } from "./git.ts";
 import type { MutableRecord } from "./types.ts";
 
 export function normalizeDirtyPath(value: string): string {
@@ -46,11 +48,20 @@ export function classifyDirtyFiles(dirtyFiles: readonly string[], allowDirtyPath
   return { allowedDirtyFiles, blockingDirtyFiles };
 }
 
-export function splitPrimaryDirtyFiles(dirtyFiles: readonly string[], repoRoot: string, config: MutableRecord): { readonly ignoredDirtyFiles: string[]; readonly blockingDirtyFiles: string[] } {
+export function splitPrimaryDirtyFiles(dirtyFiles: readonly string[], repoRoot: string, config: MutableRecord, registeredPaths: readonly string[] = []): { readonly ignoredDirtyFiles: string[]; readonly blockingDirtyFiles: string[] } {
   const configuredRoot = typeof config.worktreeRoot === "string" ? config.worktreeRoot : ".worktrees/$REPO";
   const guardianRoot = normalizeDirtyPath(expandWorktreeRoot(configuredRoot, repoRoot)).replace(/\/$/, "");
   const guardianRootPrefix = `${guardianRoot}/`;
-  const ignoredDirtyFiles = dirtyFiles.filter((file) => normalizeDirtyPath(file).startsWith(guardianRootPrefix));
+  const ignoredDirtyFiles = dirtyFiles.filter((file) => {
+    const normalized = normalizeDirtyPath(file).replace(/\/$/, "");
+    return normalized.startsWith(guardianRootPrefix) || registeredPaths.some((root) => normalized === root || normalized.startsWith(`${root}/`));
+  });
   const blockingDirtyFiles = dirtyFiles.filter((file) => !ignoredDirtyFiles.includes(file));
   return { ignoredDirtyFiles, blockingDirtyFiles };
+}
+
+export async function readPrimaryDirtyFiles(repoRoot: string, config: MutableRecord) {
+  const registeredPaths = (await listWorktrees(repoRoot)).map((entry) => normalizeDirtyPath(path.relative(repoRoot, entry.path)))
+    .filter((relative) => relative !== "" && relative !== ".." && !relative.startsWith("../") && !path.isAbsolute(relative));
+  return { ...splitPrimaryDirtyFiles(await getDirtyFiles(repoRoot), repoRoot, config, registeredPaths), registeredPaths };
 }

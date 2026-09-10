@@ -63,6 +63,8 @@ export function guardianTool(name: GuardianToolName, description: string, planCa
       allowMergeToBase: z.boolean().optional(),
       allowAdminBypass: z.boolean().optional(),
       allowBaseWorktreePreserveReset: z.boolean().optional(),
+      allowBaseBranchRealign: z.boolean().optional(),
+      expectedBaseHead: z.string().optional(),
       projectRoots: z.array(z.string()).optional(),
       writeReport: z.boolean().optional(),
     },

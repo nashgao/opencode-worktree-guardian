@@ -42,7 +42,7 @@ test("guardian_finish blocks a remote base advance during primary preparation be
   const pushMarker = path.join(base, "push-attempted");
   await fs.mkdir(tools);
   await fs.writeFile(path.join(tools, "git"), `#!/bin/sh
-if [ "$3" = "reset" ] && [ "$4" = "--hard" ]; then
+if [ "$3" = "--literal-pathspecs" ] && { [ "$4" = "restore" ] || [ "$4" = "clean" ]; }; then
   /usr/bin/git "$@" || exit $?
   exec /usr/bin/git -C "$GUARDIAN_RACE_UPDATER" push origin main
 fi

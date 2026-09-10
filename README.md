@@ -94,6 +94,8 @@ Stash inventory is repository-wide and advisory by default: Guardian reports it,
 
 `protectedPaths` replacement applies to distributed template entries only. `.beads` is a mandatory hard-deny path and remains protected even when omitted from repo configuration.
 
+For a divergent local base, low-level `guardian_finish` additionally requires per-call `allowBaseBranchRealign: true` with `expectedBaseHead` equal to the current full local base OID. The primary worktree must already be on the base branch. Guardian preserves its old HEAD, verifies fresh remote ancestry, realigns locally without overwriting untracked files, and merges the captured session commit before a normal non-force push. Missing or stale approval, registered-worktree collisions, and ignored-untracked collisions block. Registered nested worktrees stay untouched regardless of location. Preserved dirt is recoverable from the reported safety ref, not automatically restored over the merged tree.
+
 ## Native Tools
 
 - `guardian_start`: create or attach the session to a guardian worktree.
