@@ -1,10 +1,12 @@
 import path from "node:path";
 import type { GuardianConfig, GuardianSession } from "./types.ts";
-import { splitPrimaryDirtyFiles } from "./finish-dirty-files.ts";
+import { readPrimaryDirtyFiles } from "./finish-dirty-files.ts";
+import { inspectBaseRealignment, primaryWriteCollision } from "./finish-base-realign.ts";
+import { clearPreservedPrimaryDirt } from "./finish-primary-dirt-reset.ts";
 import { observeFreshFinishBaseLineage, recordFinishBaseLineage } from "./finish-base-lineage.ts";
 import { blocked, errorMessage, withFinishReport } from "./finish-report.ts";
 import type { FinishPreflight, GuardianFinishResult, LooseRecord } from "./finish-report.ts";
-import { createSafetyRef, deleteBranchAtHead, fetchRemote, getCurrentBranch, getDirtyFiles, getHeadCommit, getRepoRoot, isAncestor, listWorktrees, runGit, snapshotWorktreeDirtCommit, tryGit, validateConfiguredRemote, validateGitRef } from "./git.ts";
+import { createSafetyRef, deleteBranchAtHead, fetchRemote, getCurrentBranch, getHeadCommit, getRepoRoot, isAncestor, listWorktrees, runGit, snapshotWorktreeDirtCommit, tryGit, validateConfiguredRemote, validateGitRef } from "./git.ts";
 import { configuredRemoteAuthority } from "./git-authority.ts";
 import { recordSession } from "./state.ts";
 
@@ -33,8 +35,10 @@ export async function finishMergeToBase({ input, repoRoot, config, session, sess
   await validateConfiguredRemote(repoRoot, config.remote);
   validateGitRef(config.baseBranch);
   const baseAuthorityRef = configuredRemoteAuthority(config).authorityRef;
+  let remoteBaseHead: string;
   try {
     const baseLineage = await observeFreshFinishBaseLineage(repoRoot, config, commit);
+    remoteBaseHead = baseLineage.baseRefOid;
     recordFinishBaseLineage(preflight, baseLineage);
     if (!baseLineage.baseIsAncestorOfHead) {
       return blocked("fresh remote base is not an ancestor of the session commit", { safetyRef, commit, baseRefOid: baseLineage.baseRefOid, baseAuthorityRef: baseLineage.baseAuthorityRef }, preflight);
@@ -46,8 +50,7 @@ export async function finishMergeToBase({ input, repoRoot, config, session, sess
   const baseWorktree = await getRepoRoot(repoRoot);
   const baseWorktreeBranch = await getCurrentBranch(baseWorktree);
   const baseWorktreeOriginalHead = await getHeadCommit(baseWorktree);
-  const baseWorktreeAllDirtyFiles = await getDirtyFiles(baseWorktree);
-  const { ignoredDirtyFiles: baseWorktreeIgnoredDirtyFiles, blockingDirtyFiles: baseWorktreeDirtyFiles } = splitPrimaryDirtyFiles(baseWorktreeAllDirtyFiles, repoRoot, config);
+  const { ignoredDirtyFiles: baseWorktreeIgnoredDirtyFiles, blockingDirtyFiles: baseWorktreeDirtyFiles, registeredPaths } = await readPrimaryDirtyFiles(baseWorktree, config);
   preflight.baseWorktree = baseWorktree;
   preflight.baseWorktreeBranch = baseWorktreeBranch;
   preflight.baseWorktreeDirtyFiles = baseWorktreeDirtyFiles;
@@ -55,6 +58,12 @@ export async function finishMergeToBase({ input, repoRoot, config, session, sess
   preflight.baseWorktreeIgnoredDirtyFiles = baseWorktreeIgnoredDirtyFiles;
   preflight.baseWorktreeIgnoredDirtyFileCount = baseWorktreeIgnoredDirtyFiles.length;
   preflight.baseWorktreeRepositionRequired = baseWorktreeBranch !== config.baseBranch;
+  const realignment = await inspectBaseRealignment(baseWorktree, config.baseBranch, commit, input);
+  preflight.baseBranchRealignRequired = realignment.required;
+  preflight.baseBranchRealigned = false;
+  if (realignment.blocker) return blocked(realignment.blocker, { safetyRef, branch, baseHead: realignment.baseHead }, preflight);
+  const collision = await primaryWriteCollision(baseWorktree, baseWorktreeOriginalHead, [commit, ...(realignment.required ? [remoteBaseHead] : [])], registeredPaths);
+  if (collision) return blocked(collision, { safetyRef, branch }, preflight);
 
   const baseWorktreeSafetyRefs: string[] = [];
 
@@ -85,21 +94,14 @@ export async function finishMergeToBase({ input, repoRoot, config, session, sess
     preflight.baseWorktreePreservedDirtRef = baseWorktreePreservedDirtRef;
     preflight.baseWorktreeSafetyRefs = [...baseWorktreeSafetyRefs];
 
-    // Scope the clean to the recomputed blocking paths only: reset --hard touches just tracked files,
-    // then a path-scoped clean removes the remaining untracked dirt. A blanket clean would delete the
-    // Guardian session worktrees that live under the worktree root.
     try {
-      await runGit(baseWorktree, ["reset", "--hard", baseWorktreeOriginalHead]);
-      const remainingUntracked = splitPrimaryDirtyFiles(await getDirtyFiles(baseWorktree), repoRoot, config).blockingDirtyFiles;
-      if (remainingUntracked.length > 0) {
-        await runGit(baseWorktree, ["clean", "-f", "-d", "--", ...remainingUntracked]);
-      }
+      await clearPreservedPrimaryDirt(baseWorktree, baseWorktreeOriginalHead, preservedDirtCommit, baseWorktreeDirtyFiles);
     } catch (error) {
       if (!(error instanceof Error)) throw error;
       return blocked("merge-to-base could not reset the primary worktree clean after preserving its dirt", { safetyRef, branch, baseWorktree, baseWorktreePreservedDirtRef, error: errorMessage(error) }, preflight);
     }
 
-    const stillDirty = splitPrimaryDirtyFiles(await getDirtyFiles(baseWorktree), repoRoot, config).blockingDirtyFiles;
+    const stillDirty = (await readPrimaryDirtyFiles(baseWorktree, config)).blockingDirtyFiles;
     preflight.baseWorktreeDirtyFiles = stillDirty;
     preflight.baseWorktreeDirtyFileCount = stillDirty.length;
     if (stillDirty.length > 0) {
@@ -131,7 +133,7 @@ export async function finishMergeToBase({ input, repoRoot, config, session, sess
     }
     preflight.baseWorktreeRepositioned = true;
     const repositionedBranch = await getCurrentBranch(baseWorktree);
-    const repositionedDirtyFiles = splitPrimaryDirtyFiles(await getDirtyFiles(baseWorktree), repoRoot, config).blockingDirtyFiles;
+    const repositionedDirtyFiles = (await readPrimaryDirtyFiles(baseWorktree, config)).blockingDirtyFiles;
     preflight.baseWorktreeBranch = repositionedBranch;
     if (repositionedBranch !== config.baseBranch || repositionedDirtyFiles.length > 0) {
       return blocked("merge-to-base could not bring the primary repo worktree to a clean base-branch state", { safetyRef, branch, baseWorktree, baseBranch: config.baseBranch, baseWorktreeBranch: repositionedBranch, dirtyFiles: repositionedDirtyFiles, baseWorktreeOriginalHeadSafetyRef: baseOriginalHeadSafetyRef }, preflight);
@@ -140,6 +142,7 @@ export async function finishMergeToBase({ input, repoRoot, config, session, sess
 
   // Safety-ref the local base branch head before the fast-forward merge so it stays recoverable.
   const baseBranchLocalHead = await getHeadCommit(baseWorktree);
+  if (baseBranchLocalHead !== realignment.baseHead) return blocked("local base head changed during primary preparation", { safetyRef, branch, expectedBaseHead: realignment.baseHead, baseBranchLocalHead }, preflight);
   const baseBranchHeadSafetyRef = await createSafetyRef(baseWorktree, {
     sessionId: `${sessionId}/base-branch-head`,
     branch: config.baseBranch,
@@ -151,6 +154,7 @@ export async function finishMergeToBase({ input, repoRoot, config, session, sess
 
   try {
     const baseLineage = await observeFreshFinishBaseLineage(repoRoot, config, commit);
+    remoteBaseHead = baseLineage.baseRefOid;
     recordFinishBaseLineage(preflight, baseLineage);
     if (!baseLineage.baseIsAncestorOfHead) {
       return blocked("fresh remote base is not an ancestor of the session commit", { safetyRef, commit, baseRefOid: baseLineage.baseRefOid, baseAuthorityRef: baseLineage.baseAuthorityRef }, preflight);
@@ -161,8 +165,17 @@ export async function finishMergeToBase({ input, repoRoot, config, session, sess
   }
 
   try {
-    validateGitRef(branch);
-    await runGit(repoRoot, ["merge", "--ff-only", branch]);
+    if (await getCurrentBranch(baseWorktree) !== config.baseBranch || await getHeadCommit(baseWorktree) !== baseBranchLocalHead) return blocked("local base branch or head changed before merge", { safetyRef, branch }, preflight);
+    const current = await readPrimaryDirtyFiles(baseWorktree, config);
+    if (current.blockingDirtyFiles.length > 0) return blocked("primary dirt appeared before merge", { safetyRef, dirtyFiles: current.blockingDirtyFiles }, preflight);
+    const finalCollision = await primaryWriteCollision(baseWorktree, baseBranchLocalHead, [commit, ...(realignment.required ? [remoteBaseHead] : [])], current.registeredPaths);
+    if (finalCollision) return blocked(finalCollision, { safetyRef, branch }, preflight);
+    if (realignment.required) {
+      await runGit(baseWorktree, ["reset", "--keep", remoteBaseHead]);
+      preflight.baseBranchRealigned = true;
+      preflight.baseBranchRealignedTo = remoteBaseHead;
+    }
+    await runGit(baseWorktree, ["merge", "--ff-only", "--no-overwrite-ignore", commit]);
   } catch (error) {
     if (!(error instanceof Error)) throw error;
     return blocked("merge-to-base fast-forward merge failed", { safetyRef, branch, baseBranch: config.baseBranch, baseBranchHeadSafetyRef, error: errorMessage(error) }, preflight);
