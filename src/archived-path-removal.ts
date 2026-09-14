@@ -86,9 +86,10 @@ async function copyArchiveToOperation(input: PrepareArchivedPathRemovalInput, op
 async function moveArchivedEntry(sourceRoot: string, destinationRoot: string, entry: ArchivedPathFingerprint): Promise<void> {
   const source = path.join(sourceRoot, entry.path);
   const destination = path.join(destinationRoot, entry.path);
+  const sourceParent = path.dirname(source);
   const destinationParent = path.dirname(destination);
   await ensureDurableDirectory(destinationParent);
-  await assertNoSymlinkAncestors(path.dirname(source), "archive-backed removal source");
+  await assertNoSymlinkAncestors(sourceParent, "archive-backed removal source");
   await assertNoSymlinkAncestors(destinationParent, "archive-backed removal destination");
   const [sourceStat, destinationStat] = await Promise.all([fs.lstat(source), lstatOrMissing(destination)]);
   if (destinationStat) throw new ArchivedPathProofError(`archive-backed removal destination already exists: ${entry.path}`);
@@ -96,9 +97,13 @@ async function moveArchivedEntry(sourceRoot: string, destinationRoot: string, en
   if (JSON.stringify(await fingerprintArchivedPath(sourceRoot, entry.path)) !== JSON.stringify(entry)) {
     throw new ArchivedPathProofError(`archive-backed path changed before quarantine: ${entry.path}`);
   }
-  await assertNoSymlinkAncestors(path.dirname(source), "archive-backed removal source");
-  await assertNoSymlinkAncestors(destinationParent, "archive-backed removal destination");
   await archivedPathRemovalTestHook?.beforeRename?.(source, destination);
+  await assertNoSymlinkAncestors(sourceParent, "archive-backed removal source");
+  await assertNoSymlinkAncestors(destinationParent, "archive-backed removal destination");
+  const finalSourceStat = await fs.lstat(source);
+  if (sourceStat.dev !== finalSourceStat.dev || sourceStat.ino !== finalSourceStat.ino) {
+    throw new ArchivedPathProofError(`archive-backed source identity changed before quarantine: ${entry.path}`);
+  }
   if (await lstatOrMissing(destination)) throw new ArchivedPathProofError(`archive-backed removal destination appeared: ${entry.path}`);
   await fs.rename(source, destination);
   const [postSource, postDestination] = await Promise.all([lstatOrMissing(source), lstatOrMissing(destination)]);
@@ -109,8 +114,8 @@ async function moveArchivedEntry(sourceRoot: string, destinationRoot: string, en
   if (JSON.stringify(await fingerprintArchivedPath(destinationRoot, entry.path)) !== JSON.stringify(entry)) {
     throw new ArchivedPathProofError(`archive-backed quarantine fingerprint changed: ${entry.path}`);
   }
-  await syncDirectory(path.dirname(source));
-  if (path.dirname(source) !== destinationParent) await syncDirectory(destinationParent);
+  await syncDirectory(sourceParent);
+  if (sourceParent !== destinationParent) await syncDirectory(destinationParent);
 }
 
 async function restoreMovedEntries(removal: ArchivedPathRemoval): Promise<void> {
@@ -169,6 +174,10 @@ export async function finalizeArchivedPathRemoval(removal: ArchivedPathRemoval):
 }
 
 export async function rollbackArchivedPathRemoval(removal: ArchivedPathRemoval): Promise<void> {
-  await restoreMovedEntries(removal);
-  await removeOperationRoot(removal);
+  try {
+    await restoreMovedEntries(removal);
+    await removeOperationRoot(removal);
+  } catch (error) {
+    throw new ArchivedPathProofError(`${errorMessage(error)}; recovery retained at ${removal.operationRoot}`);
+  }
 }

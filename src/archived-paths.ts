@@ -139,8 +139,7 @@ async function listArchiveMembers(archivePath: string): Promise<ArchiveMember[]>
   return members;
 }
 
-export async function fingerprintArchivedPath(root: string, relativePath: string): Promise<ArchivedPathFingerprint> {
-  const absolutePath = path.join(root, relativePath);
+async function fingerprintArchivedPathAt(absolutePath: string, relativePath: string): Promise<ArchivedPathFingerprint> {
   const stats = await fs.lstat(absolutePath);
   if (stats.isSymbolicLink()) return { path: relativePath, kind: "symlink", target: await fs.readlink(absolutePath) };
   if (!stats.isFile()) throw new ArchivedPathProofError(`archive-backed paths must be regular files or symlinks: ${relativePath}`);
@@ -152,6 +151,10 @@ export async function fingerprintArchivedPath(root: string, relativePath: string
     size: stats.size,
     sha256: await archivedFileSHA256(absolutePath),
   };
+}
+
+export function fingerprintArchivedPath(root: string, relativePath: string): Promise<ArchivedPathFingerprint> {
+  return fingerprintArchivedPathAt(path.join(root, relativePath), relativePath);
 }
 
 async function verifyArchiveContents(input: VerifyArchivedPathsInput, archivePath: string, reportedArchivePath: string): Promise<ArchivedPathProof> {

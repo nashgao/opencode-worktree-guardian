@@ -216,8 +216,8 @@ test("guardian_delete_worktree blocks a symlink-ancestor substitution at the rem
   assert.equal((await worktreePaths(fixture.repo)).includes(fixture.worktree), true);
 });
 
-test("guardian_delete_worktree retains a raced outside inode in quarantine", async (t) => {
-  // Given an attacker substitutes a symlink ancestor after Guardian's final source check but before rename.
+test("guardian_delete_worktree rechecks source ancestors immediately before rename", async (t) => {
+  // Given an attacker substitutes a symlink ancestor after Guardian fingerprints the source but before its last rename check.
   const fixture = await createSingleArchivedWorktree(t, "archive-final-rename-race");
   const outsideRoot = path.join(fixture.base, "outside-final-race");
   await fs.mkdir(outsideRoot, { recursive: true });
@@ -244,7 +244,7 @@ test("guardian_delete_worktree retains a raced outside inode in quarantine", asy
   });
   t.after(() => setArchivedPathRemovalTestHookForTesting(undefined));
 
-  // When the final rename observes a different inode than the one Guardian proved.
+  // When Guardian performs the final ancestor and inode check immediately before rename.
   const result = await guardianDeleteWorktree({
     repoRoot: fixture.repo,
     cwd: fixture.repo,
@@ -257,14 +257,13 @@ test("guardian_delete_worktree retains a raced outside inode in quarantine", asy
     config: DEFAULT_CONFIG,
   });
 
-  // Then apply blocks and retains the unexpected outside object under the reported quarantine instead of deleting it.
+  // Then apply blocks before rename with both the original source and outside object untouched.
   assert.equal(result.ok, false, JSON.stringify(result));
-  assert.match(String(result.reason), /unexpected filesystem object.*recovery retained/);
+  assert.match(String(result.reason), /symlink ancestor/);
   const quarantineRoots = (await fs.readdir(path.dirname(fixture.worktree))).filter((entry) => entry.startsWith(".guardian-archive-quarantine-"));
-  assert.equal(quarantineRoots.length, 1);
-  const retainedPath = path.join(path.dirname(fixture.worktree), quarantineRoots[0] ?? "", "moved", fixture.relativePath);
-  assert.equal(await fs.readFile(retainedPath, "utf8"), "archived evidence\n");
+  assert.equal(quarantineRoots.length, 0);
   assert.equal(await fs.readFile(path.join(fixture.worktree, "original-evidence", "report.txt"), "utf8"), "archived evidence\n");
+  assert.equal(await fs.readFile(path.join(outsideRoot, "report.txt"), "utf8"), "archived evidence\n");
   assert.equal((await worktreePaths(fixture.repo)).includes(fixture.worktree), true);
 });
 
