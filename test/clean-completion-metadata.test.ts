@@ -7,11 +7,11 @@ import { DEFAULT_CONFIG } from "../src/config.ts";
 import { buildDirtySessionDoneIntent } from "../src/done-intent.ts";
 import { executeQuarantine } from "../src/quarantine-execute.ts";
 import { readQuarantineItem } from "../src/quarantine-journal.ts";
-import { getGuardianPaths } from "../src/state.ts";
+import { getGuardianPaths, readState, writeStateAtomic } from "../src/state.ts";
 import { guardianStart } from "../src/start.ts";
 import type { GuardianConfig } from "../src/types.ts";
 import { isRecordLike } from "../src/types.ts";
-import { createRepoWithOrigin, git } from "./helpers.ts";
+import { createRepoWithOrigin, git, seedSession } from "./helpers.ts";
 
 const ENABLED_CONFIG: GuardianConfig = {
   ...DEFAULT_CONFIG,
@@ -58,6 +58,15 @@ test("clean-completion proof rejects an unreferenced provenance file", async (t)
   await assertUnstable(input, /unknown Guardian provenance entry/);
 });
 
+test("clean-completion proof rejects an unknown evidence root", async (t) => {
+  const input = await fixture("ses_metadata_evidence");
+  t.after(() => fs.rm(input.base, { recursive: true, force: true }));
+  await fs.mkdir(path.join(input.paths.dir, "evidence", "manual-audit"), { recursive: true });
+  await fs.writeFile(path.join(input.paths.dir, "evidence", "manual-audit", "result.txt"), "retained evidence\n", "utf8");
+
+  await assertUnstable(input, /unknown Guardian metadata root entry: evidence/);
+});
+
 test("clean-completion proof rejects a leftover lock temporary file", async (t) => {
   const input = await fixture("ses_metadata_lock_temp");
   t.after(() => fs.rm(input.base, { recursive: true, force: true }));
@@ -89,6 +98,35 @@ test("clean-completion proof rejects a missing referenced provenance manifest", 
   if (!relativePath) throw new Error("fixture requires a provenance manifest");
   await fs.rm(path.join(input.paths.dir, relativePath));
   await assertUnstable(input, /missing referenced Guardian provenance manifest/);
+});
+
+test("clean-completion proof rejects a referenced provenance manifest with a mismatched lineage", async (t) => {
+  const input = await fixture("ses_metadata_lineage_mismatch");
+  t.after(() => fs.rm(input.base, { recursive: true, force: true }));
+  await seedSession(input.repo, { ...input.session, lineage_id: "lineage-mismatch" }, ENABLED_CONFIG);
+
+  await assertUnstable(input, /Guardian provenance manifest verification failed/);
+});
+
+test("clean-completion proof rejects a provenance manifest when its session status is absent", async (t) => {
+  const input = await fixture("ses_metadata_missing_status");
+  t.after(() => fs.rm(input.base, { recursive: true, force: true }));
+  const state = await readState(input.paths, { repoRoot: input.repo, config: ENABLED_CONFIG });
+  const session = state.sessions[input.session.session_id];
+  if (!session) throw new Error("fixture requires a stored session");
+  const { status: _status, ...withoutStatus } = session;
+  state.sessions[input.session.session_id] = withoutStatus;
+  await writeStateAtomic(input.paths, state);
+
+  await assertUnstable(input, /Guardian provenance session status is invalid/);
+});
+
+test("clean-completion proof rejects a provenance manifest when its session status is unknown", async (t) => {
+  const input = await fixture("ses_metadata_unknown_status");
+  t.after(() => fs.rm(input.base, { recursive: true, force: true }));
+  await seedSession(input.repo, { ...input.session, status: "unknown" }, ENABLED_CONFIG);
+
+  await assertUnstable(input, /Guardian provenance session status is invalid/);
 });
 
 test("clean-completion proof rejects ambiguous lock and quarantine tombstones", async (t) => {
