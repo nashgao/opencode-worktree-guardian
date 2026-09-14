@@ -53,3 +53,29 @@ test("guardian_delete_paths removes a protected file only when an external archi
   assert.equal(await pathExists(path.join(repo, relativePath)), false);
   assert.equal(await fileSHA256(archivePath), archiveSha256);
 });
+
+test("guardian_delete_paths archive proof does not authorize protected tracked source", async (t) => {
+  // Given a configured protected tracked file and an exact external archive matching it.
+  const repo = await createRepo();
+  const archiveRoot = await createTempDir("guardian-protected-tracked-archive-");
+  t.after(() => fs.rm(repo, { recursive: true, force: true }));
+  t.after(() => fs.rm(archiveRoot, { recursive: true, force: true }));
+  const relativePath = ".omo/tracked.txt";
+  const absolutePath = path.join(repo, relativePath);
+  await fs.mkdir(path.dirname(absolutePath), { recursive: true });
+  await fs.writeFile(absolutePath, "tracked protected source\n");
+  await execFileAsync("git", ["-C", repo, "add", "-f", relativePath]);
+  await execFileAsync("git", ["-C", repo, "commit", "-m", "add protected tracked source"]);
+  const archivePath = path.join(archiveRoot, "tracked-protected.tar.gz");
+  await execFileAsync("tar", ["-C", repo, "-czf", archivePath, relativePath]);
+  const archiveSha256 = await fileSHA256(archivePath);
+  const config = { ...DEFAULT_CONFIG, protectedPaths: [...DEFAULT_CONFIG.protectedPaths, ".omo"] };
+
+  // When exact-path deletion is planned with both tracked consent and archive proof.
+  const result = await guardianDeletePaths({ repoRoot: repo, cwd: repo, mode: "plan", paths: [relativePath], allowTracked: true, archivePath, archiveSha256, config });
+
+  // Then archive mode cannot broaden into tracked source deletion.
+  assert.equal(result.ok, false, JSON.stringify(result));
+  assert.match(JSON.stringify(result), /supports only untracked or ignored regular files/);
+  assert.equal(await fs.readFile(absolutePath, "utf8"), "tracked protected source\n");
+});

@@ -150,6 +150,9 @@ export async function buildDeletePathsPreflight(input: Record<string, unknown>) 
     const ignored = pathBlockers.some((blocker) => blocker.fatal) ? false : await isIgnoredPath(repoRoot, relative);
     const status: DeletePathStatus = stat == null ? "missing" : trackedContents.length > 0 ? "tracked" : ignored ? "ignored" : "untracked";
     if (trackedContents.length > 0 && !allowTracked) pathBlockers.push({ path: relative, reason: "tracked source deletion requires allowTracked=true", fatal: true });
+    if (archiveRequested && (kind !== "file" || status === "tracked")) {
+      pathBlockers.push({ path: relative, reason: "archive-backed protected-path cleanup supports only untracked or ignored regular files", fatal: true });
+    }
     if (pathBlockers.length > 0) {
       blockers.push(...pathBlockers);
       continue;

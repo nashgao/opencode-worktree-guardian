@@ -119,7 +119,7 @@ const COMMANDS = [
     name: "guardian-delete-paths",
     title: "Guardian: Delete Paths",
     description: "Plan or apply exact path deletion for approved files or directories.",
-    prompt: "Use the guardian_delete_paths native tool. Run mode=plan first with exact paths, inspect target status and blockers, get explicit user confirmation, then apply with confirmDelete=true. Tracked source deletion requires allowTracked=true. Directory deletion requires allowRecursive=true. A configured protected regular file additionally requires exact external archivePath and archiveSha256 recovery proof; intrinsic Git, dependency, worktree-root, symlink-root, and directory blockers remain absolute. Use guardian_delete_worktree for worktree removal.",
+    prompt: "Use the guardian_delete_paths native tool. Run mode=plan first with exact paths, inspect target status and blockers, get explicit user confirmation, then apply with confirmDelete=true. Tracked source deletion requires allowTracked=true. Directory deletion requires allowRecursive=true. A configured protected untracked or ignored regular file additionally requires exact external archivePath and archiveSha256 recovery proof; tracked source, intrinsic Git, dependency, worktree-root, symlink-root, directory, duplicate-member, hardlink, and special-type blockers remain absolute. Use guardian_delete_worktree for worktree removal.",
   },
   {
     name: "guardian-unblock-finish",

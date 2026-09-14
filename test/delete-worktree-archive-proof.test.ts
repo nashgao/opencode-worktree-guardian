@@ -5,6 +5,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import test, { type TestContext } from "node:test";
 import { promisify } from "node:util";
+import { gzipSync } from "node:zlib";
 import { DEFAULT_CONFIG } from "../src/config.ts";
 import { guardianDeleteWorktree } from "../src/delete-worktree.ts";
 import { isRecordLike } from "../src/types.ts";
@@ -95,6 +96,180 @@ test("guardian_delete_worktree removes archived untracked and ignored evidence w
   const preflight = isRecordLike(result.preflight) ? result.preflight : {};
   assert.equal(preflight.archiveSha256, archiveSha256);
   assert.equal(preflight.archivedPathCount, archivedPaths.length);
+  assert.equal((await fs.readdir(path.dirname(worktree))).some((entry) => entry.startsWith(".guardian-archive-quarantine-")), false);
+});
+
+test("guardian_delete_worktree archive proof does not authorize tracked modifications", async (t) => {
+  // Given a tracked file modified in an otherwise removable Guardian worktree and an archive matching its new bytes.
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const sessionId = "archive-tracked-modification";
+  const started = await createGuardianWorktree(repo, sessionId, sessionId, `guardian/${sessionId}`);
+  const worktree = started.session.worktree_path;
+  await fs.writeFile(path.join(worktree, "README.md"), "tracked change must remain blocked\n");
+  const archivePath = path.join(base, `${sessionId}.tar.gz`);
+  await execFileAsync("tar", ["-C", worktree, "-czf", archivePath, "README.md"]);
+  const archiveSha256 = await fileSHA256(archivePath);
+
+  // When archive-backed worktree deletion is planned without the redundant-dirty proof path.
+  const result = await guardianDeleteWorktree({
+    repoRoot: repo,
+    cwd: repo,
+    mode: "plan",
+    sessionId,
+    deleteBranch: true,
+    archivePath,
+    archiveSha256,
+    config: DEFAULT_CONFIG,
+  });
+
+  // Then the archive cannot weaken the established tracked-change blocker.
+  assert.equal(result.ok, false, JSON.stringify(result));
+  assert.match(String(result.reason), /untracked and ignored paths/);
+  assert.equal((await worktreePaths(repo)).includes(worktree), true);
+  assert.equal(await fs.readFile(path.join(worktree, "README.md"), "utf8"), "tracked change must remain blocked\n");
+});
+
+test("guardian_delete_worktree archive proof does not authorize staged changes or renames", async (t) => {
+  // Given two worktrees with tracked changes in staged and rename states and matching archives.
+  const staged = await createSingleArchivedWorktree(t, "archive-staged-change");
+  await fs.writeFile(path.join(staged.worktree, "README.md"), "staged change must remain blocked\n");
+  await git(staged.worktree, ["add", "README.md"]);
+  const stagedArchivePath = path.join(staged.base, "staged-source.tar.gz");
+  await execFileAsync("tar", ["-C", staged.worktree, "-czf", stagedArchivePath, "README.md", staged.relativePath]);
+  const renamed = await createSingleArchivedWorktree(t, "archive-rename-change");
+  await git(renamed.worktree, ["mv", "README.md", "RENAMED.md"]);
+  const renamedArchivePath = path.join(renamed.base, "renamed-source.tar.gz");
+  await execFileAsync("tar", ["-C", renamed.worktree, "-czf", renamedArchivePath, "RENAMED.md", renamed.relativePath]);
+
+  // When archive-backed deletion is planned for each tracked status.
+  const stagedResult = await guardianDeleteWorktree({
+    repoRoot: staged.repo,
+    cwd: staged.repo,
+    mode: "plan",
+    sessionId: staged.sessionId,
+    deleteBranch: true,
+    archivePath: stagedArchivePath,
+    archiveSha256: await fileSHA256(stagedArchivePath),
+    config: DEFAULT_CONFIG,
+  });
+  const renamedResult = await guardianDeleteWorktree({
+    repoRoot: renamed.repo,
+    cwd: renamed.repo,
+    mode: "plan",
+    sessionId: renamed.sessionId,
+    deleteBranch: true,
+    archivePath: renamedArchivePath,
+    archiveSha256: await fileSHA256(renamedArchivePath),
+    config: DEFAULT_CONFIG,
+  });
+
+  // Then both plans block without removing either worktree.
+  assert.equal(stagedResult.ok, false, JSON.stringify(stagedResult));
+  assert.match(String(stagedResult.reason), /untracked and ignored paths/);
+  assert.equal(renamedResult.ok, false, JSON.stringify(renamedResult));
+  assert.match(String(renamedResult.reason), /untracked and ignored paths/);
+  assert.equal((await worktreePaths(staged.repo)).includes(staged.worktree), true);
+  assert.equal((await worktreePaths(renamed.repo)).includes(renamed.worktree), true);
+});
+
+test("guardian_delete_worktree blocks a symlink-ancestor substitution at the removal boundary", async (t) => {
+  // Given an approved archive whose worktree parent is replaced by a symlink to matching outside data after safety-ref creation.
+  const fixture = await createSingleArchivedWorktree(t, "archive-symlink-ancestor-race");
+  const outsideRoot = path.join(fixture.base, "outside");
+  await fs.mkdir(outsideRoot, { recursive: true });
+  await fs.writeFile(path.join(outsideRoot, "report.txt"), "archived evidence\n");
+  const plan = await guardianDeleteWorktree({
+    repoRoot: fixture.repo,
+    cwd: fixture.repo,
+    mode: "plan",
+    sessionId: fixture.sessionId,
+    deleteBranch: true,
+    archivePath: fixture.archivePath,
+    archiveSha256: fixture.archiveSha256,
+    config: DEFAULT_CONFIG,
+  });
+  assert.equal(plan.ok, true, JSON.stringify(plan));
+
+  // When apply reaches the safety-ref boundary and the parent is substituted.
+  const result = await guardianDeleteWorktree({
+    repoRoot: fixture.repo,
+    cwd: fixture.repo,
+    mode: "apply",
+    sessionId: fixture.sessionId,
+    deleteBranch: true,
+    archivePath: fixture.archivePath,
+    archiveSha256: fixture.archiveSha256,
+    confirmToken: plan.confirmToken,
+    config: DEFAULT_CONFIG,
+  }, {
+    async afterSafetyRefCreated() {
+      await fs.rename(path.join(fixture.worktree, "evidence"), path.join(fixture.worktree, "original-evidence"));
+      await fs.symlink(outsideRoot, path.join(fixture.worktree, "evidence"));
+    },
+  });
+
+  // Then Guardian blocks without deleting the outside file reached by that symlink.
+  assert.equal(result.ok, false, JSON.stringify(result));
+  assert.equal(await fs.readFile(path.join(outsideRoot, "report.txt"), "utf8"), "archived evidence\n");
+  assert.equal((await worktreePaths(fixture.repo)).includes(fixture.worktree), true);
+});
+
+test("guardian_delete_worktree rejects duplicate archive members", async (t) => {
+  // Given an archive containing the same requested path twice.
+  const fixture = await createSingleArchivedWorktree(t, "archive-duplicate-member");
+  const rawArchivePath = path.join(fixture.base, "duplicate-member.tar");
+  await execFileAsync("tar", ["-C", fixture.worktree, "-cf", rawArchivePath, fixture.relativePath]);
+  await execFileAsync("tar", ["-C", fixture.worktree, "-rf", rawArchivePath, fixture.relativePath]);
+  await fs.writeFile(fixture.archivePath, gzipSync(await fs.readFile(rawArchivePath)));
+
+  // When archive-backed deletion is planned.
+  const result = await guardianDeleteWorktree({
+    repoRoot: fixture.repo,
+    cwd: fixture.repo,
+    mode: "plan",
+    sessionId: fixture.sessionId,
+    deleteBranch: true,
+    archivePath: fixture.archivePath,
+    archiveSha256: await fileSHA256(fixture.archivePath),
+    config: DEFAULT_CONFIG,
+  });
+
+  // Then the structurally ambiguous archive is rejected.
+  assert.equal(result.ok, false, JSON.stringify(result));
+  assert.match(String(result.reason), /duplicate archive member/);
+  assert.equal((await worktreePaths(fixture.repo)).includes(fixture.worktree), true);
+});
+
+test("guardian_delete_worktree rejects hardlink archive members", async (t) => {
+  // Given two requested worktree paths archived as hardlinks to the same inode.
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const sessionId = "archive-hardlink-member";
+  const started = await createGuardianWorktree(repo, sessionId, sessionId, `guardian/${sessionId}`);
+  const worktree = started.session.worktree_path;
+  await fs.mkdir(path.join(worktree, "evidence"), { recursive: true });
+  await fs.writeFile(path.join(worktree, "evidence", "first.txt"), "same inode\n");
+  await fs.link(path.join(worktree, "evidence", "first.txt"), path.join(worktree, "evidence", "second.txt"));
+  const archivePath = path.join(base, `${sessionId}.tar.gz`);
+  await execFileAsync("tar", ["-C", worktree, "-czf", archivePath, "evidence/first.txt", "evidence/second.txt"]);
+
+  // When archive-backed deletion is planned.
+  const result = await guardianDeleteWorktree({
+    repoRoot: repo,
+    cwd: repo,
+    mode: "plan",
+    sessionId,
+    deleteBranch: true,
+    archivePath,
+    archiveSha256: await fileSHA256(archivePath),
+    config: DEFAULT_CONFIG,
+  });
+
+  // Then hardlink recovery semantics are rejected rather than treated as two ordinary files.
+  assert.equal(result.ok, false, JSON.stringify(result));
+  assert.match(String(result.reason), /hardlink archive member/);
+  assert.equal((await worktreePaths(repo)).includes(worktree), true);
 });
 
 test("guardian_delete_worktree rejects an archive whose digest is not exact", async (t) => {
@@ -118,6 +293,45 @@ test("guardian_delete_worktree rejects an archive whose digest is not exact", as
   assert.match(String(result.reason), /SHA-256/);
   assert.equal((await worktreePaths(fixture.repo)).includes(fixture.worktree), true);
   assert.equal(await pathExists(path.join(fixture.worktree, fixture.relativePath)), true);
+});
+
+test("guardian_delete_worktree restores quarantined paths when the external archive changes", async (t) => {
+  // Given a planned archive-backed deletion whose external archive changes after the exact paths are quarantined.
+  const fixture = await createSingleArchivedWorktree(t, "archive-finalize-drift");
+  const plan = await guardianDeleteWorktree({
+    repoRoot: fixture.repo,
+    cwd: fixture.repo,
+    mode: "plan",
+    sessionId: fixture.sessionId,
+    deleteBranch: true,
+    archivePath: fixture.archivePath,
+    archiveSha256: fixture.archiveSha256,
+    config: DEFAULT_CONFIG,
+  });
+  assert.equal(plan.ok, true, JSON.stringify(plan));
+
+  // When apply observes archive replacement immediately before finalizing removal.
+  const result = await guardianDeleteWorktree({
+    repoRoot: fixture.repo,
+    cwd: fixture.repo,
+    mode: "apply",
+    sessionId: fixture.sessionId,
+    deleteBranch: true,
+    archivePath: fixture.archivePath,
+    archiveSha256: fixture.archiveSha256,
+    confirmToken: plan.confirmToken,
+    config: DEFAULT_CONFIG,
+  }, {
+    async afterArchivedPathsQuarantined() {
+      await fs.writeFile(fixture.archivePath, "changed archive\n");
+    },
+  });
+
+  // Then apply blocks and restores the exact source path instead of completing deletion without recovery.
+  assert.equal(result.ok, false, JSON.stringify(result));
+  assert.match(String(result.reason), /external archive changed/);
+  assert.equal(await fs.readFile(path.join(fixture.worktree, fixture.relativePath), "utf8"), "archived evidence\n");
+  assert.equal((await worktreePaths(fixture.repo)).includes(fixture.worktree), true);
 });
 
 test("guardian_delete_worktree rejects archive contents that differ from the worktree", async (t) => {

@@ -16,6 +16,7 @@ import { resolveRemoteAuthority } from "./git-authority.ts";
 
 export type DeleteWorktreeRuntime = {
   readonly afterSafetyRefCreated?: () => Promise<void>;
+  readonly afterArchivedPathsQuarantined?: () => Promise<void>;
   readonly beforeWorktreeRemoval?: () => Promise<void>;
 };
 
@@ -74,7 +75,7 @@ async function preflightWorktreeDeletion(input: Record<string, unknown>, config:
   preflight.ignoredFileFingerprint = await collectIgnoredFileFingerprint(entry.path, ignoredFiles);
   preflight.ignoredFileCount = ignoredFiles.length;
   if (ignoredFiles.length > 0 && !allowIgnoredFiles) return blocked("worktree has ignored files", { ignoredFiles, targetPath: entry.path }, preflight);
-  const archived = await validateArchivedPathsPreflight({ input, preflight, entry }, dirtyFiles, ignoredFiles);
+  const archived = await validateArchivedPathsPreflight({ input, preflight, entry }, ignoredFiles);
   if (archived.blocker) return archived.blocker;
   if (!archived.handled) {
     const dirtyBlocker = await validateRedundantDirtyPreflight({ input, config, preflight, entry }, session, dirtyFiles);
@@ -134,7 +135,7 @@ async function applyWorktreeDeletion(input: Record<string, unknown>, config: Rec
     await recordSession(repoRoot, config, { ...session, session_id: session.session_id, head_commit: head, safety_refs: sessionSafetyRefs(session, safetyRef, preflight) }, { event: { type: "guardian_delete_worktree_safety_ref", session_id: session.session_id, ref: safetyRef } });
   }
   await runtime.afterSafetyRefCreated?.();
-  const archivedCleanupBlocker = await applyArchivedPathsCleanup({ input, preflight, entry });
+  const archivedCleanupBlocker = await applyArchivedPathsCleanup({ input, preflight, entry, afterArchivedPathsQuarantined: runtime.afterArchivedPathsQuarantined });
   if (archivedCleanupBlocker) return archivedCleanupBlocker;
   const cleanupBlocker = await applyRedundantDirtyCleanup({ input, preflight, entry }, { safetySessionId, branch, head });
   if (cleanupBlocker) return cleanupBlocker;

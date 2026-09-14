@@ -1,5 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
+import { finalizeArchivedPathRemoval, prepareArchivedPathRemoval, rollbackArchivedPathRemoval } from "./archived-path-removal.ts";
+import { parseArchivedPathFingerprints } from "./archived-paths.ts";
 import { buildDeletePathsPreflight, deleteSummary } from "./delete-paths-preflight.ts";
 import type { DeletePathBlocker, DeletePathTarget } from "./delete-paths-preflight.ts";
 import { runGit } from "./git.ts";
@@ -74,9 +76,35 @@ export async function guardianDeletePaths(input: Record<string, unknown> = {}): 
   }
   const removedTargets: DeletePathTarget[] = [];
   const repoRoot = String(preflight.repoRoot);
-  for (const target of targets) {
-    await removeDeleteTarget(repoRoot, target);
-    removedTargets.push(target);
+  const archiveProofs = parseArchivedPathFingerprints(preflight.archivedPathProofs) ?? [];
+  if (archiveProofs.length > 0) {
+    let removal: Awaited<ReturnType<typeof prepareArchivedPathRemoval>> | null = null;
+    try {
+      removal = await prepareArchivedPathRemoval({
+        worktreePath: repoRoot,
+        archivePath: String(preflight.archivePath),
+        archiveSha256: String(preflight.archiveSha256),
+        paths: targets.map((target) => target.path),
+        expectedEntries: archiveProofs,
+      });
+      await finalizeArchivedPathRemoval(removal);
+    } catch (error) {
+      if (removal) {
+        try {
+          await rollbackArchivedPathRemoval(removal);
+        } catch (rollbackError) {
+          return deleteReport({ ok: false, status: "blocked", reason: `archive-backed deletion failed and rollback was incomplete: ${String(rollbackError)}`, summary, targets, blockers }, preflight);
+        }
+      }
+      return deleteReport({ ok: false, status: "blocked", reason: error instanceof Error ? error.message : String(error), summary, targets, blockers }, preflight);
+    }
+    removedTargets.push(...targets);
+  }
+  if (archiveProofs.length === 0) {
+    for (const target of targets) {
+      await removeDeleteTarget(repoRoot, target);
+      removedTargets.push(target);
+    }
   }
   const finalSummary = deleteSummary(targets, blockers, removedTargets);
   return deleteReport({ ok: true, status: "deleted", summary: finalSummary, targets, removedTargets, blockers, suggestedCommands: ["guardian_status"] }, { ...preflight, summary: finalSummary }, removedTargets);
