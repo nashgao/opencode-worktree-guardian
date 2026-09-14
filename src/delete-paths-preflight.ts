@@ -6,6 +6,7 @@ import { getRepoRoot, listWorktrees, runGit, tryGit } from "./git.ts";
 import { assertNoSymlinkAncestors, canonicalPathOrResolved, isEnoent, isSameOrInside, lstatOrMissing, normalizeRelativePath, parseNullSeparated, recordValue, relativePath, stringArray, uniqueSorted } from "./filesystem-boundaries.ts";
 import { protectedPathMatch, protectedPathsFromConfig } from "./protected-paths.ts";
 import { getGuardianPaths, readState } from "./state.ts";
+import { hasRecordedWorktreeDeletion } from "./lifecycle.ts";
 
 export type DeletePathKind = "directory" | "file" | "symlink" | "other" | "missing";
 export type DeletePathStatus = "tracked" | "ignored" | "untracked" | "missing";
@@ -71,7 +72,8 @@ async function collectDeleteProtectedRoots(repoRoot: string, cwd: string, config
     for (const session of Object.values(recordValue(state.sessions))) {
       const sessionRecord = recordValue(session);
       if (typeof sessionRecord.worktree_path === "string" && path.resolve(sessionRecord.worktree_path) !== path.resolve(repoRoot) && isSameOrInside(path.resolve(sessionRecord.worktree_path), path.resolve(repoRoot))) {
-        roots.set(path.resolve(sessionRecord.worktree_path), { reason: "registered Guardian session worktree path", blockInside: true });
+        const worktreePath = path.resolve(sessionRecord.worktree_path);
+        if (!hasRecordedWorktreeDeletion(sessionRecord) || await lstatOrMissing(worktreePath) !== null) roots.set(worktreePath, { reason: "registered Guardian session worktree path", blockInside: true });
       }
     }
   } catch (error) {

@@ -3,13 +3,14 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { DEFAULT_CONFIG } from "../src/config.ts";
+import { setDeletionFingerprintTestHookForTesting } from "../src/deletion-fingerprint.ts";
 import { guardianDeleteWorktree } from "../src/delete-worktree.ts";
 import { guardianDeletePaths } from "../src/delete-paths.ts";
 import { guardianHygiene, scanWorkspaceHygiene } from "../src/hygiene.ts";
 import { guardianStart } from "../src/start.ts";
 import type { GuardianConfig } from "../src/types.ts";
 import { isRecordLike } from "../src/types.ts";
-import { createRepo, createRepoWithOrigin, createTempDir, git } from "./helpers.ts";
+import { createRepo, createRepoWithOrigin, createTempDir, git, seedSession } from "./helpers.ts";
 import { branchExists, createGuardianWorktree, deleteWorktree, guardianStatus, worktreePaths } from "./delete-fixtures.js";
 
 async function exists(candidate: string) {
@@ -73,6 +74,82 @@ test("guardian_delete_paths deletes exact untracked and ignored artifacts withou
   assert.equal(apply.status, "deleted");
   assert.equal(await exists(path.join(repo, "artifact.tmp")), false);
   assert.equal(await exists(path.join(repo, "scratch.log")), false);
+});
+
+test("guardian_delete_paths ignores only absent worktree paths already recorded terminal and deleted", async (t) => {
+  // Given one absent terminal worktree path and one absent active worktree path below empty parents.
+  const repo = await createRepo();
+  t.after(() => fs.rm(repo, { recursive: true, force: true }));
+  const terminalParent = path.join(repo, "terminal-parent");
+  const terminalWorktree = path.join(terminalParent, "src");
+  const activeParent = path.join(repo, "active-parent");
+  const activeWorktree = path.join(activeParent, "src");
+  await fs.mkdir(terminalParent);
+  await fs.mkdir(activeParent);
+  await seedSession(repo, {
+    session_id: "terminal-delete-path",
+    status: "finished",
+    branch: "guardian/terminal-delete-path",
+    worktree_path: terminalWorktree,
+    deleted_worktree_path: terminalWorktree,
+    head_commit: "2".repeat(40),
+    safety_refs: ["refs/opencode-guardian/terminal-delete-path"],
+  });
+  await seedSession(repo, {
+    session_id: "active-delete-path",
+    status: "active",
+    branch: "guardian/active-delete-path",
+    worktree_path: activeWorktree,
+    head_commit: "3".repeat(40),
+    safety_refs: [],
+  });
+
+  // When exact deletion plans are requested for both empty parents.
+  const terminalPlan = await guardianDeletePaths({ repoRoot: repo, cwd: repo, config: DEFAULT_CONFIG, mode: "plan", paths: ["terminal-parent"], allowRecursive: true });
+  const activePlan = await guardianDeletePaths({ repoRoot: repo, cwd: repo, config: DEFAULT_CONFIG, mode: "plan", paths: ["active-parent"], allowRecursive: true });
+
+  // Then only the terminal deleted path stops acting as a protected root.
+  assert.equal(terminalPlan.ok, true, JSON.stringify(terminalPlan));
+  assert.equal(activePlan.ok, false, JSON.stringify(activePlan));
+  assert.equal(hasFatalBlocker(activePlan.blockers, "active-parent", /registered Guardian session worktree path/), true);
+});
+
+test("guardian_delete_paths preserves a terminal worktree that reappears after empty-directory fingerprinting", async (t) => {
+  // Given a planned empty parent whose terminal nested worktree is recorded deleted and absent.
+  const repo = await createRepo();
+  t.after(() => fs.rm(repo, { recursive: true, force: true }));
+  t.after(() => setDeletionFingerprintTestHookForTesting(undefined));
+  const parent = path.join(repo, "terminal-race-parent");
+  const worktree = path.join(parent, "src");
+  await fs.mkdir(parent);
+  await seedSession(repo, {
+    session_id: "terminal-delete-race",
+    status: "finished",
+    branch: "guardian/terminal-delete-race",
+    worktree_path: worktree,
+    deleted_worktree_path: worktree,
+    head_commit: "4".repeat(40),
+    safety_refs: ["refs/opencode-guardian/terminal-delete-race"],
+  });
+  const request = { repoRoot: repo, cwd: repo, config: DEFAULT_CONFIG, paths: ["terminal-race-parent"], allowRecursive: true };
+  const plan = await guardianDeletePaths({ ...request, mode: "plan" });
+  let injected = false;
+  setDeletionFingerprintTestHookForTesting({
+    afterDirectoryRead: async (absoluteDirectory) => {
+      if (injected || absoluteDirectory !== parent) return;
+      injected = true;
+      await fs.mkdir(worktree, { recursive: true });
+      await fs.writeFile(path.join(worktree, "keep.txt"), "keep\n");
+    },
+  });
+
+  // When apply rechecks the fingerprint while the nested worktree reappears after readdir.
+  const applied = await guardianDeletePaths({ ...request, mode: "apply", confirmDelete: true, confirmToken: plan.confirmToken });
+
+  // Then non-recursive empty-directory removal fails closed and preserves the raced content.
+  assert.equal(applied.ok, false, JSON.stringify(applied));
+  assert.equal(applied.status, "blocked");
+  assert.equal(await fs.readFile(path.join(worktree, "keep.txt"), "utf8"), "keep\n");
 });
 
 test("guardian_delete_paths can plan exact reviewable handoff paths blocked by hygiene cleanup", async () => {

@@ -3,8 +3,9 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { DEFAULT_CONFIG } from "../src/config.ts";
+import { setDeletionFingerprintTestHookForTesting } from "../src/deletion-fingerprint.ts";
 import { guardianHygiene, scanWorkspaceHygiene } from "../src/hygiene.ts";
-import { createRepo } from "./helpers.ts";
+import { createRepo, seedSession } from "./helpers.ts";
 
 test("hygiene scanner inventories filesystem-only empty directories without scanning protected paths", async () => {
   // Given
@@ -116,4 +117,59 @@ test("guardian_hygiene canonicalizes a repository alias before cleanup", { skip:
   assert.equal(plan.ok, true, JSON.stringify(plan));
   assert.equal(applied.ok, true, JSON.stringify(applied));
   await assert.rejects(fs.access(cacheRoot));
+});
+
+test("guardian_hygiene removes an empty parent after its terminal session worktree is recorded deleted", async (t) => {
+  // Given a terminal session whose recorded nested worktree is absent below an empty parent.
+  const repo = await createRepo();
+  t.after(() => fs.rm(repo, { recursive: true, force: true }));
+  const emptyParent = path.join(repo, "retired-worktree-parent");
+  const deletedWorktree = path.join(emptyParent, "src");
+  await fs.mkdir(emptyParent);
+  await seedSession(repo, {
+    session_id: "terminal-empty-parent",
+    status: "finished",
+    branch: "guardian/terminal-empty-parent",
+    worktree_path: deletedWorktree,
+    deleted_worktree_path: deletedWorktree,
+    head_commit: "1".repeat(40),
+    safety_refs: ["refs/opencode-guardian/terminal-empty-parent"],
+  });
+
+  // When Guardian plans and applies filesystem-only empty-directory cleanup.
+  const request = { repoRoot: repo, cwd: repo, config: DEFAULT_CONFIG, allowCategories: ["filesystem-only-empty-directory"] };
+  const plan = await guardianHygiene({ ...request, mode: "plan" });
+  const applied = await guardianHygiene({ ...request, mode: "apply", confirmDelete: true, confirmToken: plan.confirmToken });
+
+  // Then stale terminal metadata does not protect an already-absent worktree path.
+  assert.equal(plan.ok, true, JSON.stringify(plan));
+  assert.equal(applied.ok, true, JSON.stringify(applied));
+  await assert.rejects(fs.access(emptyParent));
+});
+
+test("guardian_hygiene returns a structured block when content appears after empty-directory fingerprinting", async (t) => {
+  // Given a token-approved empty directory and a deterministic apply-time reappearance.
+  const repo = await createRepo();
+  t.after(() => fs.rm(repo, { recursive: true, force: true }));
+  t.after(() => setDeletionFingerprintTestHookForTesting(undefined));
+  const emptyRoot = path.join(repo, "hygiene-race-parent");
+  await fs.mkdir(emptyRoot);
+  const request = { repoRoot: repo, cwd: repo, config: DEFAULT_CONFIG, allowCategories: ["filesystem-only-empty-directory"] };
+  const plan = await guardianHygiene({ ...request, mode: "plan" });
+  let injected = false;
+  setDeletionFingerprintTestHookForTesting({
+    afterDirectoryRead: async (absoluteDirectory) => {
+      if (injected || absoluteDirectory !== emptyRoot) return;
+      injected = true;
+      await fs.writeFile(path.join(emptyRoot, "keep.txt"), "keep\n");
+    },
+  });
+
+  // When the apply boundary tries non-recursive removal after the fingerprint is collected.
+  const applied = await guardianHygiene({ ...request, mode: "apply", confirmDelete: true, confirmToken: plan.confirmToken });
+
+  // Then the tool reports the safe refusal and preserves the new content.
+  assert.equal(applied.ok, false, JSON.stringify(applied));
+  assert.equal(applied.status, "blocked");
+  assert.equal(await fs.readFile(path.join(emptyRoot, "keep.txt"), "utf8"), "keep\n");
 });
