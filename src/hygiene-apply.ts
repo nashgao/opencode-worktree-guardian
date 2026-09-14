@@ -225,9 +225,9 @@ async function buildHygieneCleanupPreflight(input: Record<string, unknown>) {
 }
 
 async function removeCleanupTarget(repoRoot: string, target: CleanupTarget) {
+  if (target.category === "filesystem-only-empty-directory" && target.kind === "directory") await fs.rmdir(target.absolutePath);
+  else await fs.rm(target.absolutePath, { recursive: target.kind === "directory", force: false });
   try {
-    if (target.category === "filesystem-only-empty-directory" && target.kind === "directory") await fs.rmdir(target.absolutePath);
-    else await fs.rm(target.absolutePath, { recursive: target.kind === "directory", force: false });
     await removeEmptyAncestorDirectories({ root: repoRoot, removedPath: target.absolutePath });
   } catch (error) {
     if (!isEnoent(error)) throw error;
