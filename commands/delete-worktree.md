@@ -1,6 +1,6 @@
 ---
 description: Plan or apply safe Guardian-mediated worktree, orphan branch, stale branch, or explicit unmerged abandon cleanup.
-argument-hint: "targetPath=... | sessionId=... | branch=... mode=plan|apply deleteBranch=true abandonUnmerged=true confirmToken=..."
+argument-hint: "targetPath=... | sessionId=... | branch=... mode=plan|apply deleteBranch=true archivePath=/abs/recovery.tar.gz archiveSha256=... confirmToken=..."
 ---
 
 Use the native `guardian_delete_worktree` tool for safe explicit worktree deletion.
@@ -8,6 +8,8 @@ Use the native `guardian_delete_worktree` tool for safe explicit worktree deleti
 Run `mode: "plan"` first for the exact `targetPath`, `sessionId`, or `branch`. Inspect blockers, ignored files, target identity, branch, HEAD, and token details. Apply only after explicit user confirmation with `mode: "apply"`, the returned `confirmToken`, and the same target/options.
 
 Dirty or untracked target worktrees block by default. Use `allowRedundantDirtyPaths: true` only when Guardian proves every dirty path already matches the fetched base tree; inspect `baseRef`, `baseRefOid`, `redundantDirtyProofs`, and `dirtySnapshotRef` before applying. Outside the active-session already-landed path in `guardian_done`, high-level done/finish-workflow cleanup does not opt into this.
+
+For an evidence-only worktree, pass one absolute external `archivePath`, its exact lowercase `archiveSha256`, and `allowIgnoredFiles: true` when ignored files are present. Archive mode accepts only untracked and explicitly consented ignored regular files or symlinks. Inspect every member proof. Tracked, staged, renamed, conflicted, deleted, or type-changed paths remain on their existing blocker or redundant-dirty path. Apply copies the archive through a no-follow handle, re-verifies it, atomically quarantines the exact paths within the cooperative same-user concurrency boundary, rechecks the external archive, and only then destroys the quarantine.
 
 Use `deleteBranch: true` only when branch deletion is explicitly intended. Use `abandonUnmerged: true` only when the user explicitly confirms abandoning unmerged local Guardian work, and include it in both plan and apply.
 

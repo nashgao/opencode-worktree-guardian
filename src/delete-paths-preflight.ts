@@ -1,4 +1,5 @@
 import path from "node:path";
+import { verifyArchivedPaths } from "./archived-paths.ts";
 import { expandWorktreeRoot, loadConfig } from "./config.ts";
 import { collectDeleteFingerprint } from "./deletion-fingerprint.ts";
 import { getRepoRoot, listWorktrees, runGit, tryGit } from "./git.ts";
@@ -45,10 +46,8 @@ async function isIgnoredPath(repoRoot: string, relative: string) {
   return result.ok;
 }
 
-function protectedPathReason(relative: string, protectedPaths: readonly string[]) {
+function intrinsicProtectedPathReason(relative: string) {
   if (relative === ".git" || relative.startsWith(".git/")) return "git metadata";
-  const protectedPath = protectedPathMatch(relative, protectedPaths);
-  if (protectedPath) return protectedPath.reason;
   const firstPart = relative.split("/").filter(Boolean)[0] ?? "";
   return PROTECTED_PATH_ROOTS.has(firstPart) ? `protected ${firstPart} path` : null;
 }
@@ -109,6 +108,7 @@ export async function buildDeletePathsPreflight(input: Record<string, unknown>) 
   const protectedPaths = protectedPathsFromConfig(config);
   const allowTracked = input.allowTracked === true;
   const allowRecursive = input.allowRecursive === true;
+  const archiveRequested = input.archivePath !== undefined || input.archiveSha256 !== undefined;
   const paths = uniqueSorted(stringArray(input.paths));
   const blockers: DeletePathBlocker[] = [];
   if (paths.length === 0) blockers.push({ reason: "paths must include at least one path", fatal: true });
@@ -135,8 +135,10 @@ export async function buildDeletePathsPreflight(input: Record<string, unknown>) 
     }
     if (!isSameOrInside(absolutePath, repoRoot)) pathBlockers.push({ path: requestedPath, reason: "delete path is outside the repository root", fatal: true });
     if (relative === ".") pathBlockers.push({ path: relative, reason: "repository root cannot be deleted by guardian_delete_paths", fatal: true });
-    const protectedReason = protectedPathReason(relative, protectedPaths);
-    if (protectedReason) pathBlockers.push({ path: relative, reason: protectedReason, fatal: true });
+    const intrinsicProtectedReason = intrinsicProtectedPathReason(relative);
+    if (intrinsicProtectedReason) pathBlockers.push({ path: relative, reason: intrinsicProtectedReason, fatal: true });
+    const configuredProtectedPath = protectedPathMatch(relative, protectedPaths);
+    if (configuredProtectedPath && !archiveRequested) pathBlockers.push({ path: relative, reason: configuredProtectedPath.reason, fatal: true });
     const protectedRoot = protectedRootBlocker(absolutePath, protectedRoots);
     if (protectedRoot) pathBlockers.push({ path: relative, reason: protectedRoot.reason, fatal: true });
     const stat = pathBlockers.length > 0 ? null : await lstatOrMissing(absolutePath);
@@ -148,6 +150,9 @@ export async function buildDeletePathsPreflight(input: Record<string, unknown>) 
     const ignored = pathBlockers.some((blocker) => blocker.fatal) ? false : await isIgnoredPath(repoRoot, relative);
     const status: DeletePathStatus = stat == null ? "missing" : trackedContents.length > 0 ? "tracked" : ignored ? "ignored" : "untracked";
     if (trackedContents.length > 0 && !allowTracked) pathBlockers.push({ path: relative, reason: "tracked source deletion requires allowTracked=true", fatal: true });
+    if (archiveRequested && (kind !== "file" || status === "tracked")) {
+      pathBlockers.push({ path: relative, reason: "archive-backed protected-path cleanup supports only untracked or ignored regular files", fatal: true });
+    }
     if (pathBlockers.length > 0) {
       blockers.push(...pathBlockers);
       continue;
@@ -165,7 +170,25 @@ export async function buildDeletePathsPreflight(input: Record<string, unknown>) 
     const overlap = targets.find((candidate) => candidate.path !== target.path && isSameOrInside(path.resolve(repoRoot, candidate.path), path.resolve(repoRoot, target.path)));
     if (overlap) blockers.push({ path: target.path, reason: `delete paths overlap with ${overlap.path}`, fatal: true });
   }
-  const preflight: Record<string, unknown> = { repoRoot, mode: input.mode, paths, allowTracked, allowRecursive, targets, blockers };
+  let archivePath: string | null = null;
+  let archiveSha256: string | null = null;
+  let archivedPathProofs: readonly unknown[] = [];
+  if (archiveRequested && blockers.every((blocker) => !blocker.fatal) && targets.length > 0) {
+    if (typeof input.archivePath !== "string" || typeof input.archiveSha256 !== "string") {
+      blockers.push({ reason: "archivePath and archiveSha256 must both be exact strings", fatal: true });
+    } else {
+      try {
+        const proof = await verifyArchivedPaths({ worktreePath: repoRoot, archivePath: input.archivePath, archiveSha256: input.archiveSha256, paths: targets.map((target) => target.path) });
+        archivePath = proof.archivePath;
+        archiveSha256 = proof.archiveSha256;
+        archivedPathProofs = proof.entries;
+      } catch (error) {
+        if (!(error instanceof Error)) throw error;
+        blockers.push({ reason: error.message, fatal: true });
+      }
+    }
+  }
+  const preflight: Record<string, unknown> = { repoRoot, mode: input.mode, paths, allowTracked, allowRecursive, archivePath, archiveSha256, archivedPathProofs, archivedPathCount: archivedPathProofs.length, targets, blockers };
   preflight.summary = deleteSummary(targets, blockers);
   return preflight;
 }

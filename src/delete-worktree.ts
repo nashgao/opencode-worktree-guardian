@@ -1,10 +1,12 @@
 import path from "node:path";
+import { applyArchivedPathsCleanup, validateArchivedPathsPreflight } from "./delete-worktree-archive-runtime.ts";
 import { expandWorktreeRoot, loadConfig } from "./config.ts";
 import { buildSafetyRef, createOrReuseSafetyRef, createSafetyRef, deleteBranchAtHead, getDirtyFiles, getHeadCommit, getIgnoredFiles, getRepoRoot, listStashes, listWorktrees, removeWorktree } from "./git.ts";
 import { applyRedundantDirtyCleanup, dirtyResultFields, sessionSafetyRefs, validateRedundantDirtyPreflight } from "./delete-worktree-dirty-runtime.ts";
 import { isSameOrInside, samePath } from "./filesystem-boundaries.ts";
 import { getGuardianPaths, readState, recordSession } from "./state.ts";
 import { blocked, createConfirmToken, errorMessage, withDeleteReport } from "./delete-worktree-report.ts";
+import { emptyDeletePreflight } from "./delete-worktree-preflight-state.ts";
 import { collectIgnoredFileFingerprint, recordAncestryPreflight } from "./delete-worktree-preflight.ts";
 import { preflightBranchOnlyDeletion, rejectSymbolicBranchRef } from "./delete-worktree-branch-only.ts";
 import { findTarget } from "./delete-worktree-targets.ts";
@@ -14,49 +16,9 @@ import { resolveRemoteAuthority } from "./git-authority.ts";
 
 export type DeleteWorktreeRuntime = {
   readonly afterSafetyRefCreated?: () => Promise<void>;
+  readonly afterArchivedPathsQuarantined?: () => Promise<void>;
   readonly beforeWorktreeRemoval?: () => Promise<void>;
 };
-
-function emptyDeletePreflight(repoRoot: string, mode: unknown, deleteRequestedBranch: boolean, abandonUnmerged: boolean, allowIgnoredFiles: boolean, allowRedundantDirtyPaths: boolean): Record<string, unknown> {
-  return {
-    repoRoot: path.resolve(repoRoot),
-    mode,
-    targetKind: null,
-    targetPath: null,
-    worktreeListed: null,
-    branch: null,
-    head: null,
-    detached: false,
-    sessionId: null,
-    sessionStatus: "unrecorded",
-    sessionRecorded: false,
-    deleteBranch: deleteRequestedBranch,
-    abandonUnmerged,
-    ancestryRef: null,
-    ancestryProven: null,
-    unmergedCommits: [],
-    unmergedCommitCount: 0,
-    allowIgnoredFiles,
-    allowRedundantDirtyPaths,
-    baseRef: null,
-    baseRefOid: null,
-    dirtyFiles: [],
-    dirtyFileCount: 0,
-    redundantDirtyProofs: [],
-    redundantDirtyFileCount: 0,
-    dirtySnapshotCommit: null,
-    dirtySnapshotRef: null,
-    dirtySnapshotFileCount: 0,
-    dirtySnapshotFiles: [],
-    cleanedDirtyFiles: [],
-    cleanedDirtyFileCount: 0,
-    ignoredFiles: [],
-    ignoredFileCount: 0,
-    stashCount: 0,
-    safetyRef: null,
-    blockers: [],
-  };
-}
 
 async function rejectInvalidDeleteRequest(input: Record<string, unknown>, config: Record<string, unknown>, preflight: Record<string, unknown>) {
   const mode = input.mode;
@@ -108,13 +70,17 @@ async function preflightWorktreeDeletion(input: Record<string, unknown>, config:
   const dirtyFiles = await getDirtyFiles(entry.path);
   preflight.dirtyFiles = dirtyFiles;
   preflight.dirtyFileCount = dirtyFiles.length;
-  const dirtyBlocker = await validateRedundantDirtyPreflight({ input, config, preflight, entry }, session, dirtyFiles);
-  if (dirtyBlocker) return dirtyBlocker;
   const ignoredFiles = await getIgnoredFiles(entry.path);
   preflight.ignoredFiles = ignoredFiles;
   preflight.ignoredFileFingerprint = await collectIgnoredFileFingerprint(entry.path, ignoredFiles);
   preflight.ignoredFileCount = ignoredFiles.length;
   if (ignoredFiles.length > 0 && !allowIgnoredFiles) return blocked("worktree has ignored files", { ignoredFiles, targetPath: entry.path }, preflight);
+  const archived = await validateArchivedPathsPreflight({ input, preflight, entry }, ignoredFiles);
+  if (archived.blocker) return archived.blocker;
+  if (!archived.handled) {
+    const dirtyBlocker = await validateRedundantDirtyPreflight({ input, config, preflight, entry }, session, dirtyFiles);
+    if (dirtyBlocker) return dirtyBlocker;
+  }
   const stashes = await listStashes(repoRoot);
   preflight.stashCount = stashes.length;
   preflight.stashes = stashes;
@@ -169,6 +135,8 @@ async function applyWorktreeDeletion(input: Record<string, unknown>, config: Rec
     await recordSession(repoRoot, config, { ...session, session_id: session.session_id, head_commit: head, safety_refs: sessionSafetyRefs(session, safetyRef, preflight) }, { event: { type: "guardian_delete_worktree_safety_ref", session_id: session.session_id, ref: safetyRef } });
   }
   await runtime.afterSafetyRefCreated?.();
+  const archivedCleanupBlocker = await applyArchivedPathsCleanup({ input, preflight, entry, afterArchivedPathsQuarantined: runtime.afterArchivedPathsQuarantined });
+  if (archivedCleanupBlocker) return archivedCleanupBlocker;
   const cleanupBlocker = await applyRedundantDirtyCleanup({ input, preflight, entry }, { safetySessionId, branch, head });
   if (cleanupBlocker) return cleanupBlocker;
   await runtime.beforeWorktreeRemoval?.();
@@ -176,7 +144,8 @@ async function applyWorktreeDeletion(input: Record<string, unknown>, config: Rec
   const ignoredFileFingerprint = await collectIgnoredFileFingerprint(entry.path, ignoredFiles);
   preflight.finalIgnoredFiles = ignoredFiles;
   preflight.finalIgnoredFileFingerprint = ignoredFileFingerprint;
-  if (JSON.stringify(ignoredFiles) !== JSON.stringify(preflight.ignoredFiles) || JSON.stringify(ignoredFileFingerprint) !== JSON.stringify(preflight.ignoredFileFingerprint)) {
+  const archivedPathCount = typeof preflight.archivedPathCount === "number" ? preflight.archivedPathCount : 0;
+  if (archivedPathCount === 0 && (JSON.stringify(ignoredFiles) !== JSON.stringify(preflight.ignoredFiles) || JSON.stringify(ignoredFileFingerprint) !== JSON.stringify(preflight.ignoredFileFingerprint))) {
     return blocked("ignored-file consent changed at deletion boundary; re-run plan and review the updated ignored inventory", {
       safetyRef,
       requiresFreshPlan: true,

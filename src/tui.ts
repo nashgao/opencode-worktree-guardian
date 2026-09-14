@@ -113,13 +113,13 @@ const COMMANDS = [
     name: "guardian-delete-worktree",
     title: "Guardian: Delete Worktree",
     description: "Plan or apply safe Guardian-mediated worktree, orphan branch, stale branch, or explicit unmerged abandon deletion.",
-    prompt: "Use the guardian_delete_worktree native tool. Run mode=plan first unless a fresh confirmToken for the exact target/options is provided. Dirty targets block by default; use allowRedundantDirtyPaths=true only in direct plan/apply when Guardian proves each dirty path already matches the fetched base tree and reports dirtySnapshotRef. Stale local Guardian branch cleanup requires an exact branch or terminal sessionId plus deleteBranch=true and Guardian ownership proof from terminal state or safety refs. Intentional unmerged local abandonment requires deleteBranch=true plus abandonUnmerged=true in both plan and apply after inspecting unmerged commit evidence. Never run raw worktree removal, filesystem deletion, forced branch deletion, hard reset, forced clean, or stash mutation.",
+    prompt: "Use the guardian_delete_worktree native tool. Run mode=plan first unless a fresh confirmToken for the exact target/options is provided. Dirty targets block by default; use allowRedundantDirtyPaths=true only when Guardian proves each path matches the fetched base, or exact archivePath and archiveSha256 values when every untracked and consented ignored path is recoverable outside the target worktree. Inspect archive proofs before confirmation. Stale local Guardian branch cleanup requires an exact branch or terminal sessionId plus deleteBranch=true and Guardian ownership proof from terminal state or safety refs. Intentional unmerged local abandonment requires deleteBranch=true plus abandonUnmerged=true in both plan and apply after inspecting unmerged commit evidence. Never run raw worktree removal, filesystem deletion, forced branch deletion, hard reset, forced clean, or stash mutation.",
   },
   {
     name: "guardian-delete-paths",
     title: "Guardian: Delete Paths",
     description: "Plan or apply exact path deletion for approved files or directories.",
-    prompt: "Use the guardian_delete_paths native tool. Run mode=plan first with exact paths, inspect target status and blockers, get explicit user confirmation, then apply with confirmDelete=true. Tracked source deletion requires allowTracked=true. Directory deletion requires allowRecursive=true. Use guardian_delete_worktree for worktree removal.",
+    prompt: "Use the guardian_delete_paths native tool. Run mode=plan first with exact paths, inspect target status and blockers, get explicit user confirmation, then apply with confirmDelete=true. Tracked source deletion requires allowTracked=true. Directory deletion requires allowRecursive=true. A configured protected untracked or ignored regular file additionally requires exact external archivePath and archiveSha256 recovery proof; tracked source, intrinsic Git, dependency, worktree-root, symlink-root, directory, duplicate-member, hardlink, and special-type blockers remain absolute. Use guardian_delete_worktree for worktree removal.",
   },
   {
     name: "guardian-unblock-finish",

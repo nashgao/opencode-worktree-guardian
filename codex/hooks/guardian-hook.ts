@@ -37,7 +37,7 @@ function isEnoent(error: unknown): boolean {
 }
 
 function normalizeOptionalToolStrings(toolArgs: Record<string, unknown>): void {
-  for (const key of ["repoRoot", "cwd", "sessionId", "branch", "targetPath", "worktreePath", "confirmToken"]) if (typeof toolArgs[key] === "string" && toolArgs[key].trim() === "") delete toolArgs[key];
+  for (const key of ["repoRoot", "cwd", "sessionId", "branch", "targetPath", "worktreePath", "confirmToken", "archivePath", "archiveSha256"]) if (typeof toolArgs[key] === "string" && toolArgs[key].trim() === "") delete toolArgs[key];
 }
 
 function sortedStringArgs(value: unknown): readonly string[] {
@@ -56,6 +56,7 @@ async function planCacheKey(name: string, toolArgs: Record<string, unknown>, pla
     allowTracked: toolArgs["allowTracked"] === true, allowRecursive: toolArgs["allowRecursive"] === true, allowDirtyNestedGit: toolArgs["allowDirtyNestedGit"] === true,
     rescue: toolArgs["rescue"] === true, primary: toolArgs["primary"] === true,
     deleteBranch: toolArgs["deleteBranch"] === true, abandonUnmerged: toolArgs["abandonUnmerged"] === true, allowIgnoredFiles: toolArgs["allowIgnoredFiles"] === true,
+    archivePath: typeof toolArgs["archivePath"] === "string" ? toolArgs["archivePath"] : "", archiveSha256: typeof toolArgs["archiveSha256"] === "string" ? toolArgs["archiveSha256"] : "",
     allowAdminBypass: toolArgs["allowAdminBypass"] === true, timestamp: typeof toolArgs["timestamp"] === "string" ? toolArgs["timestamp"] : "",
   });
 }

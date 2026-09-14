@@ -11,4 +11,6 @@ When this command is reached from a hygiene `reviewableCandidates` entry, treat 
 
 Tracked source deletion requires `allowTracked: true`. Directory deletion requires `allowRecursive: true`. Worktree deletion must use `guardian_delete_worktree`.
 
+An exact protected regular file may use one absolute external `archivePath` plus its exact lowercase `archiveSha256`, but only when the file is untracked or ignored. Inspect the archive member proof before confirmation. Git metadata, dependency roots, worktree roots, symlink roots, directories, tracked source, duplicate members, hardlinks, and unsupported archive types remain blocked.
+
 Do not run raw filesystem deletion, forced cleanup, worktree removal, branch deletion, hard reset, forced clean, stash mutation, or protected-branch bypasses from this command. Full policy: `docs/adr/0001-guardian-safety-policy.md`.
