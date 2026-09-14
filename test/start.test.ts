@@ -227,7 +227,7 @@ test("guardian_start makes repair and supersession bindings ineligible without r
   assert.notDeepEqual(repaired.session.provenance, { manifest: originalReference });
 });
 
-test("guardian_start clears captured eligibility when repair or supersession runs with opt-in disabled", async (t) => {
+test("guardian_start clears repaired eligibility but retains superseded provenance with opt-in disabled", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
   const repairedOriginal = await startGuardianSession({ repoRoot: repo, cwd: repo, sessionId: "ses_disabled_repair_original", taskName: "disabled repair original", createWorktree: true, config: quarantineConfig });
@@ -254,8 +254,8 @@ test("guardian_start clears captured eligibility when repair or supersession run
   assert.equal(superseding.session.provenance, undefined);
   assert.equal(superseding.session.provenance_status, undefined);
   assert.equal(state.sessions.ses_disabled_superseded_original?.status, "superseded");
-  assert.equal(state.sessions.ses_disabled_superseded_original?.provenance, undefined);
-  assert.equal(state.sessions.ses_disabled_superseded_original?.lineage_id, undefined);
+  assert.deepEqual(state.sessions.ses_disabled_superseded_original?.provenance, supersededOriginal.session.provenance);
+  assert.equal(state.sessions.ses_disabled_superseded_original?.lineage_id, supersededOriginal.session.lineage_id);
   assert.equal(state.sessions.ses_disabled_superseded_original?.provenance_status, undefined);
   assert.equal(state.sessions.ses_disabled_superseded_original?.quarantine_eligible, undefined);
 });
