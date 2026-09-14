@@ -263,6 +263,8 @@ A configured `protectedPaths` untracked or ignored regular-file target may proce
 
 The tool blocks paths outside the repo, the repo root, `.git`, `.opencode`, dependency roots such as `node_modules` and `vendor`, configured or registered Guardian worktree roots, the current worktree root, missing paths, symlink roots, overlapping selections, tracked contents without `allowTracked: true`, and directories without `allowRecursive: true`.
 
+A session path stops acting as a registered worktree root only when its status is `deleted`, `abandoned`, or `finished`, its `deleted_worktree_path` canonically equals `worktree_path`, and that exact path is absent. Active, preserved, superseded, mismatched, or reappeared paths remain protected. `guardian_hygiene` uses the same boundary when reviewing an empty ancestor of a former nested worktree.
+
 Apply re-runs the same fingerprinted preflight immediately before deletion, deletes files with internal Node `fs` APIs, and does not stage changes. Tracked deletions remain visible in `git status` for review and commit.
 
 ## `guardian_hygiene` Scan Policy

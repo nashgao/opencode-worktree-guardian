@@ -45,7 +45,12 @@ function deleteReport(result: Record<string, unknown>, preflight: Record<string,
 }
 
 async function removeDeleteTarget(repoRoot: string, target: DeletePathTarget) {
-  await fs.rm(target.absolutePath, { recursive: target.kind === "directory", force: false });
+  const emptyDirectory = target.kind === "directory"
+    && target.fingerprint.length === 1
+    && target.fingerprint[0]?.path === target.path
+    && target.fingerprint[0]?.kind === "directory";
+  if (emptyDirectory) await fs.rmdir(target.absolutePath);
+  else await fs.rm(target.absolutePath, { recursive: target.kind === "directory", force: false });
   if (target.trackedContents.length > 0) await runGit(repoRoot, ["add", "-u", "--", target.path]);
 }
 
@@ -102,7 +107,12 @@ export async function guardianDeletePaths(input: Record<string, unknown> = {}): 
   }
   if (archiveProofs.length === 0) {
     for (const target of targets) {
-      await removeDeleteTarget(repoRoot, target);
+      try {
+        await removeDeleteTarget(repoRoot, target);
+      } catch (error) {
+        const failedSummary = deleteSummary(targets, blockers, removedTargets);
+        return deleteReport({ ok: false, status: "blocked", reason: error instanceof Error ? error.message : String(error), summary: failedSummary, targets, removedTargets, blockers }, { ...preflight, summary: failedSummary }, removedTargets);
+      }
       removedTargets.push(target);
     }
   }

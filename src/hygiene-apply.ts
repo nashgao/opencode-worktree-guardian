@@ -9,6 +9,7 @@ import { assertNoSymlinkAncestors, canonicalPathOrResolved, isEnoent, isSameOrIn
 import { getGuardianPaths, readState } from "./state.ts";
 import { protectedDirReason, scanWorkspaceHygiene } from "./hygiene-scan.ts";
 import type { HygieneCategory, HygieneSeverity } from "./hygiene-scan.ts";
+import { hasRecordedWorktreeDeletion } from "./lifecycle.ts";
 import { protectedPathsFromConfig } from "./protected-paths.ts";
 
 type CleanupPathKind = "directory" | "file" | "other";
@@ -55,7 +56,8 @@ async function collectCleanupProtectedRoots(repoRoot: string, config: Record<str
     for (const session of Object.values(recordValue(state.sessions))) {
       const sessionRecord = recordValue(session);
       if (typeof sessionRecord.worktree_path === "string" && path.resolve(sessionRecord.worktree_path) !== path.resolve(repoRoot) && isSameOrInside(path.resolve(sessionRecord.worktree_path), path.resolve(repoRoot))) {
-        roots.set(path.resolve(sessionRecord.worktree_path), "registered Guardian session worktree path");
+        const worktreePath = path.resolve(sessionRecord.worktree_path);
+        if (!hasRecordedWorktreeDeletion(sessionRecord) || await lstatOrMissing(worktreePath) !== null) roots.set(worktreePath, "registered Guardian session worktree path");
       }
     }
   } catch (error) {
@@ -223,9 +225,9 @@ async function buildHygieneCleanupPreflight(input: Record<string, unknown>) {
 }
 
 async function removeCleanupTarget(repoRoot: string, target: CleanupTarget) {
+  if (target.category === "filesystem-only-empty-directory" && target.kind === "directory") await fs.rmdir(target.absolutePath);
+  else await fs.rm(target.absolutePath, { recursive: target.kind === "directory", force: false });
   try {
-    if (target.category === "filesystem-only-empty-directory" && target.kind === "directory") await fs.rmdir(target.absolutePath);
-    else await fs.rm(target.absolutePath, { recursive: target.kind === "directory", force: false });
     await removeEmptyAncestorDirectories({ root: repoRoot, removedPath: target.absolutePath });
   } catch (error) {
     if (!isEnoent(error)) throw error;
@@ -256,7 +258,12 @@ export async function runGuardianHygieneMode(input: Record<string, unknown> = {}
   }
   const removedTargets: CleanupTarget[] = [];
   for (const target of targets) {
-    await removeCleanupTarget(String(preflight.repoRoot), target);
+    try {
+      await removeCleanupTarget(String(preflight.repoRoot), target);
+    } catch (error) {
+      const failedSummary = cleanupSummary(targets, blockers, Number((preflight.scanSummary as Record<string, unknown> | undefined)?.findingCount ?? targets.length), removedTargets);
+      return cleanupReport({ ok: false, status: "blocked", reason: error instanceof Error ? error.message : String(error), summary: failedSummary, targets, removedTargets, blockers }, { ...preflight, summary: failedSummary }, removedTargets);
+    }
     removedTargets.push(target);
   }
   const finalSummary = cleanupSummary(targets, blockers, Number((preflight.scanSummary as Record<string, unknown> | undefined)?.findingCount ?? targets.length), removedTargets);

@@ -1,3 +1,4 @@
+import path from "node:path";
 import type { MutableRecord } from "./types.ts";
 
 export const TERMINAL_SESSION_STATUS_VALUES = ["deleted", "abandoned", "finished", "preserved", "superseded"] as const;
@@ -14,6 +15,12 @@ export function isTerminalSession(session: { status?: unknown } | undefined | nu
 
 export function isActiveSession<T extends { status?: unknown }>(session: T | undefined | null): session is T & { readonly status: "active" } {
   return session?.status === "active";
+}
+
+export function hasRecordedWorktreeDeletion(session: { status?: unknown; worktree_path?: unknown; deleted_worktree_path?: unknown }): boolean {
+  if (session.status !== "deleted" && session.status !== "abandoned" && session.status !== "finished") return false;
+  if (typeof session.worktree_path !== "string" || typeof session.deleted_worktree_path !== "string") return false;
+  return path.resolve(session.worktree_path) === path.resolve(session.deleted_worktree_path);
 }
 
 export function clearTerminalLifecycleFields(session: MutableRecord) {

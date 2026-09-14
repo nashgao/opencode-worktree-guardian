@@ -226,6 +226,8 @@ export async function recordSession(repoRoot: string, config: GuardianConfigInpu
       && typeof merged.worktree_path === "string"
       && (!await samePathOnDisk(previous.worktree_path, merged.worktree_path) || previous.branch !== merged.branch);
     if (supersededBinding || bindingChanged) {
+      delete merged.provenance;
+      delete merged.lineage_id;
       if (isProvenanceEnabled(config)) {
         merged.provenance_status = "ineligible";
         merged.quarantine_eligible = false;
