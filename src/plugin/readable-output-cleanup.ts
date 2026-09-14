@@ -1,3 +1,4 @@
+import { appendArchiveProof } from "./readable-output-archive.ts";
 import { appendBoundedList, appendStashInventoryWarning, arrayValue, recordValue, shortCommit, textValue } from "./readable-output-values.ts";
 
 function reviewableTextValue(value: unknown, fallback = "-") {
@@ -138,6 +139,7 @@ export function formatGuardianDeleteOutput(rawResult: unknown) {
     `[INFO] branch: ${textValue(preflight.branch ?? result.branch)} | head: ${shortCommit(preflight.head ?? result.head)}`,
   ];
   appendStashInventoryWarning(lines, preflight.stashCount);
+  appendArchiveProof(lines, preflight);
   if (preflight.allowRedundantDirtyPaths === true || Number(preflight.redundantDirtyFileCount ?? 0) > 0) {
     lines.push(`[INFO] allowRedundantDirtyPaths: ${String(preflight.allowRedundantDirtyPaths === true)} | baseRef: ${textValue(preflight.baseRef)} | baseRefOid: ${shortCommit(preflight.baseRefOid)}`);
     lines.push(`[INFO] redundantDirtyFileCount: ${Number(preflight.redundantDirtyFileCount ?? 0)} | dirtySnapshotRef: ${textValue(preflight.dirtySnapshotRef ?? result.dirtySnapshotRef)}`);
@@ -176,6 +178,7 @@ export function formatGuardianDeletePathsOutput(rawResult: unknown) {
     `[INFO] paths: ${arrayValue(preflight.paths).length} | approvedTargets: ${Number(summary.approvedTargetCount ?? targets.length)} | removedTargets: ${Number(summary.removedTargetCount ?? removedTargets.length)} | blockers: ${Number(summary.blockedTargetCount ?? blockers.length)} | fatal: ${Number(summary.fatalBlockerCount ?? 0)}`,
     `[INFO] allowTracked: ${String(preflight.allowTracked === true)} | allowRecursive: ${String(preflight.allowRecursive === true)}`,
   ];
+  appendArchiveProof(lines, preflight);
   const reason = textValue(result.reason, "");
   if (result.ok === false || reason) lines.push(`[FAIL] ${reason || "guardian_delete_paths blocked"}`);
   appendBoundedList({

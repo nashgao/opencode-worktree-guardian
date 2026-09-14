@@ -50,6 +50,8 @@ export function guardianTool(name: GuardianToolName, description: string, planCa
       abandonUnmerged: z.boolean().optional(),
       allowIgnoredFiles: z.boolean().optional(),
       allowRedundantDirtyPaths: z.boolean().optional(),
+      archivePath: z.string().optional(),
+      archiveSha256: z.string().optional(),
       allowedRemoteBranches: z.array(z.string()).optional(),
       remote: z.string().optional(),
       remoteBranch: z.string().optional(),

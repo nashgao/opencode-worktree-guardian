@@ -11,6 +11,9 @@ function createDeleteConfirmToken(preflight: Record<string, unknown>) {
     paths: preflight.paths,
     allowTracked: preflight.allowTracked === true,
     allowRecursive: preflight.allowRecursive === true,
+    archivePath: preflight.archivePath,
+    archiveSha256: preflight.archiveSha256,
+    archivedPathProofs: preflight.archivedPathProofs,
     targets: (preflight.targets as DeletePathTarget[] | undefined ?? []).map((target) => ({
       path: target.path,
       kind: target.kind,

@@ -15,7 +15,7 @@ function sortedStringArgs(value: unknown) {
 }
 
 export function normalizeOptionalToolStrings(toolArgs: PlanCacheToolArgs) {
-  for (const key of ["repoRoot", "cwd", "sessionId", "branch", "targetPath", "worktreePath", "confirmToken"]) {
+  for (const key of ["repoRoot", "cwd", "sessionId", "branch", "targetPath", "worktreePath", "confirmToken", "archivePath", "archiveSha256"]) {
     if (typeof toolArgs[key] === "string" && toolArgs[key].trim() === "") delete toolArgs[key];
   }
 }
@@ -46,6 +46,8 @@ async function planCacheKey(name: GuardianToolName, toolArgs: PlanCacheToolArgs,
     deleteBranch: toolArgs.deleteBranch === true,
     abandonUnmerged: toolArgs.abandonUnmerged === true,
     allowIgnoredFiles: toolArgs.allowIgnoredFiles === true,
+    archivePath: typeof toolArgs.archivePath === "string" ? toolArgs.archivePath : "",
+    archiveSha256: typeof toolArgs.archiveSha256 === "string" ? toolArgs.archiveSha256 : "",
     allowAdminBypass: toolArgs.allowAdminBypass === true,
     action: typeof toolArgs.action === "string" ? toolArgs.action : "",
     quarantineId: typeof toolArgs.quarantineId === "string" ? toolArgs.quarantineId : "",

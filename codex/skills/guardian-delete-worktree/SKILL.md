@@ -13,4 +13,6 @@ node <adapter-path> tool guardian_delete_worktree '{"mode":"plan"}'
 
 Include an exact `targetPath`, `sessionId`, or `branch` when the user provided one. Inspect blockers, ignored files, target identity, branch, HEAD, and token posture. Apply only after explicit confirmation with `mode: "apply"`, the same target options, and the confirm token handled by the adapter.
 
+For an evidence-only dirty worktree, use one absolute external `archivePath` plus its exact lowercase `archiveSha256`; include `allowIgnoredFiles: true` when ignored paths are present. Proceed only when the plan proves every dirty and ignored path by file mode, size, digest, or symlink target and reports the archive outside the target worktree.
+
 Use `deleteBranch: true` only when branch deletion is explicitly intended. Use `abandonUnmerged: true` only when the user explicitly confirms abandoning unmerged local Guardian work.
