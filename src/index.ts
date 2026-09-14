@@ -3,6 +3,7 @@ import WorktreeGuardianPlugin from "./plugin/server.ts";
 export { DEFAULT_CONFIG, FINISH_MODES, loadConfig, normalizeConfig } from "./config.ts";
 export { classifyGuardCommand, classifyNormalAgentGitCommand, classifyReadOnlyInspectionCommand, extractCommandText, tokenizeCommand } from "./guards.ts";
 export { guardianDeletePaths } from "./delete-paths.ts";
+export { guardianDeleteRemoteBranch } from "./delete-remote-branch.ts";
 export { guardianDeleteWorktree } from "./delete.ts";
 export { guardianDone } from "./done.ts";
 export { guardianGc } from "./gc.ts";

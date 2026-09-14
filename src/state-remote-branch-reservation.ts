@@ -107,9 +107,18 @@ export async function reserveRemoteBranchCleanupSafetyRef(input: RemoteBranchCle
   } catch (error) {
     throw new RemoteBranchCleanupSafetyRefReservationPersistenceError(input.safetyRef, error);
   }
-  await createSafetyRef(input.repoRoot, { sessionId: "remote-branch-cleanup", branch: `${input.remote}/${input.remoteBranch}`, commit: input.head, ref: input.safetyRef });
-  await promoteRemoteBranchCleanupSafetyRefReservation(input, pending, active);
-  return { disposition: "created", reservation: active };
+  try {
+    await createSafetyRef(input.repoRoot, { sessionId: "remote-branch-cleanup", branch: `${input.remote}/${input.remoteBranch}`, commit: input.head, ref: input.safetyRef });
+  } catch (error) {
+    if (await getSymbolicRefTarget(input.repoRoot, input.safetyRef) !== null || await getDirectRefCommitOrNull(input.repoRoot, input.safetyRef) !== input.head) throw error;
+  }
+  try {
+    await promoteRemoteBranchCleanupSafetyRefReservation(input, pending, active);
+    return { disposition: "created", reservation: active };
+  } catch (error) {
+    if (await hasMatchingRemoteBranchCleanupReservation({ ...input, phase: "active" }, active)) return { disposition: "reused", reservation: active };
+    throw error;
+  }
 }
 
 async function promoteRemoteBranchCleanupSafetyRefReservation(input: RemoteBranchCleanupSafetyRefReservationInput, pending: RemoteBranchCleanupSafetyRefReservation, active: RemoteBranchCleanupSafetyRefReservation): Promise<void> {

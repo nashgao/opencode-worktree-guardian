@@ -34,6 +34,7 @@ The public native tools are:
 - `guardian_unblock_finish`
 - `guardian_delete_worktree`
 - `guardian_delete_paths`
+- `guardian_delete_remote_branch`
 - `guardian_hygiene`
 - `guardian_gc`
 
@@ -209,6 +210,16 @@ Use `guardian_unblock_finish` only when `guardian_finish` is blocked by narrow g
 Run `mode: "plan"` first. The supported action is `commit-review-artifacts`, which may commit only `.milestones/reviews/*impl-rating-YYYYMMDD.md` or `.milestones/reviews/*impl-rating-YYYYMMDD.txt` review artifacts. If Guardian state does not record the session, plan may resolve the current Guardian-root worktree or receive an explicit `branch` or `worktreePath` that resolves exactly one checked-out worktree under the configured Guardian worktree root.
 
 Run `mode: "apply"` only with the fresh token and the same resolved current worktree, explicit branch, or explicit worktree path when state is still missing. Apply creates a safety ref, stages only approved review artifacts, commits them, and updates Guardian state. It refuses mixed dirty/source paths, renames/copies, symlink artifacts, deletions, ignored files, and cleanup. Stash inventory remains visible and advisory by default; `requireEmptyStashInventory: true` makes a non-empty inventory a blocker before safety-ref creation, staging, or commit.
+
+## `guardian_delete_remote_branch` Exact Remote Deletion Policy
+
+`guardian_delete_remote_branch` is the only native surface for an explicitly approved remote branch deletion that is not an ancestry-qualified workflow cleanup candidate. It always loads repo-local Guardian config; caller-provided config is ignored and cannot redefine the remote authority, base branch, protected branches, or retention policy.
+
+Run `mode: "plan"` with exact `remote`, `remoteBranch`, and `expectedRemoteHead`. The remote must exactly equal the resolved Guardian remote authority. The base branch, every configured protected branch, and `rescue/` branches are hard-denied. Non-ancestor deletion requires `allowNonAncestorRemoteDeletion: true` in both plan and apply. The confirmation token binds the resolved base ref and OID, exact remote target and expected/observed head, override, and safety-ref identity.
+
+Confirmed apply first creates or reuses only an exact durable remote-cleanup reservation with a direct non-symbolic Guardian safety ref at `expectedRemoteHead`, then performs an exact-head leased push deletion. The tool must fetch/prune and prove the branch absent before completing its reservation. If the post-push fetch or observation fails, the result is `indeterminate`; it must retain the reservation and safety ref, must not report `remoteBranchDeleted: true`, and requires recovery review.
+
+If deletion is proven but reservation completion persistence fails, the result is `deleted-pending-reconciliation`: the remote deletion is reported truthfully, the reservation and safety ref remain, and a fresh plan is required. A later plan may accept an already-absent branch only when it finds that same exact active durable reservation and safety ref. Apply then uses the empty-expectation leased reconciliation operation before completing the reservation. Arbitrary absent branches are blocked, as are changed branch heads and stale tokens.
 
 ## `guardian_delete_worktree` Worktree Deletion Policy
 

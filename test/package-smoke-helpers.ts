@@ -10,6 +10,7 @@ export const projectRoot = path.resolve(new URL("..", import.meta.url).pathname)
 const defaultRunTimeoutMs = 8 * 60 * 1000;
 export const expectedToolNames = [
   "guardian_delete_paths",
+  "guardian_delete_remote_branch",
   "guardian_delete_worktree",
   "guardian_done",
   "guardian_finish",

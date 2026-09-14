@@ -7,6 +7,7 @@ export function createTools(planCache: PlanTokenCache) {
     guardian_start: guardianTool("guardian_start", "Create or attach this OpenCode session to a guardian-owned worktree.", planCache),
     guardian_status: guardianTool("guardian_status", "Report guardian state, worktrees, safety refs, stash inventory, and blockers without mutating the repo.", planCache),
     guardian_delete_paths: guardianTool("guardian_delete_paths", "Plan or apply exact path deletion with confirm-token, fingerprint, tracked-file, recursive, and protected-root gates.", planCache),
+    guardian_delete_remote_branch: guardianTool("guardian_delete_remote_branch", "Plan or apply deletion of one exact remote branch at its expected head. Nonancestor deletion requires an explicit override and Guardian safety-ref proof.", planCache),
     guardian_delete_worktree: guardianTool("guardian_delete_worktree", "Plan or apply safe Guardian-mediated worktree deletion with confirm-token and safety-ref gates.", planCache),
     guardian_unblock_finish: guardianTool("guardian_unblock_finish", "Plan or apply safe finish blocker resolution, such as committing review artifacts with confirm-token gates.", planCache),
     guardian_finish_workflow: guardianTool("guardian_finish_workflow", "Plan or apply an implementation-done workflow that verifies clean state and removes redundant merged worktrees and branches through Guardian gates.", planCache),

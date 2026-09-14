@@ -268,12 +268,16 @@ export async function deleteBranchAtHead(repoRoot: string, branch: string, expec
 }
 
 export async function deleteRemoteBranch(repoRoot: string, remote: string, branch: string, expectedHead: string) {
+  await deleteRemoteBranchAtExpectedHead(repoRoot, remote, branch, expectedHead);
+  await fetchRemotePrune(repoRoot, remote);
+}
+
+export async function deleteRemoteBranchAtExpectedHead(repoRoot: string, remote: string, branch: string, expectedHead: string) {
   await validateConfiguredRemote(repoRoot, remote);
   validateGitRef(branch);
   validateGitRef(expectedHead);
   const ref = `refs/heads/${branch}`;
   await runGit(repoRoot, ["push", remote, `--force-with-lease=${ref}:${expectedHead}`, `:${ref}`]);
-  await fetchRemotePrune(repoRoot, remote);
 }
 
 export async function deleteAbsentRemoteBranchAtExpectedAbsence(repoRoot: string, remote: string, branch: string) {
