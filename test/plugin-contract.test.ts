@@ -9,6 +9,7 @@ import type { GuardianQuarantineInput, GuardianQuarantineResult, GuardianToolNam
 
 const expectedToolNames = [
   "guardian_delete_paths",
+  "guardian_delete_remote_branch",
   "guardian_delete_worktree",
   "guardian_done",
   "guardian_finish",
@@ -172,6 +173,10 @@ test("guardian native tools expose OpenCode tool definitions", async () => {
   assert.equal(typeof hooks.tool.guardian_delete_paths.args.allowTracked.safeParse, "function");
   assert.equal(typeof hooks.tool.guardian_delete_paths.args.allowRecursive.safeParse, "function");
   assert.equal(typeof hooks.tool.guardian_delete_paths.args.confirmDelete.safeParse, "function");
+  assert.equal(typeof hooks.tool.guardian_delete_remote_branch.args.remote.safeParse, "function");
+  assert.equal(typeof hooks.tool.guardian_delete_remote_branch.args.remoteBranch.safeParse, "function");
+  assert.equal(typeof hooks.tool.guardian_delete_remote_branch.args.expectedRemoteHead.safeParse, "function");
+  assert.equal(typeof hooks.tool.guardian_delete_remote_branch.args.allowNonAncestorRemoteDeletion.safeParse, "function");
   assert.equal(typeof hooks.tool.guardian_hygiene.args.cleanupPaths.safeParse, "function");
   assert.equal(typeof hooks.tool.guardian_hygiene.args.allowCategories.safeParse, "function");
   assert.equal(typeof hooks.tool.guardian_hygiene.args.confirmDelete.safeParse, "function");

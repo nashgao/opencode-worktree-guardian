@@ -151,6 +151,7 @@ export type ToolExecutionPayload = MutableRecord & {
 
 export const GUARDIAN_TOOL_NAMES = [
   "guardian_delete_paths",
+  "guardian_delete_remote_branch",
   "guardian_delete_worktree",
   "guardian_done",
   "guardian_finish",
@@ -204,6 +205,10 @@ export type PlanCacheToolArgs = MutableRecord & {
   allowIgnoredFiles?: unknown;
   allowRedundantDirtyPaths?: unknown;
   allowedRemoteBranches?: unknown;
+  remote?: unknown;
+  remoteBranch?: unknown;
+  expectedRemoteHead?: unknown;
+  allowNonAncestorRemoteDeletion?: unknown;
   action?: unknown;
   confirm?: unknown;
   confirmDelete?: unknown;

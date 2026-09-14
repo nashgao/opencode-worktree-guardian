@@ -1,4 +1,5 @@
 import { guardianDeletePaths } from "./delete-paths.ts";
+import { guardianDeleteRemoteBranch } from "./delete-remote-branch.ts";
 import { guardianDeleteWorktree } from "./delete.ts";
 import { attachPostCompletionHygiene } from "./completion-hygiene.ts";
 import { guardianDone } from "./done.ts";
@@ -22,6 +23,7 @@ type GuardianToolRunner = (input: GuardianToolInput) => Promise<GuardianToolResu
 
 export const GUARDIAN_TOOL_RUNNERS = {
   guardian_delete_paths: guardianDeletePaths,
+  guardian_delete_remote_branch: guardianDeleteRemoteBranch,
   guardian_delete_worktree: guardianDeleteWorktree,
   guardian_done: guardianDone,
   guardian_finish: guardianFinish,

@@ -11,6 +11,7 @@ test("exposes guardian native tools", async () => {
   const hooks = await plugin.server({ directory: "/repo", worktree: "/repo/.worktrees/example" });
   assert.deepEqual(Object.keys(hooks.tool).sort(), [
     "guardian_delete_paths",
+    "guardian_delete_remote_branch",
     "guardian_delete_worktree",
     "guardian_done",
     "guardian_finish",

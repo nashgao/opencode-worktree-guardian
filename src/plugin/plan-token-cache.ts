@@ -32,6 +32,10 @@ async function planCacheKey(name: GuardianToolName, toolArgs: PlanCacheToolArgs,
     cleanupPaths: sortedStringArgs(toolArgs.cleanupPaths),
     allowCategories: sortedStringArgs(toolArgs.allowCategories),
     allowedRemoteBranches: normalizeAllowedRemoteBranches(toolArgs.allowedRemoteBranches),
+    remote: typeof toolArgs.remote === "string" ? toolArgs.remote : "",
+    remoteBranch: typeof toolArgs.remoteBranch === "string" ? toolArgs.remoteBranch : "",
+    expectedRemoteHead: typeof toolArgs.expectedRemoteHead === "string" ? toolArgs.expectedRemoteHead : "",
+    allowNonAncestorRemoteDeletion: toolArgs.allowNonAncestorRemoteDeletion === true,
     allowTracked: toolArgs.allowTracked === true,
     allowRecursive: toolArgs.allowRecursive === true,
     allowDirtyNestedGit: toolArgs.allowDirtyNestedGit === true,
@@ -62,7 +66,7 @@ function shouldUseCachedPlanToken(name: GuardianToolName, toolArgs: PlanCacheToo
   if (name === "guardian_hygiene") return toolArgs.confirmDelete === true;
   if (name === "guardian_gc") return toolArgs.confirmDelete === true;
   if (name === "guardian_quarantine") return toolArgs.action === "restore" ? toolArgs.confirm === true : toolArgs.action === "purge" && toolArgs.confirmDelete === true;
-  if (name === "guardian_done" || name === "guardian_finish_workflow" || name === "guardian_goal") return toolArgs.confirm === true;
+  if (name === "guardian_done" || name === "guardian_finish_workflow" || name === "guardian_goal" || name === "guardian_delete_remote_branch") return toolArgs.confirm === true;
   return false;
 }
 
@@ -82,7 +86,7 @@ export async function maybeInjectPlanConfirmToken(name: GuardianToolName, toolAr
 export async function rememberPlanConfirmToken(name: GuardianToolName, toolArgs: PlanCacheToolArgs, result: { readonly ok?: unknown; readonly status?: unknown; readonly confirmToken?: unknown }, planCache?: PlanTokenCache): Promise<void> {
   if (!planCache) return;
   if (toolArgs.mode !== "plan" || result.ok !== true || !isCacheablePlanStatus(result.status) || typeof result.confirmToken !== "string") return;
-  if (!["guardian_delete_paths", "guardian_hygiene", "guardian_done", "guardian_finish_workflow", "guardian_goal", "guardian_gc", "guardian_quarantine"].includes(name)) return;
+  if (!["guardian_delete_paths", "guardian_hygiene", "guardian_done", "guardian_finish_workflow", "guardian_goal", "guardian_gc", "guardian_quarantine", "guardian_delete_remote_branch"].includes(name)) return;
   const key = await planCacheKey(name, toolArgs, result.confirmToken);
   if (key !== null) planCache.set(key, result.confirmToken);
 }
