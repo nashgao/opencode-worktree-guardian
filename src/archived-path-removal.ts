@@ -22,6 +22,16 @@ export type ArchivedPathRemoval = {
   readonly worktreePath: string;
 };
 
+type ArchivedPathRemovalTestHook = {
+  readonly beforeRename?: (source: string, destination: string) => Promise<void>;
+};
+
+let archivedPathRemovalTestHook: ArchivedPathRemovalTestHook | undefined;
+
+export function setArchivedPathRemovalTestHookForTesting(hook: ArchivedPathRemovalTestHook | undefined): void {
+  archivedPathRemovalTestHook = hook;
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -88,10 +98,14 @@ async function moveArchivedEntry(sourceRoot: string, destinationRoot: string, en
   }
   await assertNoSymlinkAncestors(path.dirname(source), "archive-backed removal source");
   await assertNoSymlinkAncestors(destinationParent, "archive-backed removal destination");
+  await archivedPathRemovalTestHook?.beforeRename?.(source, destination);
   if (await lstatOrMissing(destination)) throw new ArchivedPathProofError(`archive-backed removal destination appeared: ${entry.path}`);
   await fs.rename(source, destination);
   const [postSource, postDestination] = await Promise.all([lstatOrMissing(source), lstatOrMissing(destination)]);
   if (postSource || !postDestination) throw new ArchivedPathProofError(`archive-backed quarantine postcondition is ambiguous: ${entry.path}`);
+  if (sourceStat.dev !== postDestination.dev || sourceStat.ino !== postDestination.ino) {
+    throw new ArchivedPathProofError(`archive-backed quarantine moved an unexpected filesystem object: ${entry.path}`);
+  }
   if (JSON.stringify(await fingerprintArchivedPath(destinationRoot, entry.path)) !== JSON.stringify(entry)) {
     throw new ArchivedPathProofError(`archive-backed quarantine fingerprint changed: ${entry.path}`);
   }

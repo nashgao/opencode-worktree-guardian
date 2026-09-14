@@ -6,6 +6,7 @@ import path from "node:path";
 import test, { type TestContext } from "node:test";
 import { promisify } from "node:util";
 import { gzipSync } from "node:zlib";
+import { setArchivedPathRemovalTestHookForTesting } from "../src/archived-path-removal.ts";
 import { DEFAULT_CONFIG } from "../src/config.ts";
 import { guardianDeleteWorktree } from "../src/delete-worktree.ts";
 import { isRecordLike } from "../src/types.ts";
@@ -215,6 +216,58 @@ test("guardian_delete_worktree blocks a symlink-ancestor substitution at the rem
   assert.equal((await worktreePaths(fixture.repo)).includes(fixture.worktree), true);
 });
 
+test("guardian_delete_worktree retains a raced outside inode in quarantine", async (t) => {
+  // Given an attacker substitutes a symlink ancestor after Guardian's final source check but before rename.
+  const fixture = await createSingleArchivedWorktree(t, "archive-final-rename-race");
+  const outsideRoot = path.join(fixture.base, "outside-final-race");
+  await fs.mkdir(outsideRoot, { recursive: true });
+  await fs.writeFile(path.join(outsideRoot, "report.txt"), "archived evidence\n");
+  const plan = await guardianDeleteWorktree({
+    repoRoot: fixture.repo,
+    cwd: fixture.repo,
+    mode: "plan",
+    sessionId: fixture.sessionId,
+    deleteBranch: true,
+    archivePath: fixture.archivePath,
+    archiveSha256: fixture.archiveSha256,
+    config: DEFAULT_CONFIG,
+  });
+  assert.equal(plan.ok, true, JSON.stringify(plan));
+  let substituted = false;
+  setArchivedPathRemovalTestHookForTesting({
+    async beforeRename(source) {
+      if (substituted || source !== path.join(fixture.worktree, fixture.relativePath)) return;
+      substituted = true;
+      await fs.rename(path.join(fixture.worktree, "evidence"), path.join(fixture.worktree, "original-evidence"));
+      await fs.symlink(outsideRoot, path.join(fixture.worktree, "evidence"));
+    },
+  });
+  t.after(() => setArchivedPathRemovalTestHookForTesting(undefined));
+
+  // When the final rename observes a different inode than the one Guardian proved.
+  const result = await guardianDeleteWorktree({
+    repoRoot: fixture.repo,
+    cwd: fixture.repo,
+    mode: "apply",
+    sessionId: fixture.sessionId,
+    deleteBranch: true,
+    archivePath: fixture.archivePath,
+    archiveSha256: fixture.archiveSha256,
+    confirmToken: plan.confirmToken,
+    config: DEFAULT_CONFIG,
+  });
+
+  // Then apply blocks and retains the unexpected outside object under the reported quarantine instead of deleting it.
+  assert.equal(result.ok, false, JSON.stringify(result));
+  assert.match(String(result.reason), /unexpected filesystem object.*recovery retained/);
+  const quarantineRoots = (await fs.readdir(path.dirname(fixture.worktree))).filter((entry) => entry.startsWith(".guardian-archive-quarantine-"));
+  assert.equal(quarantineRoots.length, 1);
+  const retainedPath = path.join(path.dirname(fixture.worktree), quarantineRoots[0] ?? "", "moved", fixture.relativePath);
+  assert.equal(await fs.readFile(retainedPath, "utf8"), "archived evidence\n");
+  assert.equal(await fs.readFile(path.join(fixture.worktree, "original-evidence", "report.txt"), "utf8"), "archived evidence\n");
+  assert.equal((await worktreePaths(fixture.repo)).includes(fixture.worktree), true);
+});
+
 test("guardian_delete_worktree rejects duplicate archive members", async (t) => {
   // Given an archive containing the same requested path twice.
   const fixture = await createSingleArchivedWorktree(t, "archive-duplicate-member");
@@ -270,6 +323,38 @@ test("guardian_delete_worktree rejects hardlink archive members", async (t) => {
   assert.equal(result.ok, false, JSON.stringify(result));
   assert.match(String(result.reason), /hardlink archive member/);
   assert.equal((await worktreePaths(repo)).includes(worktree), true);
+});
+
+test("guardian_delete_worktree never resolves tar from caller-controlled PATH", async (t) => {
+  // Given a valid archive and a hostile PATH entry containing an executable named tar.
+  const fixture = await createSingleArchivedWorktree(t, "archive-hostile-path");
+  const fakeBin = path.join(fixture.base, "fake-bin");
+  const marker = path.join(fixture.base, "hostile-tar-ran");
+  await fs.mkdir(fakeBin, { recursive: true });
+  await fs.writeFile(path.join(fakeBin, "tar"), `#!/bin/sh\nprintf invoked > '${marker}'\nexit 97\n`);
+  await fs.chmod(path.join(fakeBin, "tar"), 0o755);
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${fakeBin}:${originalPath ?? ""}`;
+  t.after(() => {
+    if (originalPath === undefined) delete process.env.PATH;
+    else process.env.PATH = originalPath;
+  });
+
+  // When archive-backed deletion performs inventory and extraction.
+  const result = await guardianDeleteWorktree({
+    repoRoot: fixture.repo,
+    cwd: fixture.repo,
+    mode: "plan",
+    sessionId: fixture.sessionId,
+    deleteBranch: true,
+    archivePath: fixture.archivePath,
+    archiveSha256: fixture.archiveSha256,
+    config: DEFAULT_CONFIG,
+  });
+
+  // Then Guardian uses a pinned system executable and never invokes the hostile PATH entry.
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(await pathExists(marker), false);
 });
 
 test("guardian_delete_worktree rejects an archive whose digest is not exact", async (t) => {

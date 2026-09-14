@@ -1,11 +1,12 @@
 import { execFile } from "node:child_process";
 import crypto from "node:crypto";
-import { createReadStream } from "node:fs";
+import { constants, createReadStream } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
 const sha256Pattern = /^[0-9a-f]{64}$/;
+const trustedTarCandidates = process.platform === "darwin" ? ["/usr/bin/bsdtar", "/usr/bin/tar"] : ["/usr/bin/tar", "/bin/tar"];
 
 export class ArchivedPathProofError extends Error {
   constructor(message: string) {
@@ -86,9 +87,25 @@ export async function archivedFileSHA256(filePath: string): Promise<string> {
   return hash.digest("hex");
 }
 
+async function trustedTarPath(): Promise<string> {
+  for (const candidate of trustedTarCandidates) {
+    try {
+      const stat = await fs.lstat(candidate);
+      if (!stat.isFile() || stat.isSymbolicLink()) continue;
+      await fs.access(candidate, constants.X_OK);
+      return await fs.realpath(candidate);
+    } catch (error) {
+      if (typeof error === "object" && error !== null && Reflect.get(error, "code") === "ENOENT") continue;
+      throw error;
+    }
+  }
+  throw new ArchivedPathProofError("trusted system tar executable is unavailable");
+}
+
 async function runTar(args: readonly string[]): Promise<string> {
+  const executable = await trustedTarPath();
   return await new Promise<string>((resolve, reject) => {
-    execFile("tar", [...args], { maxBuffer: 16 * 1024 * 1024 }, (error, stdout) => {
+    execFile(executable, [...args], { env: { LC_ALL: "C", PATH: "/usr/bin:/bin" }, maxBuffer: 16 * 1024 * 1024 }, (error, stdout) => {
       if (error) reject(new ArchivedPathProofError(`archive extraction failed: ${error.message}`));
       else resolve(stdout);
     });
