@@ -3,9 +3,12 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
+import { DEFAULT_CONFIG } from "../src/config.ts";
+import { guardianMetadataSnapshot } from "../src/clean-completion-metadata.ts";
 import { guardianGc } from "../src/gc.ts";
 import { captureProvenanceManifest, readProvenanceManifest } from "../src/provenance.ts";
-import { getGuardianPaths } from "../src/state.ts";
+import { ineligibleSessionProvenance } from "../src/session-provenance.ts";
+import { getGuardianPaths, readState, recordSession } from "../src/state.ts";
 import type { ExternalRecordReference } from "../src/types.ts";
 import { createRepo, git, seedSession } from "./helpers.ts";
 
@@ -68,6 +71,18 @@ test("enabled provenance capture writes a deterministic digest-verified manifest
   assert.equal(record.sessionId, input.sessionId);
   assert.equal(record.lineageId, input.lineageId);
   assert.deepEqual(record.inventory.map((entry) => entry.relativePath), ["ignored", "ignored/output.txt", "untracked.txt"]);
+});
+
+test("immutable provenance verification survives removal of its original worktree", async () => {
+  const repo = await createRepo();
+  const worktree = path.join(path.dirname(repo), "immutable-provenance-worktree");
+  await git(repo, ["worktree", "add", "-b", "guardian/immutable-provenance", worktree]);
+  const input = { ...manifestInput(repo, "ses_immutable_provenance"), worktreePath: worktree };
+  const reference = requireReference(await captureProvenanceManifest(input));
+  await git(repo, ["worktree", "remove", worktree]);
+
+  const record = await readProvenanceManifest({ ...input, reference, immutableWorktree: true });
+  assert.equal(record.worktreePath, worktree);
 });
 
 test("provenance inventory preserves newline and unicode paths and fingerprints symlinks as links", { skip: process.platform === "win32" }, async () => {
@@ -158,4 +173,59 @@ test("record-only GC preserves referenced provenance metadata", async () => {
 
   assert.equal(apply.status, "pruned");
   assert.equal(await fs.readFile(manifestPath, "utf8"), before);
+});
+
+test("terminal provenance remains referenced after an ineligible transition", async () => {
+  const repo = await createRepo();
+  const config = { ...DEFAULT_CONFIG, goal: { ...DEFAULT_CONFIG.goal, quarantineSessionResidue: true } };
+  const input = manifestInput(repo, "ses_terminal_provenance");
+  const reference = requireReference(await captureProvenanceManifest(input));
+  const { stdout: headCommit } = await git(repo, ["rev-parse", "HEAD"]);
+
+  await seedSession(repo, {
+    session_id: input.sessionId,
+    status: "active",
+    branch: "guardian/terminal-provenance",
+    worktree_path: repo,
+    head_commit: headCommit,
+    lineage_id: input.lineageId,
+    provenance_status: "captured",
+    quarantine_eligible: true,
+    provenance: { manifest: reference },
+  }, config);
+  await recordSession(repo, config, {
+    session_id: input.sessionId,
+    status: "deleted",
+    branch: "guardian/terminal-provenance",
+    worktree_path: repo,
+    head_commit: headCommit,
+    ...ineligibleSessionProvenance(config),
+  });
+
+  const paths = await getGuardianPaths(repo);
+  const state = await readState(paths, { repoRoot: repo, config });
+  assert.deepEqual(state.sessions[input.sessionId]?.provenance, { manifest: reference });
+  assert.equal(state.sessions[input.sessionId]?.lineage_id, input.lineageId);
+  assert.equal((await guardianMetadataSnapshot({ paths, state, quarantineItems: [] })).reason, undefined);
+});
+
+test("matching terminal provenance without a state reference remains blocked", async () => {
+  const repo = await createRepo();
+  const config = { ...DEFAULT_CONFIG, goal: { ...DEFAULT_CONFIG.goal, quarantineSessionResidue: true } };
+  const input = manifestInput(repo, "ses_recovered_terminal_provenance");
+  const reference = requireReference(await captureProvenanceManifest(input));
+  const { stdout: headCommit } = await git(repo, ["rev-parse", "HEAD"]);
+  await seedSession(repo, {
+    session_id: input.sessionId,
+    status: "deleted",
+    branch: "guardian/recovered-terminal-provenance",
+    worktree_path: repo,
+    head_commit: headCommit,
+    ...ineligibleSessionProvenance(config),
+  }, config);
+
+  const paths = await getGuardianPaths(repo);
+  const state = await readState(paths, { repoRoot: repo, config });
+  const snapshot = await guardianMetadataSnapshot({ paths, state, quarantineItems: [] });
+  assert.match(String(snapshot.reason), /unknown Guardian provenance entry/);
 });

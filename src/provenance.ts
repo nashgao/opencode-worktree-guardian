@@ -36,6 +36,7 @@ export type CaptureProvenanceManifestInput = ProvenanceIdentityInput & {
 
 export type ReadProvenanceManifestInput = ProvenanceIdentityInput & {
   readonly reference: ExternalRecordReference;
+  readonly immutableWorktree?: boolean;
 };
 
 type CanonicalIdentity = {
@@ -78,6 +79,12 @@ async function canonicalIdentity(input: ProvenanceIdentityInput): Promise<Canoni
   const [commonGitDir, worktreeGitDir] = await Promise.all([fs.realpath(repoCommonGitDir), fs.realpath(worktreeCommonGitDir)]);
   if (commonGitDir !== worktreeGitDir) throw provenanceError("identity", "Provenance worktree belongs to a different common Git directory");
   return { repoRoot, worktreePath, commonGitDir, deviceId: (await fs.stat(commonGitDir)).dev };
+}
+
+async function immutableWorktreeIdentity(input: ProvenanceIdentityInput): Promise<CanonicalIdentity> {
+  const repoRoot = await fs.realpath(input.repoRoot);
+  const commonGitDir = await fs.realpath(await getCommonGitDir(repoRoot));
+  return { repoRoot, worktreePath: input.worktreePath, commonGitDir, deviceId: (await fs.stat(commonGitDir)).dev };
 }
 
 async function assertMetadataPath(paths: GuardianPaths, target: string): Promise<void> {
@@ -214,7 +221,7 @@ export async function captureProvenanceManifest(input: CaptureProvenanceManifest
 }
 
 export async function readProvenanceManifest(input: ReadProvenanceManifestInput): Promise<ProvenanceRecordV1> {
-  const identity = await canonicalIdentity(input);
+  const identity = input.immutableWorktree ? await immutableWorktreeIdentity(input) : await canonicalIdentity(input);
   const paths = await getGuardianPaths(identity.repoRoot);
   const target = manifestPath(paths, input.reference);
   await assertMetadataPath(paths, target);
