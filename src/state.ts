@@ -204,8 +204,6 @@ export async function recordSession(repoRoot: string, config: GuardianConfigInpu
             updated_at: now,
             ...ineligibleSessionProvenance(config),
           };
-          delete superseded.provenance;
-          delete superseded.lineage_id;
           if (!isProvenanceEnabled(config)) {
             delete superseded.provenance_status;
             delete superseded.quarantine_eligible;
@@ -228,8 +226,6 @@ export async function recordSession(repoRoot: string, config: GuardianConfigInpu
       && typeof merged.worktree_path === "string"
       && (!await samePathOnDisk(previous.worktree_path, merged.worktree_path) || previous.branch !== merged.branch);
     if (supersededBinding || bindingChanged) {
-      delete merged.provenance;
-      delete merged.lineage_id;
       if (isProvenanceEnabled(config)) {
         merged.provenance_status = "ineligible";
         merged.quarantine_eligible = false;
@@ -240,10 +236,6 @@ export async function recordSession(repoRoot: string, config: GuardianConfigInpu
     } else if (!previous && merged.status !== "active" && isProvenanceEnabled(config)) {
       merged.provenance_status = "ineligible";
       merged.quarantine_eligible = false;
-    }
-    if (isProvenanceEnabled(config) && merged.quarantine_eligible === false) {
-      delete merged.provenance;
-      delete merged.lineage_id;
     }
     await assertActiveSessionBoundary(repoRoot, config, previous, merged);
     await assertSameRepoBinding(repoRoot, previous, merged);

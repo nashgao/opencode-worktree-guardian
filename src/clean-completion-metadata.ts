@@ -2,9 +2,10 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { collectCleanupFingerprint } from "./deletion-fingerprint.ts";
+import { isTerminalSessionStatus } from "./lifecycle.ts";
+import { readProvenanceManifest } from "./provenance.ts";
 import type { JournaledRecord } from "./quarantine-journal.ts";
 import type { QuarantineItemRecordV1 } from "./quarantine-types.ts";
-import { parseProvenanceRecord } from "./quarantine-types.ts";
 import type { GuardianPaths, GuardianStateRecord } from "./types.ts";
 
 type MetadataEntry = {
@@ -48,14 +49,35 @@ function entryMap(entries: readonly MetadataEntry[]): ReadonlyMap<string, Metada
   return new Map(entries.map((entry) => [entry.path, entry]));
 }
 
-function referencedProvenancePaths(state: GuardianStateRecord): ReadonlyMap<string, string> {
-  const references = new Map<string, string>();
+type ReferencedProvenance = {
+  readonly session: GuardianStateRecord["sessions"][string];
+  readonly sessionId: string;
+  readonly lineageId: string;
+  readonly worktreePath: string;
+  readonly immutableWorktree: boolean;
+  readonly digest: string;
+};
+
+function referencedProvenancePaths(state: GuardianStateRecord): ReadonlyMap<string, ReferencedProvenance> {
+  const references = new Map<string, ReferencedProvenance>();
   for (const session of Object.values(state.sessions)) {
     const reference = session.provenance?.manifest;
     if (!reference) continue;
+    if (session.status !== "active" && !isTerminalSessionStatus(session.status)) throw new Error(`Guardian provenance session status is invalid: ${reference.relativePath}`);
+    const sessionId = session.session_id;
+    const lineageId = session.lineage_id;
+    const worktreePath = session.worktree_path;
+    if (typeof sessionId !== "string" || typeof lineageId !== "string" || typeof worktreePath !== "string") throw new Error(`Guardian provenance state identity is incomplete: ${reference.relativePath}`);
     const previous = references.get(reference.relativePath);
-    if (previous && previous !== reference.digest) throw new Error(`conflicting Guardian provenance references: ${reference.relativePath}`);
-    references.set(reference.relativePath, reference.digest);
+    if (previous && previous.digest !== reference.digest) throw new Error(`conflicting Guardian provenance references: ${reference.relativePath}`);
+    references.set(reference.relativePath, {
+      session,
+      sessionId,
+      lineageId,
+      worktreePath,
+      immutableWorktree: isTerminalSessionStatus(session.status),
+      digest: reference.digest,
+    });
   }
   return references;
 }
@@ -86,14 +108,21 @@ async function validateProvenance(entries: readonly MetadataEntry[], state: Guar
   const expected = referencedProvenancePaths(state);
   const actual = entries.filter((entry) => entry.path.startsWith("provenance/") && entry.path !== "provenance");
   for (const entry of actual) {
-    const expectedDigest = expected.get(entry.path);
-    if (entry.kind !== "file" || !expectedDigest) throw new Error(`unknown Guardian provenance entry: ${entry.path}`);
-    if (entry.digest !== expectedDigest) throw new Error(`Guardian provenance manifest digest mismatch: ${entry.path}`);
+    const expectedReference = expected.get(entry.path);
+    if (entry.kind !== "file" || !expectedReference) throw new Error(`unknown Guardian provenance entry: ${entry.path}`);
+    if (entry.digest !== expectedReference.digest) throw new Error(`Guardian provenance manifest digest mismatch: ${entry.path}`);
     try {
-      parseProvenanceRecord(JSON.parse(await fs.readFile(path.join(paths.dir, entry.path), "utf8")));
+      await readProvenanceManifest({
+        repoRoot: paths.repoRoot,
+        worktreePath: expectedReference.worktreePath,
+        sessionId: expectedReference.sessionId,
+        lineageId: expectedReference.lineageId,
+        reference: { relativePath: entry.path, digest: expectedReference.digest },
+        immutableWorktree: expectedReference.immutableWorktree,
+      });
     } catch (error) {
       if (!(error instanceof Error)) throw error;
-      throw new Error(`Guardian provenance manifest is malformed or has an unsupported version: ${entry.path}`, { cause: error });
+      throw new Error(`Guardian provenance manifest verification failed: ${entry.path}`, { cause: error });
     }
   }
   const present = new Set(actual.map((entry) => entry.path));
