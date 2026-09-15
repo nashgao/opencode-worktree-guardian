@@ -49,11 +49,40 @@ async function isIgnoredPath(repoRoot: string, relative: string) {
   return result.ok;
 }
 
+async function referencedProvenanceManifests(repoRoot: string, config: Record<string, unknown>) {
+  const referenced = new Set<string>();
+  try {
+    const paths = await getGuardianPaths(repoRoot);
+    const state = await readState(paths, { repoRoot, config });
+    for (const session of Object.values(state.sessions ?? {})) {
+      const relativePath = session?.provenance?.manifest?.relativePath;
+      if (typeof relativePath === "string" && relativePath.length > 0) referenced.add(normalizeRelativePath(relativePath));
+    }
+  } catch (error) {
+    if (!(error instanceof Error)) throw error;
+    return null;
+  }
+  return referenced;
+}
+
+function guardianMetadataSubPath(relative: string) {
+  if (!relative.startsWith(GUARDIAN_METADATA_PREFIX)) return null;
+  const entry = relative.slice(GUARDIAN_METADATA_PREFIX.length);
+  return entry.length > 0 ? entry : null;
+}
+
 function isUnknownGuardianMetadataRoot(relative: string) {
   if (!relative.startsWith(GUARDIAN_METADATA_PREFIX)) return false;
   const entry = relative.slice(GUARDIAN_METADATA_PREFIX.length);
   if (entry.length === 0 || entry.includes("/")) return false;
   return !GUARDIAN_METADATA_ROOT_FILES.has(entry) && !GUARDIAN_METADATA_ROOT_DIRECTORIES.has(entry) && entry !== "state.lock";
+}
+
+async function isUnreferencedProvenanceManifest(repoRoot: string, config: Record<string, unknown>, relative: string) {
+  const entry = guardianMetadataSubPath(relative);
+  if (entry === null || !entry.startsWith("provenance/") || entry.endsWith("/")) return false;
+  const referenced = await referencedProvenanceManifests(repoRoot, config);
+  return referenced === null ? false : !referenced.has(entry);
 }
 
 function intrinsicProtectedPathReason(relative: string) {
@@ -147,7 +176,7 @@ export async function buildDeletePathsPreflight(input: Record<string, unknown>) 
     if (!isSameOrInside(absolutePath, repoRoot)) pathBlockers.push({ path: requestedPath, reason: "delete path is outside the repository root", fatal: true });
     if (relative === ".") pathBlockers.push({ path: relative, reason: "repository root cannot be deleted by guardian_delete_paths", fatal: true });
     const intrinsicProtectedReason = intrinsicProtectedPathReason(relative);
-    if (intrinsicProtectedReason) pathBlockers.push({ path: relative, reason: intrinsicProtectedReason, fatal: true });
+    if (intrinsicProtectedReason && !(await isUnreferencedProvenanceManifest(repoRoot, config, relative))) pathBlockers.push({ path: relative, reason: intrinsicProtectedReason, fatal: true });
     const configuredProtectedPath = protectedPathMatch(relative, protectedPaths);
     if (configuredProtectedPath && !archiveRequested) pathBlockers.push({ path: relative, reason: configuredProtectedPath.reason, fatal: true });
     const protectedRoot = protectedRootBlocker(absolutePath, protectedRoots);

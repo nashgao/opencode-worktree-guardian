@@ -420,3 +420,53 @@ test("guardian_delete_paths removes an unknown Guardian metadata root but protec
   assert.equal(await exists(path.join(metadataDir, "provenance", "keep.json")), true);
   assert.equal(await exists(path.join(metadataDir, "state.json")), true);
 });
+
+test("guardian_delete_paths removes an unreferenced provenance manifest but keeps referenced ones", async () => {
+  const repo = await createRepo();
+  test.after(() => fs.rm(repo, { recursive: true, force: true }));
+  const metadataDir = path.join(repo, ".git", "opencode-guardian");
+  await fs.mkdir(path.join(metadataDir, "provenance"), { recursive: true });
+  const referenced = "provenance/referenced-manifest.json";
+  await fs.writeFile(path.join(metadataDir, referenced), "{}\n");
+  const orphan = path.join(metadataDir, "provenance", "orphan-manifest.json");
+  await fs.writeFile(orphan, "{}\n");
+  await seedSession(repo, {
+    session_id: "ses_provenance_keep",
+    status: "active",
+    branch: "guardian/provenance-keep",
+    worktree_path: path.join(repo, ".worktrees", "provenance-keep"),
+    provenance: { manifest: { relativePath: referenced, digest: "deadbeef" } },
+  });
+
+  const blocked = await guardianDeletePaths({
+    repoRoot: repo,
+    cwd: repo,
+    config: DEFAULT_CONFIG,
+    mode: "plan",
+    paths: [`.git/opencode-guardian/${referenced}`],
+    allowRecursive: true,
+  });
+  assert.equal(blocked.status, "blocked", JSON.stringify(blocked));
+  assert.equal(hasFatalBlocker(blocked.blockers, `.git/opencode-guardian/${referenced}`, /git metadata/), true);
+
+  const planned = await guardianDeletePaths({
+    repoRoot: repo,
+    cwd: repo,
+    config: DEFAULT_CONFIG,
+    mode: "plan",
+    paths: [".git/opencode-guardian/provenance/orphan-manifest.json"],
+  });
+  assert.equal(planned.status, "planned", JSON.stringify(planned));
+  const applied = await guardianDeletePaths({
+    repoRoot: repo,
+    cwd: repo,
+    config: DEFAULT_CONFIG,
+    mode: "apply",
+    paths: [".git/opencode-guardian/provenance/orphan-manifest.json"],
+    confirmDelete: true,
+    confirmToken: String(planned.confirmToken),
+  });
+  assert.equal(applied.ok, true, JSON.stringify(applied));
+  assert.equal(await exists(orphan), false);
+  assert.equal(await exists(path.join(metadataDir, referenced)), true);
+});
