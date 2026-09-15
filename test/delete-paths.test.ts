@@ -371,3 +371,52 @@ test("deleteBranch=true requires ancestry proof before any removal", async () =>
   assert.equal(await branchExists(repo, "guardian/delete-unmerged"), true);
   assert.equal((await guardianStatus({ repoRoot: repo, config: DEFAULT_CONFIG })).safetyRefs.length, 0);
 });
+
+test("guardian_delete_paths removes an unknown Guardian metadata root but protects contract roots", async () => {
+  const repo = await createRepo();
+  test.after(() => fs.rm(repo, { recursive: true, force: true }));
+  const metadataDir = path.join(repo, ".git", "opencode-guardian");
+  await fs.mkdir(path.join(metadataDir, "evidence", "audit"), { recursive: true });
+  await fs.writeFile(path.join(metadataDir, "evidence", "audit", "log.txt"), "agent audit artifact\n");
+  await fs.mkdir(path.join(metadataDir, "provenance"), { recursive: true });
+  await fs.writeFile(path.join(metadataDir, "provenance", "keep.json"), "{}\n");
+  await fs.writeFile(path.join(metadataDir, "state.json"), "{}\n");
+
+  const blocked = await guardianDeletePaths({
+    repoRoot: repo,
+    cwd: repo,
+    config: DEFAULT_CONFIG,
+    mode: "plan",
+    paths: [".git/opencode-guardian/provenance", ".git/opencode-guardian/state.json", ".git/refs", ".git/opencode-guardian"],
+    allowRecursive: true,
+  });
+  assert.equal(blocked.status, "blocked");
+  for (const target of [".git/opencode-guardian/provenance", ".git/opencode-guardian/state.json", ".git/refs", ".git/opencode-guardian"]) {
+    assert.equal(hasFatalBlocker(blocked.blockers, target, /git metadata/), true, `${target} must stay protected`);
+  }
+
+  const planned = await guardianDeletePaths({
+    repoRoot: repo,
+    cwd: repo,
+    config: DEFAULT_CONFIG,
+    mode: "plan",
+    paths: [".git/opencode-guardian/evidence"],
+    allowRecursive: true,
+  });
+  assert.equal(planned.status, "planned", JSON.stringify(planned));
+
+  const applied = await guardianDeletePaths({
+    repoRoot: repo,
+    cwd: repo,
+    config: DEFAULT_CONFIG,
+    mode: "apply",
+    paths: [".git/opencode-guardian/evidence"],
+    allowRecursive: true,
+    confirmDelete: true,
+    confirmToken: String(planned.confirmToken),
+  });
+  assert.equal(applied.ok, true, JSON.stringify(applied));
+  assert.equal(await exists(path.join(metadataDir, "evidence")), false);
+  assert.equal(await exists(path.join(metadataDir, "provenance", "keep.json")), true);
+  assert.equal(await exists(path.join(metadataDir, "state.json")), true);
+});
