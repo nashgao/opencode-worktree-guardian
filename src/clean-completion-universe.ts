@@ -138,6 +138,9 @@ export type CleanCompletionUniverseProof = {
 async function cleanCompletionUniverseSnapshot(repoRoot: string, config: GuardianConfig, paths: GuardianPaths) {
   try {
     const state = await readState(paths, { repoRoot, config });
+    const stateSnapshot = state.state_version === 0 && Object.keys(state.sessions).length === 0
+      ? { ...state, created_at: "", updated_at: "" }
+      : state;
     const [quarantineItems, incompleteOperations] = await Promise.all([
       listQuarantineItems({ paths }),
       listIncompleteQuarantineOperations({ paths }),
@@ -155,7 +158,7 @@ async function cleanCompletionUniverseSnapshot(repoRoot: string, config: Guardia
       metadata,
       registeredWorktrees,
       refs,
-      state: JSON.stringify(state),
+      state: JSON.stringify(stateSnapshot),
       stateVersion: state.state_version ?? 0,
       quarantineItems: quarantineItems.map((item) => `${item.relativePath}:${item.digest}`).sort(),
       quarantineItemCount: quarantineItems.length,
