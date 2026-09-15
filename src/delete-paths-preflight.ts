@@ -1,6 +1,7 @@
 import path from "node:path";
 import { verifyArchivedPaths } from "./archived-paths.ts";
 import { expandWorktreeRoot, loadConfig } from "./config.ts";
+import { GUARDIAN_METADATA_ROOT_DIRECTORIES, GUARDIAN_METADATA_ROOT_FILES } from "./clean-completion-metadata.ts";
 import { collectDeleteFingerprint } from "./deletion-fingerprint.ts";
 import { getRepoRoot, listWorktrees, runGit, tryGit } from "./git.ts";
 import { assertNoSymlinkAncestors, canonicalPathOrResolved, isEnoent, isSameOrInside, lstatOrMissing, normalizeRelativePath, parseNullSeparated, recordValue, relativePath, stringArray, uniqueSorted } from "./filesystem-boundaries.ts";
@@ -22,6 +23,7 @@ export type DeletePathTarget = {
 };
 
 const PROTECTED_PATH_ROOTS = new Set(["node_modules", "vendor", ".pnpm-store"]);
+const GUARDIAN_METADATA_PREFIX = ".git/opencode-guardian/";
 
 function pathKind(stat: Awaited<ReturnType<typeof lstatOrMissing>>): DeletePathKind {
   if (!stat) return "missing";
@@ -47,8 +49,15 @@ async function isIgnoredPath(repoRoot: string, relative: string) {
   return result.ok;
 }
 
+function isUnknownGuardianMetadataRoot(relative: string) {
+  if (!relative.startsWith(GUARDIAN_METADATA_PREFIX)) return false;
+  const entry = relative.slice(GUARDIAN_METADATA_PREFIX.length);
+  if (entry.length === 0 || entry.includes("/")) return false;
+  return !GUARDIAN_METADATA_ROOT_FILES.has(entry) && !GUARDIAN_METADATA_ROOT_DIRECTORIES.has(entry) && entry !== "state.lock";
+}
+
 function intrinsicProtectedPathReason(relative: string) {
-  if (relative === ".git" || relative.startsWith(".git/")) return "git metadata";
+  if (relative === ".git" || relative.startsWith(".git/")) return isUnknownGuardianMetadataRoot(relative) ? null : "git metadata";
   const firstPart = relative.split("/").filter(Boolean)[0] ?? "";
   return PROTECTED_PATH_ROOTS.has(firstPart) ? `protected ${firstPart} path` : null;
 }

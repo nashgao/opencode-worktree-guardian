@@ -16,6 +16,10 @@ type MetadataEntry = {
 
 const ROOT_FILES = new Set(["state.json", "events.jsonl", "report.html", "project-report.html", "codex-plan-cache.json"]);
 const ROOT_DIRECTORIES = new Set(["lock-tmp", "lock-tombstones", "provenance", "journal", "quarantine"]);
+
+// Safety boundary: deletion preflight may only ever target roots absent from these sets.
+export const GUARDIAN_METADATA_ROOT_FILES: ReadonlySet<string> = ROOT_FILES;
+export const GUARDIAN_METADATA_ROOT_DIRECTORIES: ReadonlySet<string> = ROOT_DIRECTORIES;
 const STABILITY_EXCLUDED_ROOT_FILES = new Set(["codex-plan-cache.json"]);
 
 function isEnoent(error: unknown): error is NodeJS.ErrnoException {
