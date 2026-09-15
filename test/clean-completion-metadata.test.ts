@@ -4,6 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { planCleanCompletion } from "../src/clean-completion.ts";
 import { DEFAULT_CONFIG } from "../src/config.ts";
+import { guardianGoal } from "../src/goal.ts";
 import { buildDirtySessionDoneIntent } from "../src/done-intent.ts";
 import { executeQuarantine } from "../src/quarantine-execute.ts";
 import { readQuarantineItem } from "../src/quarantine-journal.ts";
@@ -11,12 +12,48 @@ import { getGuardianPaths, readState, writeStateAtomic } from "../src/state.ts";
 import { guardianStart } from "../src/start.ts";
 import type { GuardianConfig } from "../src/types.ts";
 import { isRecordLike } from "../src/types.ts";
+import { runGuardianTool } from "../src/tool-registry.ts";
 import { createRepoWithOrigin, git, seedSession } from "./helpers.ts";
 
 const ENABLED_CONFIG: GuardianConfig = {
   ...DEFAULT_CONFIG,
   goal: { ...DEFAULT_CONFIG.goal, quarantineSessionResidue: true },
 };
+
+const SESSIONLESS_CLEAN_GOAL_CONFIG: GuardianConfig = {
+  ...DEFAULT_CONFIG,
+  goal: {
+    ...DEFAULT_CONFIG.goal,
+    commitDirty: false,
+    landToBase: false,
+    pushBase: false,
+    cleanupWorktrees: false,
+    cleanupBranches: false,
+    cleanupHygiene: false,
+    quarantineSessionResidue: true,
+  },
+};
+
+function record(value: unknown, name: string): Record<string, unknown> {
+  if (isRecordLike(value)) return value;
+  throw new TypeError(`${name} must be an object`);
+}
+
+function text(value: unknown, name: string): string {
+  if (typeof value === "string" && value.length > 0) return value;
+  throw new TypeError(`${name} must be a non-empty string`);
+}
+
+function cleanCompletionStep(plan: Record<string, unknown>): Record<string, unknown> {
+  const steps = Array.isArray(plan.steps) ? plan.steps.filter(isRecordLike) : [];
+  const step = steps.find((candidate) => candidate.tool === "guardian_clean_completion");
+  if (step) return step;
+  throw new TypeError("goal plan must include a clean-completion step");
+}
+
+function cleanCompletionReason(plan: Record<string, unknown>): string {
+  return String(cleanCompletionStep(plan).reason);
+}
 
 async function fixture(sessionId: string) {
   const { base, repo } = await createRepoWithOrigin();
@@ -149,4 +186,62 @@ test("clean-completion proof rejects an unsupported quarantine journal record ve
   if (!isRecordLike(parsed)) throw new Error("journal fixture must parse as an object");
   await fs.writeFile(target, `${JSON.stringify({ ...parsed, version: 2 })}\n`, "utf8");
   await assertUnstable(input, /Malformed quarantine journal record/);
+});
+
+test("guardian_goal completes a clean repository without a Guardian session", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const request = { repoRoot: repo, cwd: repo, config: SESSIONLESS_CLEAN_GOAL_CONFIG };
+
+  const plan = record(await runGuardianTool("guardian_goal", { ...request, mode: "plan" }), "goal plan");
+  assert.equal(plan.status, "planned", JSON.stringify(plan));
+  assert.equal(cleanCompletionStep(plan).status, "planned");
+
+  const applied = record(await runGuardianTool("guardian_goal", {
+    ...request,
+    mode: "apply",
+    confirm: true,
+    confirmToken: text(plan.confirmToken, "plan.confirmToken"),
+  }), "goal apply");
+  assert.equal(applied.complete, true, JSON.stringify(applied));
+  assert.equal(record(applied.cleanCompletionProof, "clean-completion proof").status, "proven");
+});
+
+test("guardian_goal blocks a sessionless clean proof with unknown Guardian metadata", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const paths = await getGuardianPaths(repo);
+  await fs.mkdir(paths.provenanceDir, { recursive: true });
+  await fs.writeFile(path.join(paths.provenanceDir, "orphan.json"), "{}\n");
+
+  const plan = record(await guardianGoal({ repoRoot: repo, cwd: repo, mode: "plan", config: SESSIONLESS_CLEAN_GOAL_CONFIG }), "goal plan");
+  assert.equal(plan.status, "blocked");
+  assert.match(cleanCompletionReason(plan), /unknown Guardian provenance entry/);
+});
+
+test("guardian_goal does not complete a dirty repository without a Guardian session", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  await fs.writeFile(path.join(repo, "unreviewed.txt"), "review me\n");
+
+  const plan = record(await guardianGoal({ repoRoot: repo, cwd: repo, mode: "plan", config: SESSIONLESS_CLEAN_GOAL_CONFIG }), "goal plan");
+  assert.equal(plan.status, "blocked", JSON.stringify(plan));
+  assert.match(cleanCompletionReason(plan), /registered worktree is not clean/);
+});
+
+test("guardian_goal blocks a sessionless clean proof while a Guardian session is active", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  await guardianStart({
+    repoRoot: repo,
+    cwd: repo,
+    sessionId: "ses_sessionless_active",
+    taskName: "sessionless active guard",
+    createWorktree: true,
+    config: SESSIONLESS_CLEAN_GOAL_CONFIG,
+  });
+
+  const plan = record(await guardianGoal({ repoRoot: repo, cwd: repo, mode: "plan", config: SESSIONLESS_CLEAN_GOAL_CONFIG }), "goal plan");
+  assert.equal(plan.status, "blocked");
+  assert.match(cleanCompletionReason(plan), /active Guardian session/);
 });

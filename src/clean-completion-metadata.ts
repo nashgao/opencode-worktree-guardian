@@ -41,6 +41,13 @@ async function collectTree(root: string): Promise<readonly MetadataEntry[]> {
       inventory.push({ path: relativePath, kind: "file", digest: crypto.createHash("sha256").update(content).digest("hex") });
     }
   }
+  try {
+    const rootStat = await fs.lstat(root);
+    if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) throw new Error("Guardian metadata root is not a directory");
+  } catch (error) {
+    if (isEnoent(error)) return inventory;
+    throw error;
+  }
   await visit(root);
   return inventory;
 }

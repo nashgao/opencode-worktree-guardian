@@ -1,7 +1,9 @@
 import type { CleanCompletionPlan } from "./clean-completion.ts";
 import { planCleanCompletion } from "./clean-completion.ts";
+import { proveCleanCompletionUniverse } from "./clean-completion-universe.ts";
 import { buildDirtySessionDoneIntent } from "./done-intent.ts";
 import { goalTokenValue } from "./goal-confirm-token.ts";
+import { isTerminalSessionStatus } from "./lifecycle.ts";
 import { executeQuarantine } from "./quarantine-execute.ts";
 import { getGuardianPaths, readState } from "./state.ts";
 import type { GuardianConfig, GuardianToolInput, GuardianToolResult } from "./types.ts";
@@ -34,11 +36,48 @@ async function resolveCleanCompletionSession(repoRoot: string, config: GuardianC
   return state.sessions[sessionId] ?? null;
 }
 
+async function planRepositoryCleanCompletion(repoRoot: string, config: GuardianConfig): Promise<CleanCompletionPlan> {
+  try {
+    const paths = await getGuardianPaths(repoRoot);
+    const state = await readState(paths, { repoRoot, config });
+    for (const [sessionId, session] of Object.entries(state.sessions)) {
+      if (session.status === "active") {
+        return { applicable: true, finalProof: { status: "unstable", reason: `active Guardian session requires a session-scoped clean-completion check: ${sessionId}`, candidates: [] }, incompleteOperationCount: 0 };
+      }
+      if (!isTerminalSessionStatus(session.status)) {
+        return { applicable: true, finalProof: { status: "unstable", reason: `Guardian session has an unknown status: ${sessionId}`, candidates: [] }, incompleteOperationCount: 0 };
+      }
+    }
+    const universe = await proveCleanCompletionUniverse({ repoRoot, config, requireCleanWorktrees: true });
+    return universe.status === "stable"
+      ? {
+          applicable: true,
+          finalProof: {
+            status: "stable",
+            candidates: [],
+            inventoryDigest: universe.inventoryDigest,
+            stateVersion: universe.stateVersion,
+            worktreeCount: universe.worktreeCount,
+            quarantineItemCount: universe.quarantineItemCount,
+          },
+          incompleteOperationCount: universe.incompleteOperationCount,
+        }
+      : { applicable: true, finalProof: { status: "unstable", reason: universe.reason, candidates: [] }, incompleteOperationCount: universe.incompleteOperationCount };
+  } catch (error) {
+    return { applicable: true, finalProof: { status: "unstable", reason: `clean-completion inventory failed: ${error instanceof Error ? error.message : String(error)}`, candidates: [] }, incompleteOperationCount: 0 };
+  }
+}
+
 export async function planGoalCleanCompletion(input: GoalCleanCompletionPlanInput): Promise<CleanCompletionPlan | undefined> {
   const { request, repoRoot, cwd, config } = input;
   if (!config.goal.quarantineSessionResidue) return undefined;
   const session = await resolveCleanCompletionSession(repoRoot, config, request.sessionId);
-  if (!session) return { applicable: false, finalProof: { status: "not-applicable", reason: "no session resolved for quarantine session residue check", candidates: [] }, incompleteOperationCount: 0 };
+  if (!session) {
+    if (typeof request.sessionId === "string" && request.sessionId.length > 0) {
+      return { applicable: false, finalProof: { status: "not-applicable", reason: "no session resolved for quarantine session residue check", candidates: [] }, incompleteOperationCount: 0 };
+    }
+    return planRepositoryCleanCompletion(repoRoot, config);
+  }
   return planCleanCompletion({ repoRoot, cwd, config, session });
 }
 
@@ -59,7 +98,19 @@ export function plannedGoalCleanCompletionStep(plan: CleanCompletionPlan): GoalC
 export async function applyGoalCleanCompletion(input: GuardianToolInput, plan: GoalCleanCompletionContext, config: GuardianConfig): Promise<GoalCleanCompletionStep> {
   if (!plan.cleanCompletion) return { tool: "guardian_clean_completion", ok: true, status: "skipped", reason: "quarantineSessionResidue=false" };
   const session = await resolveCleanCompletionSession(plan.repoRoot, config, input.sessionId);
-  if (!session) return { tool: "guardian_clean_completion", ok: false, status: "blocked", reason: "clean-completion session is unavailable" };
+  if (!session) {
+    if (typeof input.sessionId === "string" && input.sessionId.length > 0) {
+      return { tool: "guardian_clean_completion", ok: false, status: "blocked", reason: "clean-completion session is unavailable" };
+    }
+    const fresh = await planRepositoryCleanCompletion(plan.repoRoot, config);
+    if (JSON.stringify(goalTokenValue(fresh)) !== JSON.stringify(goalTokenValue(plan.cleanCompletion))) {
+      return { tool: "guardian_clean_completion", ok: false, status: "blocked", reason: "clean-completion plan changed; re-run mode=plan" };
+    }
+    const reason = goalCleanCompletionBlockReason(fresh);
+    return reason
+      ? { tool: "guardian_clean_completion", ok: false, status: "blocked", reason }
+      : { tool: "guardian_clean_completion", ok: true, status: "applied", result: { ok: true, status: "quarantined", quarantinedPaths: [], cleanCompletion: fresh } };
+  }
   const fresh = await planCleanCompletion({ repoRoot: plan.repoRoot, cwd: plan.cwd, config, session });
   if (JSON.stringify(goalTokenValue(fresh)) !== JSON.stringify(goalTokenValue(plan.cleanCompletion))) {
     return { tool: "guardian_clean_completion", ok: false, status: "blocked", reason: "clean-completion plan changed; re-run mode=plan" };
