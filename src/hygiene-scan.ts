@@ -23,7 +23,7 @@ import { protectedPathsFromConfig } from "./protected-paths.ts";
 export type { HygieneCategory, HygieneSeverity } from "./hygiene-classification.ts";
 export type { FilesystemOnlyEmptyDirectory, HygieneScanResult, HygieneSummary } from "./hygiene-scan-result.ts";
 
-const SUSPICIOUS_NAME_PATTERN = /(^|[-_.])(clone|clones|research|dump|dumps|scratch|sandbox|experiment|prototype|poc|checkout|repo)([-_.]|$)/i;
+const SUSPICIOUS_NAME_PATTERN = /(^|[-_.])(clone|clones|dump|dumps|scratch|sandbox|experiment|prototype|poc|checkout|repo)([-_.]|$)/i;
 const RESIDUE_ROOT_PATTERN = /^(guardian-[^/]+|guardian-origin-[^/]+|opencode-temp-[^/]+|omo-research-[^/]+|opencode-research-[^/]+|git-docs-research)$/;
 
 export { protectedDirReason } from "./hygiene-protected-seeds.ts";

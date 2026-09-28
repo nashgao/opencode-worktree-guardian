@@ -101,22 +101,29 @@ function hygieneProblemLines(result: Record<string, unknown>): string[] {
   const fail = numberValue(recordValue(summary.bySeverity).fail);
   const warn = numberValue(recordValue(summary.bySeverity).warn);
   const total = numberValue(summary.findingCount);
-  const protectedInventoryCount = numberValue(summary.protectedInventoryCount);
-  const protectedInventoryRootsTruncated = summary.protectedInventoryRootsTruncated === true;
   const lines: string[] = [];
   if (total > 0) {
     const severity = [fail > 0 ? `${fail} need manual review` : "", warn > 0 ? `${warn} warning${warn === 1 ? "" : "s"}` : ""].filter(Boolean).join(", ");
     lines.push(`Hygiene findings: ${total}${severity ? ` (${severity})` : ""}`);
   }
-  if (protectedInventoryCount > 0) lines.push(`Protected inventory not retention-assessed: ${protectedInventoryCount}${protectedInventoryRootsTruncated ? "+" : ""} root${protectedInventoryCount === 1 && !protectedInventoryRootsTruncated ? "" : "s"}`);
   return lines;
+}
+
+function protectedInventoryLines(result: Record<string, unknown>): string[] {
+  const summary = recordValue(recordValue(result.hygiene).summary);
+  const count = numberValue(summary.protectedInventoryCount);
+  if (count === 0) return [];
+  const truncated = summary.protectedInventoryRootsTruncated === true;
+  return [`${count}${truncated ? "+" : ""} root${count === 1 && !truncated ? "" : "s"} not retention-assessed; cleanup not authorized`];
 }
 
 function statusHeader(name: string, result: Record<string, unknown>) {
   if (result.ok === false || name !== "guardian_status") return `${result.ok === false ? "[FAIL]" : "[GOOD]"} ${name} snapshot`;
   const verdict = computeGuardianVerdict(result);
   const marker = verdict.tone === "bad" ? "[FAIL]" : verdict.tone === "warn" ? "[WARN]" : "[GOOD]";
-  const state = verdict.tone === "good" ? "Clean" : verdict.tone === "warn" ? "Needs review" : "Blocked";
+  const state = verdict.tone === "good"
+    ? recordValue(result.cleanCompletionProof).status === "proven" ? "Goal complete" : "No actionable risks"
+    : verdict.tone === "warn" ? "Needs review" : "Blocked";
   return `${marker} Guardian Status: ${state}`;
 }
 
@@ -184,6 +191,7 @@ export function formatGuardianStatusOutput(name: string, rawResult: unknown) {
   appendOperationalScope(scopeLines, result.operationalScope);
   addSection(lines, "Operational Scope", scopeLines.slice(1).map((line) => line.replace(/^\[INFO\] /, "")));
   addSection(lines, "Clean Completion Proof", cleanCompletionProofLines(result));
+  addSection(lines, "Protected Inventory", protectedInventoryLines(result));
   const reason = textValue(result.reason, "");
   if (result.ok === false || reason) addSection(lines, "Problem", [reason || "guardian tool reported failure"]);
   const activeSessions = arrayValue(result.activeSessions);

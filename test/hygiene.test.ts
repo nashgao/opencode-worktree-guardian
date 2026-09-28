@@ -55,6 +55,20 @@ test("hygiene scanner detects known scratch artifact patterns", async () => {
   assert.equal(reasons.get("tsx-501"), "generated tsx runtime cache");
 });
 
+test("an ignored research skill remains reviewable, while explicit research residue is suspicious", async (t) => {
+  const repo = await createRepo();
+  t.after(() => fs.rm(repo, { recursive: true, force: true }));
+  await fs.writeFile(path.join(repo, ".gitignore"), ".claude/\nopencode-research-*/\n");
+  await writeArtifact(repo, ".claude/skills/research/SKILL.md");
+  await writeArtifact(repo, "opencode-research-123/notes.txt");
+
+  const result = await scanWorkspaceHygiene({ repoRoot: repo, config: DEFAULT_CONFIG });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(findingPaths(result), ["opencode-research-123"]);
+  assert.equal(result.reviewableCandidates.some((entry) => entry.path === ".claude" && entry.fileCount === 1), true);
+});
+
 test("hygiene scanner declares Git untracked and ignored coverage plus bounded empty-directory coverage", async () => {
   // Given
   const repo = await createRepo();

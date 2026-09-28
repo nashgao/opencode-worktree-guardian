@@ -219,7 +219,7 @@ test("unrelated lifecycle tools ignore project status schema fields", async () =
   assert.equal(result.metadata.schemaVersion, undefined);
   assert.equal(result.metadata.reportPath, undefined);
   assert.equal(await fs.access(`${repo}/.git/opencode-guardian/project-report.html`).then(() => true, () => false), false);
-  assert.match(result.output, /^\[GOOD\] Guardian Status: Clean/m);
+  assert.match(result.output, /^\[GOOD\] Guardian Status: No actionable risks/m);
   assert.doesNotMatch(result.output, /guardian_status snapshot/);
   assert.doesNotMatch(result.output, /Project Intelligence|guardian_project_status|Roadmaps|ULW loops|project-report\.html/);
 });

@@ -9,9 +9,10 @@ import { guardianStatus } from "../src/recover.ts";
 import { guardianStart } from "../src/start.ts";
 import { formatGuardianHygieneOutput } from "../src/plugin/readable-output-cleanup.ts";
 import { formatGuardianGoalOutput } from "../src/plugin/readable-output-goal.ts";
+import { formatGuardianStatusOutput } from "../src/plugin/readable-output-status.ts";
 import type { GuardianConfig, RecordLike } from "../src/types.ts";
 import { isRecordLike } from "../src/types.ts";
-import { computeGuardianVerdict } from "../src/verdict.ts";
+import { computeGuardianVerdict, guardianRiskCount } from "../src/verdict.ts";
 import { createRepo, createRepoWithOrigin, git } from "./helpers.ts";
 
 function protectedConfig(protectedPath: string): GuardianConfig {
@@ -84,7 +85,7 @@ test("guardian_hygiene never promotes protected inventory into cleanup targets",
   assert.equal(Array.isArray(plan.blockers) && plan.blockers.some((value) => record(value, "blocker").fatal === true), true);
 });
 
-test("guardian_status warns when protected content has not been retention-assessed", async (t) => {
+test("guardian_status separates protected inventory from actionable risks", async (t) => {
   // Given
   const repo = await createRepo();
   t.after(() => fs.rm(repo, { recursive: true, force: true }));
@@ -98,9 +99,13 @@ test("guardian_status warns when protected content has not been retention-assess
   const verdict = computeGuardianVerdict(status);
 
   // Then
-  assert.equal(verdict.tone, "warn");
-  assert.match(verdict.headline, /protected content has not been retention-assessed/);
-  assert.equal(verdict.nextAction, "guardian_hygiene to inspect protected inventory");
+  assert.equal(verdict.tone, "good");
+  assert.equal(verdict.nextAction, null);
+  assert.equal(guardianRiskCount(status), 0);
+  const output = formatGuardianStatusOutput("guardian_status", status);
+  assert.match(output, /^\[GOOD\] Guardian Status: No actionable risks/m);
+  assert.match(output, /Protected Inventory\n  1 root not retention-assessed; cleanup not authorized/);
+  assert.doesNotMatch(output, /Problems\n  Protected inventory/);
 });
 
 test("guardian_goal reports protected inventory metrics and exact roots without treating them as deletion targets", async (t) => {
@@ -154,6 +159,8 @@ test("guardian_hygiene readable output shows every protected root in the standar
   const output = formatGuardianHygieneOutput({ ok: true, repoRoot: "/repo", summary: { findingCount: 0, exclusionCount: 9, protectedInventoryCount: 9, protectedInventoryRootsTruncated: false, protectedInventoryFileCount: 9, protectedInventoryDirectoryCount: 0, protectedInventoryTotalBytes: 9, protectedInventoryBytesTruncated: false, candidateCount: 9, reviewableCandidateCount: 0, bySeverity: { warn: 0, fail: 0 } }, findings: [], exclusions, reviewableCandidates: [], suggestedCommands: [] });
 
   // Then
+  assert.match(output, /^\[GOOD\] guardian_hygiene scan/m);
+  assert.match(output, /\[INFO\] protected inventory:/);
   assert.equal(output.includes("protected-8"), true);
   assert.equal(output.includes("omitted: 1"), false);
 });
@@ -172,7 +179,7 @@ test("readable protected inventory reports root-cap omissions as a lower bound",
   const hygieneOutput = formatGuardianHygieneOutput({ ok: true, repoRoot: "/repo", summary, findings: [], exclusions, reviewableCandidates: [], suggestedCommands: [] });
   const goalOutput = formatGuardianGoalOutput({ ok: true, status: "planned", complete: null, goal: {}, steps: [], blockers: [], hygienePostcondition: { mode: "no-unprotected-residue", phase: "plan", status: "satisfied", residualCount: 0, residualByCategory: {}, protectedExclusionCount: 128, reviewableCandidateCount: 0, reviewableInventoryComplete: true, protectedInventory: { rootCount: 128, rootsTruncated: true, rootsShown: exclusions.slice(0, 12).map((entry) => entry.path), rootsOmittedCount: null, fileCount: 128, directoryCount: 0, totalBytes: 128, bytesTruncated: true } } });
 
-  assert.match(hygieneOutput, /protected roots requiring retention review: 128\+ \| omitted: >116/);
+  assert.match(hygieneOutput, /protected roots \(retention not assessed\): 128\+ \| omitted: >116/);
   assert.match(goalOutput, /protected roots requiring retention review: 128\+ \| omitted: >116/);
   assert.match(hygieneOutput, /files: 128\+ \| directories: 0\+ \| bytes: 128\+/);
   assert.match(goalOutput, /files=128\+ \| directories=0\+ \| bytes=128\+/);
