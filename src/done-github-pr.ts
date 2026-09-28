@@ -149,14 +149,53 @@ export async function mergePullRequest(input: MergePullRequestInput): Promise<{ 
   if (input.allowAdminBypass) args.push("--admin");
   const merged = await runGh(input.repoRoot, args);
   if (merged.ok) return { ok: true };
+  const explicitReviewError = /\breview required\b|\bapproving reviews? (?:is|are) required\b|\brequired approving reviews?\b/i.test(merged.stderr);
+  let review: Record<string, unknown> | undefined;
+  let reviewProbe: GhResult | undefined;
+  let reviewProbeError: string | undefined;
+  if (!explicitReviewError) {
+    reviewProbe = await runGh(input.repoRoot, ["pr", "view", String(input.pr.number), "--json", "number,url,headRefOid,reviewDecision"]);
+    if (reviewProbe.ok) {
+      try {
+        const parsed = parseJson(reviewProbe.stdout);
+        if (isRecordLike(parsed) && parsed.number === input.pr.number && parsed.headRefOid === input.head && parsed.reviewDecision === "REVIEW_REQUIRED") {
+          review = { number: parsed.number, url: parsed.url, headRefOid: parsed.headRefOid, reviewDecision: parsed.reviewDecision };
+        }
+      } catch {
+        reviewProbeError = "gh pr view returned invalid review data";
+      }
+    } else {
+      reviewProbeError = "gh pr view failed while checking review requirements";
+    }
+  }
+  if (explicitReviewError || review !== undefined) {
+    return {
+      ok: false,
+      result: {
+        ok: false,
+        status: input.allowAdminBypass ? "blocked" : "waiting",
+        code: "required-review",
+        reason: "PR merge requires an approving review; Guardian preserved the session and will not bypass branch protection",
+        nextAction: "Arrange an eligible approving review or an authorized review-policy change, then rerun guardian_done",
+        pr: input.pr,
+        head: input.head,
+        gh: merged,
+        ...(review === undefined ? {} : { review }),
+        ...(reviewProbe === undefined ? {} : { reviewProbe }),
+        adminBypass: input.allowAdminBypass,
+        pullRequestMergeMethod: input.pullRequestMergeMethod,
+      },
+    };
+  }
   return {
     ok: false,
     result: {
       ok: false,
       status: input.allowAdminBypass ? "blocked" : "waiting",
-      reason: "gh pr merge did not complete; Guardian will not clean up until the PR is landed",
+      reason: `gh pr merge did not complete; Guardian will not clean up until the PR is landed${reviewProbeError === undefined ? "" : `; ${reviewProbeError}`}`,
       pr: input.pr,
       gh: merged,
+      ...(reviewProbe === undefined ? {} : { reviewProbe }),
       adminBypass: input.allowAdminBypass,
       pullRequestMergeMethod: input.pullRequestMergeMethod,
     },

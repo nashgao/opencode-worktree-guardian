@@ -83,6 +83,109 @@ test("guardian_done apply lands the session PR and removes its stale worktree an
   await assert.rejects(git(repo, ["rev-parse", "--verify", `refs/heads/${branch}`]));
 });
 
+test("guardian_done reports a required-review merge blocker without cleaning the session", async (t) => {
+  const { repo } = await createRepoWithOrigin();
+  const sessionId = "land-clean-review-required";
+  const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId, taskName: "review required", createWorktree: true, config: DEFAULT_CONFIG });
+  const session = requireRecord(started.session, "started.session");
+  const worktree = requireString(session.worktree_path, "started.session.worktree_path");
+  const branch = requireString(session.branch, "started.session.branch");
+  await fs.writeFile(path.join(worktree, "feature.txt"), "review pending\n", "utf8");
+  await git(worktree, ["add", "feature.txt"]);
+  await git(worktree, ["commit", "-m", "add review-pending fixture"]);
+  const head = (await git(worktree, ["rev-parse", "HEAD"])).stdout.trim();
+  const fakeGh = await installFakeGh(t, { repo, branch, head, mergeFails: true });
+  const request = { repoRoot: repo, cwd: worktree, sessionId, config: DEFAULT_CONFIG };
+  const plan = requireRecord(await guardianDone({ ...request, mode: "plan" }), "plan");
+
+  const result = await guardianDone({ ...request, mode: "apply", confirm: true, confirmToken: requireString(plan.confirmToken, "plan.confirmToken") });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, "waiting");
+  assert.equal(result.code, "required-review");
+  assert.match(requireString(result.reason, "result.reason"), /approving review/i);
+  assert.match(requireString(result.nextAction, "result.nextAction"), /review/i);
+  assert.equal(result.head, head);
+  assert.equal(requireRecord(result.pr, "result.pr").url, fakeGh.url);
+  assert.match(requireString(requireRecord(result.gh, "result.gh").stderr, "result.gh.stderr"), /review required/i);
+  await fs.access(worktree);
+  await git(repo, ["rev-parse", "--verify", `refs/heads/${branch}`]);
+  assert.equal(await remoteBranchExists(repo, branch), true);
+  assert.match(formatGuardianOutput("guardian_done", result), /approving review/i);
+});
+
+test("guardian_done identifies required review when merge stderr is generic but PR review decision is explicit", async (t) => {
+  const { repo } = await createRepoWithOrigin();
+  const sessionId = "land-clean-review-decision";
+  const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId, taskName: "review decision", createWorktree: true, config: DEFAULT_CONFIG });
+  const session = requireRecord(started.session, "started.session");
+  const worktree = requireString(session.worktree_path, "started.session.worktree_path");
+  const branch = requireString(session.branch, "started.session.branch");
+  await fs.writeFile(path.join(worktree, "feature.txt"), "review decision pending\n", "utf8");
+  await git(worktree, ["add", "feature.txt"]);
+  await git(worktree, ["commit", "-m", "add review decision fixture"]);
+  const head = (await git(worktree, ["rev-parse", "HEAD"])).stdout.trim();
+  await installFakeGh(t, { repo, branch, head, mergeFails: true, mergeFailureMessage: "Pull request is not mergeable", reviewDecision: "REVIEW_REQUIRED" });
+  const request = { repoRoot: repo, cwd: worktree, sessionId, config: DEFAULT_CONFIG };
+  const plan = requireRecord(await guardianDone({ ...request, mode: "plan" }), "plan");
+
+  const result = await guardianDone({ ...request, mode: "apply", confirm: true, confirmToken: requireString(plan.confirmToken, "plan.confirmToken") });
+
+  assert.equal(result.code, "required-review");
+  assert.equal(result.status, "waiting");
+  assert.equal(requireRecord(result.review, "result.review").reviewDecision, "REVIEW_REQUIRED");
+  await fs.access(worktree);
+});
+
+test("guardian_done reports an unavailable review probe without guessing the merge blocker", async (t) => {
+  const { repo } = await createRepoWithOrigin();
+  const sessionId = "land-clean-review-probe-unavailable";
+  const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId, taskName: "review probe unavailable", createWorktree: true, config: DEFAULT_CONFIG });
+  const session = requireRecord(started.session, "started.session");
+  const worktree = requireString(session.worktree_path, "started.session.worktree_path");
+  const branch = requireString(session.branch, "started.session.branch");
+  await fs.writeFile(path.join(worktree, "feature.txt"), "probe unavailable\n", "utf8");
+  await git(worktree, ["add", "feature.txt"]);
+  await git(worktree, ["commit", "-m", "add probe fixture"]);
+  const head = (await git(worktree, ["rev-parse", "HEAD"])).stdout.trim();
+  await installFakeGh(t, { repo, branch, head, existingPr: true, mergeFails: true, mergeFailureMessage: "Pull request is not mergeable", reviewViewFails: true });
+  const request = { repoRoot: repo, cwd: worktree, sessionId, config: DEFAULT_CONFIG };
+  const plan = requireRecord(await guardianDone({ ...request, mode: "plan" }), "plan");
+
+  const result = await guardianDone({ ...request, mode: "apply", confirm: true, confirmToken: requireString(plan.confirmToken, "plan.confirmToken") });
+
+  assert.equal(result.code, undefined);
+  assert.match(requireString(result.reason, "result.reason"), /gh pr view failed while checking review requirements/);
+  assert.match(requireString(requireRecord(result.reviewProbe, "result.reviewProbe").stderr, "result.reviewProbe.stderr"), /review lookup unavailable/);
+  await fs.access(worktree);
+});
+
+test("guardian_done keeps unrelated PR merge failures generic", async (t) => {
+  const { repo } = await createRepoWithOrigin();
+  const sessionId = "land-clean-other-merge-failure";
+  const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId, taskName: "other merge failure", createWorktree: true, config: DEFAULT_CONFIG });
+  const session = requireRecord(started.session, "started.session");
+  const worktree = requireString(session.worktree_path, "started.session.worktree_path");
+  const branch = requireString(session.branch, "started.session.branch");
+  await fs.writeFile(path.join(worktree, "feature.txt"), "other merge failure\n", "utf8");
+  await git(worktree, ["add", "feature.txt"]);
+  await git(worktree, ["commit", "-m", "add other-merge-failure fixture"]);
+  const head = (await git(worktree, ["rev-parse", "HEAD"])).stdout.trim();
+  await installFakeGh(t, { repo, branch, head, mergeMethod: "squash" });
+  const request = { repoRoot: repo, cwd: worktree, sessionId, config: DEFAULT_CONFIG };
+  const plan = requireRecord(await guardianDone({ ...request, mode: "plan" }), "plan");
+
+  const result = await guardianDone({ ...request, mode: "apply", confirm: true, confirmToken: requireString(plan.confirmToken, "plan.confirmToken") });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.status, "waiting");
+  assert.equal(result.code, undefined);
+  assert.match(requireString(result.reason, "result.reason"), /gh pr merge did not complete/);
+  assert.match(requireString(requireRecord(result.gh, "result.gh").stderr, "result.gh.stderr"), /merge method was expected/);
+  await fs.access(worktree);
+  await git(repo, ["rev-parse", "--verify", `refs/heads/${branch}`]);
+});
+
 test("guardian_done session apply retains advisory stash inventory", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));

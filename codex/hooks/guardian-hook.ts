@@ -9,12 +9,14 @@ import { quarantinePlanCacheKey } from "../../src/quarantine-tool.ts";
 import { getGuardianPaths } from "../../src/state.ts";
 import { recordLastSafeState, runGuardianTool } from "../../src/tools.ts";
 import { commandFromToolInput, parseHookPayload, runPreToolUse } from "./command-interception.ts";
+import { checkpointGoalResult, pendingGoalContext, stopForPendingGoal } from "./goal-continuation.ts";
 import type { HookPayload } from "./command-interception.ts";
 
 const UnknownRecordSchema = z.record(z.string(), z.unknown());
 const ToolArgsSchema = UnknownRecordSchema;
 const PlanCacheFileSchema = z.object({ version: z.literal(1), entries: z.record(z.string(), z.string()) });
-const HELP = "Usage:\n  guardian-hook hook pre-tool-use\n  guardian-hook hook post-tool-use\n  guardian-hook tool <guardian_tool_name> [json_args]\n";
+const HELP = "Usage:\n  guardian-hook hook pre-tool-use\n  guardian-hook hook post-tool-use\n  guardian-hook hook stop\n  guardian-hook hook session-start\n  guardian-hook tool <guardian_tool_name> [json_args]\n";
+const GoalHookPayloadSchema = z.object({ hook_event_name: z.string(), session_id: z.string().min(1), cwd: z.string().min(1) });
 
 async function runPostToolUse(payload: HookPayload): Promise<string> {
   if (payload.hook_event_name !== "PostToolUse") return "";
@@ -144,12 +146,17 @@ function textField(record: Record<string, unknown>, key: string, fallback = "-")
   return typeof value === "string" && value.length > 0 ? value : fallback;
 }
 
-function confirmationHint(name: string, result: Record<string, unknown>): string | undefined {
+function confirmationHint(name: string, result: Record<string, unknown>, goalRequested: boolean): string | undefined {
   if ((result["status"] !== "planned" && result["status"] !== "planned-partial") || typeof result["confirmToken"] !== "string") return undefined;
   if (name === "guardian_hygiene" || name === "guardian_delete_paths") {
     return "After explicit user confirmation, rerun with mode=apply and confirmDelete=true; the Codex adapter reuses the matching cached plan token.";
   }
-  if (name === "guardian_done" || name === "guardian_finish_workflow" || name === "guardian_goal") {
+  if (name === "guardian_goal") {
+    return goalRequested
+      ? "If the user requested Guardian Goal completion, review the plan and continue safe authorized steps with mode=apply and confirm=true using the matching cached plan token. trackGoal alone is not approval."
+      : "After explicit user confirmation, rerun with mode=apply and confirm=true; the Codex adapter reuses the matching cached plan token.";
+  }
+  if (name === "guardian_done" || name === "guardian_finish_workflow") {
     return "After explicit user confirmation, rerun with mode=apply and confirm=true; the Codex adapter reuses the matching cached plan token.";
   }
   if (name === "guardian_quarantine") return result["action"] === "restore"
@@ -161,10 +168,10 @@ function confirmationHint(name: string, result: Record<string, unknown>): string
   return undefined;
 }
 
-function formatToolOutput(name: string, result: Record<string, unknown>): string {
+function formatToolOutput(name: string, result: Record<string, unknown>, goalRequested = false): string {
   if (READABLE_GUARDIAN_TOOLS.has(name)) {
     const formatted = formatGuardianOutput(name, result);
-    const hint = confirmationHint(name, result);
+    const hint = confirmationHint(name, result, goalRequested);
     return `${hint === undefined ? formatted : `${formatted}\n[INFO] ${hint}`}\n`;
   }
   const status = textField(result, "status", result["ok"] === false ? "blocked" : "completed");
@@ -177,7 +184,7 @@ function formatToolOutput(name: string, result: Record<string, unknown>): string
   }
   const reason = textField(result, "reason", "");
   if (reason.length > 0) lines.push(`${result["ok"] === false ? "[FAIL]" : "[INFO]"} ${reason}`);
-  const hint = confirmationHint(name, result);
+  const hint = confirmationHint(name, result, goalRequested);
   if (hint !== undefined) lines.push(`[INFO] ${hint}`);
   return `${lines.join("\n")}\n`;
 }
@@ -189,11 +196,43 @@ async function runTool(name: string | undefined, rawArgs: string | undefined): P
   if (args["repoRoot"] === undefined) args["repoRoot"] = process.cwd();
   if (args["cwd"] === undefined) args["cwd"] = process.cwd();
   const repoRoot = typeof args["repoRoot"] === "string" ? args["repoRoot"] : process.cwd();
+  const repoId = name === "guardian_goal" ? (await getGuardianPaths(repoRoot)).gitDir : "";
   const cache = await readPlanCache(repoRoot);
   await maybeInjectPlanConfirmToken(name, args, cache);
   const result = await runGuardianTool(name, args);
   if (await rememberPlanConfirmToken(name, args, result, cache)) await writePlanCache(repoRoot, cache);
-  return formatToolOutput(name, result);
+  let checkpointWarning = "";
+  if (name === "guardian_goal") {
+    try {
+      await checkpointGoalResult(repoRoot, repoId, process.env["CODEX_SESSION_ID"], args, result);
+    } catch (error) {
+      checkpointWarning = `[WARN] Guardian Goal continuation checkpoint failed: ${error instanceof Error ? error.message : String(error)}. The Guardian tool result above remains authoritative.\n`;
+    }
+  }
+  const output = formatToolOutput(name, result, args["trackGoal"] === true);
+  const identityWarning = name === "guardian_goal" && args["trackGoal"] === true && !process.env["CODEX_SESSION_ID"]
+    ? "[WARN] Guardian Goal continuation checkpoint unavailable because CODEX_SESSION_ID is absent. Continue from this result manually.\n"
+    : "";
+  return `${output}${checkpointWarning}${identityWarning}`;
+}
+
+async function runGoalHook(subcommand: string, rawPayload: string): Promise<string> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawPayload);
+  } catch {
+    return "";
+  }
+  const payload = GoalHookPayloadSchema.safeParse(parsed);
+  if (!payload.success) return "";
+  if (subcommand === "stop" && payload.data.hook_event_name === "Stop") {
+    return await stopForPendingGoal(payload.data.session_id).catch((error: unknown) => `${JSON.stringify({ systemMessage: `Guardian Goal continuation check failed: ${error instanceof Error ? error.message : String(error)}. Inspect the Guardian Goal result manually.` })}\n`);
+  }
+  if (subcommand === "session-start" && payload.data.hook_event_name === "SessionStart") {
+    const context = await pendingGoalContext(payload.data.session_id).catch((error: unknown) => `Guardian Goal continuation check failed: ${error instanceof Error ? error.message : String(error)}. Inspect the Guardian Goal result manually.`);
+    return context ? `${JSON.stringify({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: context } })}\n` : "";
+  }
+  return "";
 }
 
 async function main(): Promise<number> {
@@ -210,6 +249,10 @@ async function main(): Promise<number> {
   if (command === "hook" && subcommand === "post-tool-use") {
     const payload = parseHookPayload(await readStdin());
     if (payload !== undefined) processStdout.write(await runPostToolUse(payload));
+    return 0;
+  }
+  if (command === "hook" && (subcommand === "stop" || subcommand === "session-start")) {
+    processStdout.write(await runGoalHook(subcommand, await readStdin()));
     return 0;
   }
   if (command === "tool") {

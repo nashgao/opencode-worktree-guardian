@@ -91,6 +91,7 @@ export const expectedCommandAssets = [
 export const expectedCodexAdapterFiles = [
   "codex/.codex-plugin/plugin.json",
   "codex/hooks/command-interception.ts",
+  "codex/hooks/goal-continuation.ts",
   "codex/hooks/guardian-hook.ts",
   "codex/hooks/hooks.json",
   ...expectedCodexSkillNames.map((skillName) => `codex/skills/${skillName}/SKILL.md`),
