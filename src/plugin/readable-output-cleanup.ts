@@ -36,7 +36,7 @@ export function formatGuardianHygieneOutput(rawResult: unknown) {
   const warnCount = Number(recordValue(summary.bySeverity).warn ?? 0);
   const scanFailed = result.ok === false || summary.scanFailed === true;
   const inventoryIncomplete = summary.filesystemOnlyEmptyDirectoryScanComplete === false;
-  const lines = [`${scanFailed ? "[FAIL]" : findings.length > 0 || reviewableCount > 0 || protectedInventoryCount > 0 || inventoryIncomplete ? "[WARN]" : "[GOOD]"} guardian_hygiene scan`, `[INFO] repoRoot: ${textValue(result.repoRoot)}`];
+  const lines = [`${scanFailed ? "[FAIL]" : findings.length > 0 || reviewableCount > 0 || inventoryIncomplete ? "[WARN]" : "[GOOD]"} guardian_hygiene scan`, `[INFO] repoRoot: ${textValue(result.repoRoot)}`];
   if (typeof summary.trackedBaselineCommit === "string") lines.push(`[INFO] tracked additions: ${Number(summary.trackedAddedCandidateCount ?? 0)} | baseline: ${shortCommit(summary.trackedBaselineCommit)} | source: ${textValue(summary.trackedBaselineSource)}`);
   if (scanFailed) lines.push("[WARN] scan incomplete: findings and candidate counts are not trustworthy");
   else lines.push(`[INFO] findings: ${Number(summary.findingCount ?? findings.length)} | warn: ${warnCount} | fail: ${failCount} | exclusions: ${Number(summary.exclusionCount ?? exclusions.length)} | candidates: ${Number(summary.candidateCount ?? 0)} | reviewable: ${reviewableCount}`);
@@ -52,11 +52,11 @@ export function formatGuardianHygieneOutput(rawResult: unknown) {
   }
   if (protectedInventoryCount > 0) {
     const protectedMeasurementSuffix = protectedInventoryBytesTruncated ? "+" : "";
-    lines.push(`[WARN] protected inventory: ${protectedInventoryCount}${protectedInventoryRootsTruncated ? "+" : ""} root${protectedInventoryCount === 1 && !protectedInventoryRootsTruncated ? "" : "s"} | files: ${protectedInventoryFileCount}${protectedMeasurementSuffix} | directories: ${protectedInventoryDirectoryCount}${protectedMeasurementSuffix} | bytes: ${protectedInventoryTotalBytes}${protectedMeasurementSuffix} | assessment: not-assessed | cleanup authorized: false`);
+    lines.push(`[INFO] protected inventory: ${protectedInventoryCount}${protectedInventoryRootsTruncated ? "+" : ""} root${protectedInventoryCount === 1 && !protectedInventoryRootsTruncated ? "" : "s"} | files: ${protectedInventoryFileCount}${protectedMeasurementSuffix} | directories: ${protectedInventoryDirectoryCount}${protectedMeasurementSuffix} | bytes: ${protectedInventoryTotalBytes}${protectedMeasurementSuffix} | assessment: not-assessed | cleanup authorized: false`);
     lines.push("[INFO] protection prevents deletion; it does not prove that retained content is useful");
     appendBoundedList({
       lines,
-      heading: "[WARN] protected roots requiring retention review",
+      heading: "[INFO] protected roots (retention not assessed)",
       entries: exclusions,
       count: protectedInventoryCount,
       countIsLowerBound: protectedInventoryRootsTruncated,
