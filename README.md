@@ -209,6 +209,8 @@ The Codex adapter exposes the same command-style entry points as `$guardian-*` s
 
 Each skill is a thin prompt wrapper around the same Codex adapter CLI and native Guardian tool policy. Codex has the same audit-default and strict-mode consequences as OpenCode: in audit mode, the pre-tool hook exits successfully with no blocking response; in strict mode, it blocks guarded commands before mutation. `$guardian-hud` maps to status/report output because Codex does not have OpenCode's TUI HUD layer.
 
+For an explicitly requested `$guardian-goal`, the Codex adapter accepts `trackGoal: true` on plan/apply. It records one session-scoped advisory checkpoint under `XDG_STATE_HOME/opencode-worktree-guardian/codex-goals` (or `~/.local/state/opencode-worktree-guardian/codex-goals`); a different repo cannot replace an unfinished goal in the same Codex session. The `Stop` hook prompts one additional pass for each new incomplete result, and `SessionStart` reminds a resumed session of the pending repo and status; both work even when the hook cwd differs from the target repo. A required approving review pauses continuation with the session intact. Successful `complete: true` clears the checkpoint. The checkpoint is not an approval, stale plan token, deletion authority, or branch-protection bypass. These lifecycle hooks take effect only in a Codex installation that loads and trusts the updated plugin.
+
 ## Safety Model
 
 The canonical Guardian safety policy is [ADR 0001: Threat Model and Concurrency Boundary](docs/adr/0001-guardian-safety-policy.md). This README summarizes the public workflow; the ADR is the authority for block, allow, route, plan/apply, confirmation, deletion posture, and the cooperative concurrency boundary.

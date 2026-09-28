@@ -108,6 +108,9 @@ type FakeGhOptions = {
   readonly dynamicHead?: boolean;
   readonly existingPr?: boolean;
   readonly mergeFails?: boolean;
+  readonly mergeFailureMessage?: string;
+  readonly reviewDecision?: string;
+  readonly reviewViewFails?: boolean;
   readonly expectAdmin?: boolean;
   readonly mergeMethod?: "merge" | "squash";
   readonly resultMethod?: "merge" | "squash";
@@ -142,7 +145,7 @@ pr_list_json() {
   printf '[{"number":1,"url":"%s","headRefName":"%s","headRefOid":"%s"}]\\n' "$GUARDIAN_TEST_PR_URL" "$GUARDIAN_TEST_BRANCH" "$(pr_head)"
 }
 pr_view_json() {
-  printf '{"number":1,"url":"%s","headRefName":"%s","headRefOid":"%s"}\\n' "$GUARDIAN_TEST_PR_URL" "$GUARDIAN_TEST_BRANCH" "$(pr_head)"
+  printf '{"number":1,"url":"%s","headRefName":"%s","headRefOid":"%s","reviewDecision":"%s"}\\n' "$GUARDIAN_TEST_PR_URL" "$GUARDIAN_TEST_BRANCH" "$(pr_head)" "$GUARDIAN_TEST_REVIEW_DECISION"
 }
 printf '%s\\n' "$*" >> "$GUARDIAN_TEST_GH_LOG"
 if [ "$1" = "pr" ] && [ "\${2:-}" = "list" ]; then
@@ -155,6 +158,10 @@ elif [ "$1" = "pr" ] && [ "\${2:-}" = "create" ]; then
   : > "$GUARDIAN_TEST_PR_CREATED"
   printf '%s\\n' "$GUARDIAN_TEST_PR_URL"
 elif [ "$1" = "pr" ] && [ "\${2:-}" = "view" ]; then
+  if [ "\${GUARDIAN_TEST_REVIEW_VIEW_FAILS:-0}" = "1" ]; then
+    echo "review lookup unavailable" >&2
+    exit 6
+  fi
   pr_view_json
 elif [ "$1" = "pr" ] && [ "\${2:-}" = "merge" ]; then
   has_admin=0
@@ -176,7 +183,7 @@ elif [ "$1" = "pr" ] && [ "\${2:-}" = "merge" ]; then
     exit 9
   fi
   if [ "\${GUARDIAN_TEST_MERGE_FAILS:-0}" = "1" ]; then
-    echo "review required" >&2
+    echo "$GUARDIAN_TEST_MERGE_FAILURE_MESSAGE" >&2
     exit 4
   fi
   git -C "$GUARDIAN_TEST_REPO" checkout main >/dev/null
@@ -210,6 +217,9 @@ fi
     GUARDIAN_TEST_PR_CREATED: process.env.GUARDIAN_TEST_PR_CREATED,
     GUARDIAN_TEST_PR_URL: process.env.GUARDIAN_TEST_PR_URL,
     GUARDIAN_TEST_MERGE_FAILS: process.env.GUARDIAN_TEST_MERGE_FAILS,
+    GUARDIAN_TEST_MERGE_FAILURE_MESSAGE: process.env.GUARDIAN_TEST_MERGE_FAILURE_MESSAGE,
+    GUARDIAN_TEST_REVIEW_DECISION: process.env.GUARDIAN_TEST_REVIEW_DECISION,
+    GUARDIAN_TEST_REVIEW_VIEW_FAILS: process.env.GUARDIAN_TEST_REVIEW_VIEW_FAILS,
     GUARDIAN_TEST_EXPECT_ADMIN: process.env.GUARDIAN_TEST_EXPECT_ADMIN,
     GUARDIAN_TEST_MERGE_METHOD: process.env.GUARDIAN_TEST_MERGE_METHOD,
     GUARDIAN_TEST_RESULT_METHOD: process.env.GUARDIAN_TEST_RESULT_METHOD,
@@ -224,6 +234,9 @@ fi
   process.env.GUARDIAN_TEST_PR_CREATED = createdPath;
   process.env.GUARDIAN_TEST_PR_URL = url;
   process.env.GUARDIAN_TEST_MERGE_FAILS = options.mergeFails === true ? "1" : "0";
+  process.env.GUARDIAN_TEST_MERGE_FAILURE_MESSAGE = options.mergeFailureMessage ?? "review required";
+  process.env.GUARDIAN_TEST_REVIEW_DECISION = options.reviewDecision ?? "";
+  process.env.GUARDIAN_TEST_REVIEW_VIEW_FAILS = options.reviewViewFails === true ? "1" : "0";
   process.env.GUARDIAN_TEST_EXPECT_ADMIN = options.expectAdmin === true ? "1" : "0";
   process.env.GUARDIAN_TEST_MERGE_METHOD = options.mergeMethod ?? "merge";
   process.env.GUARDIAN_TEST_RESULT_METHOD = options.resultMethod ?? options.mergeMethod ?? "merge";

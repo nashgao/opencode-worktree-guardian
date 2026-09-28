@@ -338,6 +338,8 @@ Codex has the same audit-default and strict-mode consequences as OpenCode: in de
 
 For `guardian_done`, `guardian_hygiene`, `guardian_delete_paths`, and `guardian_finish_workflow`, Codex usage must run plan first and apply only after explicit user confirmation with the same options. The adapter may reuse matching cached internal plan tokens but never treats a token as approval or creates confirmation; `guardian_done` injection requires `mode: "apply"` with `confirm: true`.
 
+For an explicitly requested `guardian_goal`, `trackGoal: true` enables only one advisory, session-scoped continuation checkpoint in user-local state. An unfinished checkpoint for another repo in the same session cannot be overwritten. The `Stop` hook may prompt another pass for a new incomplete result, while `SessionStart` may remind a resumed session to re-plan from current evidence. A repeated result does not force another pass; `complete: true` clears the checkpoint; an explicit required-review wait does not auto-continue. Hook cwd is not treated as the target repo. Checkpoint corruption or write failure is surfaced without replacing the Guardian tool result. Neither the checkpoint nor hook output grants deletion, admin bypass, or stale-token reuse authority.
+
 The Codex adapter must never replace Guardian workflows with raw `git reset --hard`, `git clean -fd`, `git worktree remove`, `git worktree prune`, `git branch -D`, `git stash drop`, `git stash clear`, force-push, broad filesystem deletion, or protected-branch bypass commands.
 
 ## Legacy Alias Deprecation And Removal Policy
