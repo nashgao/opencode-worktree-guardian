@@ -1,0 +1,103 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "plan: plan:guardian-orca-goal-compatibility",
+    "quality_profile": "showcase",
+    "visual_preset": "classic",
+    "legend": {
+      "mode": "hidden"
+    },
+    "locale": "en",
+    "views": [
+      {
+        "id": "in-flight",
+        "label": "In flight",
+        "focus": [
+          "T-002"
+        ],
+        "note": "Currently active tasks."
+      }
+    ]
+  },
+  "lanes": [
+    {
+      "id": "t0",
+      "label": "tasks"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "T-001",
+      "lane": "t0",
+      "col": 0,
+      "type": "backend",
+      "label": "T-001 · Fix external-wor",
+      "sublabel": "✓ complete",
+      "width": 216
+    },
+    {
+      "id": "T-002",
+      "lane": "t0",
+      "col": 1,
+      "type": "backend",
+      "label": "T-002 · Verify and merge",
+      "sublabel": "● in progress — checkpoint",
+      "width": 232
+    },
+    {
+      "id": "T-003",
+      "lane": "t0",
+      "col": 2,
+      "type": "backend",
+      "label": "T-003 · Publish the prep",
+      "sublabel": "○ pending",
+      "width": 216
+    },
+    {
+      "id": "T-004",
+      "lane": "t0",
+      "col": 3,
+      "type": "backend",
+      "label": "T-004 · Upgrade installe",
+      "sublabel": "○ pending",
+      "width": 216
+    }
+  ],
+  "edges": [
+    {
+      "from": "T-001",
+      "to": "T-002"
+    },
+    {
+      "from": "T-002",
+      "to": "T-003"
+    },
+    {
+      "from": "T-003",
+      "to": "T-004"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "Status",
+      "items": [
+        "complete: 1",
+        "in_progress: 1",
+        "pending: 2"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "Evidence",
+      "items": [
+        "1 task(s) complete with acceptance evidence bound to the scope revision"
+      ]
+    }
+  ],
+  "mainPath": [
+    "T-001",
+    "T-002"
+  ]
+}

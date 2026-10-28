@@ -43,10 +43,9 @@
     "opencode": ">=1.14.48"
   },
   "dependencies": {
-    "@opencode-ai/plugin": "^1.14.48",
     "picomatch": "^4.0.7",
     "tsx": "^4.22.4",
-    "zod": "^4.4.3"
+    "zod": "^4.6.7"
   },
   "overrides": {
     "@babel/core": "7.29.7"
@@ -69,6 +68,7 @@
     "safety"
   ],
   "devDependencies": {
+    "@opencode-ai/plugin": "^1.14.48",
     "@types/node": "^25.7.0",
     "@types/picomatch": "^4.0.3",
     "typescript": "^6.0.3"

@@ -1,4 +1,4 @@
-import { tool } from "@opencode-ai/plugin";
+import { z } from "zod";
 import { resolveSessionWorktree } from "../session/worktree-binding.ts";
 import { runGuardianTool } from "../tool-registry.ts";
 import type { GuardianNativeToolReturn, GuardianToolInput, GuardianToolName, HookContext, PlanCacheToolArgs, PlanTokenCache } from "../types.ts";
@@ -6,7 +6,6 @@ import { normalizeOptionalToolStrings, maybeInjectPlanConfirmToken, rememberPlan
 import { formatGuardianOutput, READABLE_GUARDIAN_TOOLS } from "./readable-output.ts";
 import { resolveActualWorktreeOrPath } from "./session-routing.ts";
 
-const z = tool.schema;
 const SESSION_WORKTREE_DEFAULT_TOOLS = new Set(["guardian_finish", "guardian_goal", "guardian_preserve"]);
 
 async function getRecordedToolWorktree(name: GuardianToolName, toolArgs: PlanCacheToolArgs, context: HookContext) {
@@ -24,7 +23,7 @@ async function getRecordedToolWorktree(name: GuardianToolName, toolArgs: PlanCac
 }
 
 export function guardianTool(name: GuardianToolName, description: string, planCache?: PlanTokenCache) {
-  return tool({
+  return {
     description,
     args: {
       repoRoot: z.string().optional(),
@@ -100,5 +99,5 @@ export function guardianTool(name: GuardianToolName, description: string, planCa
         output: READABLE_GUARDIAN_TOOLS.has(name) ? formatGuardianOutput(name, result) : JSON.stringify(result, null, 2),
       };
     },
-  });
+  };
 }
