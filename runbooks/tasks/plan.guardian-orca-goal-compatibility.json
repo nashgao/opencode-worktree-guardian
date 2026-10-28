@@ -1,0 +1,131 @@
+{
+  "engine_version": "1.10.0-beta.1",
+  "created_with": "3.5.0",
+  "source": {
+    "kind": "plan",
+    "ref": "plan:guardian-orca-goal-compatibility",
+    "revision": "sha256:8e6061b7efd075d984a644b0ef99040b56d69c7e4a3bfc4d6587b93fc5de418d"
+  },
+  "session": {
+    "provider": "omp",
+    "id": "01a1787f-7dd8-734f-8f6b-e4da94487676"
+  },
+  "policy": "serial",
+  "enabled": true,
+  "revision": 5,
+  "current_task": "T-002",
+  "last_task": "T-002",
+  "tasks": [
+    {
+      "id": "T-001",
+      "title": "Fix external-worktree hygiene without weakening confinement",
+      "acceptance": [
+        "A real external linked-worktree regression fails first, then passes through the public hygiene/Goal path.",
+        "Ordinary in-scope residue remains visible; nested registered worktrees and explicit protected paths remain protected; outside-path/symlink guards stay fail-closed."
+      ],
+      "dependencies": [],
+      "status": "complete",
+      "gate_open": true,
+      "evidence": [
+        {
+          "criterion": "A real external linked-worktree regression fails first, then passes through the public hygiene/Goal path.",
+          "reference": "src/hygiene-scan.ts:121-127; test/goal-hygiene-residue-completion.test.ts:79-123. Public external-worktree Goal regression red: 0 passed/1 failed with Protected inventory root escapes the repository: .. (artifact 252); green: 1 passed. Relevant Goal/protected-inventory/symlink/confinement suite: 30/30 passed (bg_28). Actual candidate Codex CLI on an external disposable worktree: default Goal flags retained, review.txt remains an ordinary reviewable, no root-escape failure; outside guardian_delete_paths plan refused with 0 approved/0 removed and canary unchanged. Test diagnostics clean; scanner has the same two pre-existing unused-import hints as untouched primary baseline, no new diagnostics.",
+          "revision": "sha256:8e6061b7efd075d984a644b0ef99040b56d69c7e4a3bfc4d6587b93fc5de418d"
+        },
+        {
+          "criterion": "Ordinary in-scope residue remains visible; nested registered worktrees and explicit protected paths remain protected; outside-path/symlink guards stay fail-closed.",
+          "reference": "src/hygiene-scan.ts:121-127; test/goal-hygiene-residue-completion.test.ts:79-123. Public external-worktree Goal regression red: 0 passed/1 failed with Protected inventory root escapes the repository: .. (artifact 252); green: 1 passed. Relevant Goal/protected-inventory/symlink/confinement suite: 30/30 passed (bg_28). Actual candidate Codex CLI on an external disposable worktree: default Goal flags retained, review.txt remains an ordinary reviewable, no root-escape failure; outside guardian_delete_paths plan refused with 0 approved/0 removed and canary unchanged. Test diagnostics clean; scanner has the same two pre-existing unused-import hints as untouched primary baseline, no new diagnostics.",
+          "revision": "sha256:8e6061b7efd075d984a644b0ef99040b56d69c7e4a3bfc4d6587b93fc5de418d"
+        }
+      ],
+      "checkpoint": null,
+      "cancellation_reason": null
+    },
+    {
+      "id": "T-002",
+      "title": "Verify and merge the upstream compatibility fix",
+      "acceptance": [
+        "Full project readiness, low-threshold production audit, package inventory and disposable OpenCode/Codex host checks pass.",
+        "Minimal docs/changelog and the fix are merged through a feature PR; the active installed checkout is not patched."
+      ],
+      "dependencies": [
+        "T-001"
+      ],
+      "status": "in_progress",
+      "gate_open": true,
+      "evidence": [],
+      "checkpoint": {
+        "reason": "T-002 full readiness is blocked by the existing packed-consumer production-audit gate, not by the external-worktree fix. Full coverage run: 1400 passed, 1 failed, 1 skipped; failure is package-hud-security.test.ts:105 (npm audit exit 1). Fresh packed consumer audit confirms 5 high-severity package entries from the SDK Effect/TOML and pinned Zod graph. A narrow dependency-packaging approach update requires owner approval before any additional source edits.",
+        "completed": [
+          "T-001 external-root fix and regression are complete; 30 relevant Goal/confinement tests and actual candidate CLI smoke pass.",
+          "T-002 minimal README, ADR and Unreleased changelog updates are written.",
+          "Source typecheck/lint passed in readiness before coverage; changed scanner has only two pre-existing unused-import hints, also observed in untouched primary baseline; regression diagnostics clean.",
+          "Real OpenCode 1.19.4 manual QA passed native status/discovery, external safe-write routing, audit/strict interception, TUI HUD warning/status, and external Goal hygiene. Candidate scanner hash 45f99a7065e8c760304ca96977ed6b6ce2fe79db7d0a75ead2b2c6f0fd095870 matches; services stopped and private authentication copy removed.",
+          "Real Codex adapter manual QA passed default audit, strict, invalid mode and malformed-config fail-closed behavior, external worktree/nested protection and unchanged fixture state; 73 finite commands exit 0."
+        ],
+        "remaining": [
+          "Owner approves or rejects the proposed T-002 approach patch: use existing plain native-tool definition plus Zod 4.6.7, move @opencode-ai/plugin to development-only contract checks, regenerate the lockfile; no dependency code edits or audit relaxation.",
+          "After approval, prove existing packed-consumer audit/security test green, run full readiness and required production audit, and repeat actual host checks on the changed artifact.",
+          "Commit/push/merge the fully verified upstream fix PR only after release gates are green; do not mark T-002 complete from host QA alone.",
+          "Publication and installed-host upgrade remain pending; npm authentication currently returns E401 and must be resolved before T-003 publication."
+        ],
+        "changed_paths": [
+          "src/hygiene-scan.ts",
+          "test/goal-hygiene-residue-completion.test.ts",
+          "README.md",
+          "docs/adr/0001-guardian-safety-policy.md",
+          "CHANGELOG.md",
+          "runbooks/tasks/plan.guardian-orca-goal-compatibility.json",
+          "runbooks/tasks/plan.guardian-orca-goal-compatibility.archify.json",
+          "runbooks/tasks/plan.guardian-orca-goal-compatibility.html"
+        ],
+        "evidence": [
+          "Readiness output artifact://315: 1402 tests, 1400 passed, 1 failed, 1 skipped; package-hud-security.test.ts:105 audit.exitCode expected 0, got 1.",
+          "Actual source npm audit --omit=dev --audit-level=low --json: 4 high package entries. Actual fresh packed consumer /private/var/folders/tw/rrg4001s2bdg6m3ht0dz0j1h0000gn/T/opencode-worktree-guardian-node/guardian-package-smoke-MbCqnO/consumer: audit exit 1, 5 high package entries; no advisory suppression.",
+          "src/plugin/native-tool.ts:1,9,26-27 is the sole source runtime SDK import; installed SDK dist/tool.js:1-5 returns the existing input object and exposes Zod. Official registry SDK 1.19.4 pins Zod 4.1.8 and Effect 4.0.0-beta.83.",
+          "Manual host report /tmp/guardian-opencode-hostqa.HIgy63/report.json; Codex report /private/tmp/guardian-codex-qa-9p2jzwgn/evidence/handoff.json.",
+          "The T-002 packaging approach update was accepted by the owner, 2026-10-28: use direct Zod 4.6.7 and the existing tool-definition object, move @opencode-ai/plugin to development-only contract checks, regenerate the lockfile, and rerun the existing strict packed-consumer/readiness/real-host checks. The four task IDs, acceptance outcomes, dependencies and safety gates remain unchanged; no vendor code edits, audit exclusions or SDK downgrade."
+        ],
+        "resume_action": "Obtain the T-002 approach decision. If approved, retain the same task IDs, outcomes and strict release gates, implement only the reviewed packaging changes, re-verify the actual consumer/hosts, then resume delivery and publication.",
+        "quiescent": true
+      },
+      "cancellation_reason": null
+    },
+    {
+      "id": "T-003",
+      "title": "Publish the prepared Guardian 1.0.0 release",
+      "acceptance": [
+        "Owner explicitly approves public 1.0.0 publication and npm authentication is available.",
+        "Package and both Codex manifests identify the approved release; registry artifact matches the verified release commit, and its annotated tag is created/pushed only after publication succeeds."
+      ],
+      "dependencies": [
+        "T-002"
+      ],
+      "status": "pending",
+      "gate_open": true,
+      "evidence": [],
+      "checkpoint": null,
+      "cancellation_reason": null
+    },
+    {
+      "id": "T-004",
+      "title": "Upgrade installed hosts and finish the original Guardian Goal",
+      "acceptance": [
+        "The published fix runs through the installed OpenCode and Codex channels without duplicate loaders or unrelated plugin changes.",
+        "The original external-root hygiene failure is gone without masking the checkout.",
+        "Resume original plan:milestone-dsl-completion/T-005; complete it only after supported ignored-file disposition, exact Orca safety/removal consent where required, actual Goal complete:true and fresh proof readback."
+      ],
+      "dependencies": [
+        "T-003"
+      ],
+      "status": "pending",
+      "gate_open": true,
+      "evidence": [],
+      "checkpoint": null,
+      "cancellation_reason": null
+    }
+  ],
+  "schema_version": 2,
+  "handoff_policy": "quiescent",
+  "handoffs": []
+}

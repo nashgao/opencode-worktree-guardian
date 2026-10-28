@@ -19,6 +19,11 @@ All notable public-surface changes are tracked here.
 - Strict goal hygiene does not broaden deletion. Every completion mode auto-deletes only token-bound `known-cleanable` findings and filesystem-verified empty directories; cleanup removes empty ancestors only while they remain empty. Residual `nested-git` and `suspicious` findings require direct explicit review and are never auto-authorized. Dirty nested Git additionally requires direct `allowDirtyNestedGit`. Configured `protectedPaths` deny deletion and remain excluded from strict completion, but their bounded contents are visible as retention-unassessed inventory and do not acknowledge tracked additions. `reviewableCandidates` remain scan-only inventory; tracked additions use exact-path `guardian_delete_paths` with `allowTracked=true` when deletion is explicitly approved. `no-unprotected-residue` makes unresolved entries a completion failure without authorizing their deletion. TUI, skill, command, and invisible policy prompts require agents to inspect `complete` and `hygienePostcondition` instead of treating `ok` as desired-state completion.
 - Protected inventory is authorization-neutral: changes to protected metadata do not stale `guardian_goal` confirmation. Directory handles, same-device identity checks, per-directory bounded reads, and capped protected-root results keep the read-only audit inside its repository and resource limits.
 - Strict goal apply distinguishes safe cleanup from delivery: known junk may be removed before a blocked completion child is returned, while session/base/remote refs remain unchanged until the residue gate is satisfied.
+- Native tool definitions now use Guardian's direct Zod dependency, with a minimum of 4.6.7, and retain the SDK only for development-time contract checks. Published consumers no longer install the SDK's Effect/TOML or pinned older Zod chain; native tool behavior and the strict production-audit gate are unchanged.
+
+### Fixed
+
+- Hygiene and Goal scans support an absolute worktree container outside the selected checkout without generating an escaped `..` inventory root or hiding all checkout residue. Registered nested worktrees and explicit protected paths remain protected; inventory and deletion confinement checks are unchanged.
 
 ## 1.0.0 - 2026-08-08
 

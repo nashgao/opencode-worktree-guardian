@@ -5,8 +5,9 @@ import test from "node:test";
 import { DEFAULT_CONFIG } from "../src/config.ts";
 import { runGitNullSeparated } from "../src/git.ts";
 import { guardianGoal } from "../src/goal.ts";
+import { guardianStart } from "../src/start.ts";
 import type { GuardianConfig } from "../src/types.ts";
-import { createRepoWithOrigin } from "./helpers.ts";
+import { createRepoWithOrigin, git } from "./helpers.ts";
 
 function residueGoalConfig(protectedPaths: readonly string[] = DEFAULT_CONFIG.protectedPaths, cleanupHygiene = true): GuardianConfig {
   return {
@@ -73,6 +74,52 @@ test("guardian_goal strict residue completion blocks on bounded reviewable inven
   assert.match(nonEmptyString(hygiene.reviewableDigest, "reviewable digest"), /^[0-9a-f]{64}$/);
   const firstShown = record(shown[0], "first shown reviewable");
   assert.match(nonEmptyString(firstShown.suggestedDeletePathCommand, "delete suggestion"), /^guardian_delete_paths mode=plan paths=/);
+});
+
+test("external worktree Goal scans retain residue visibility and nested-worktree protection", async (t) => {
+  const { base, repo } = await createRepoWithOrigin();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const config: GuardianConfig = {
+    ...residueGoalConfig(["protected.txt"]),
+    worktreeRoot: path.join(base, "external-worktrees"),
+  };
+  const sessionId = "ses_external_worktree_hygiene";
+  const started = record(await guardianStart({
+    repoRoot: repo, cwd: repo, sessionId, taskName: "external hygiene", createWorktree: true, config,
+  }), "started session");
+  assert.equal(started.ok, true, JSON.stringify(started));
+  const worktree = nonEmptyString(record(started.session, "session").worktree_path, "worktree path");
+  const nested = path.join(worktree, "nested");
+  await git(repo, ["worktree", "add", "-b", "nested-hygiene", nested, "origin/main"]);
+  await fs.writeFile(path.join(nested, "keep.txt"), "nested worktree content\n");
+  await git(nested, ["add", "keep.txt"]);
+  await git(nested, ["commit", "-m", "retain nested content"]);
+  await fs.writeFile(path.join(worktree, "protected.txt"), "explicitly retained\n");
+  await fs.writeFile(path.join(worktree, "ordinary.txt"), "needs owner review\n");
+
+  const extra = { cwd: worktree, sessionId };
+  const plan = record(await guardianGoal({ repoRoot: repo, mode: "plan", config, ...extra }), "goal plan");
+  const planHygiene = record(plan.hygienePostcondition, "planned hygiene");
+  const shown = Array.isArray(planHygiene.reviewableCandidatesShown)
+    ? planHygiene.reviewableCandidatesShown.map((entry) => record(entry, "reviewable").path)
+    : [];
+
+  assert.equal(plan.ok, true, JSON.stringify(plan));
+  assert.equal(plan.status, "planned-partial");
+  assert.equal(planHygiene.status, "residual-unprotected");
+  assert.equal(planHygiene.reviewableInventoryComplete, true);
+  assert.equal(planHygiene.residualCount, 0);
+  assert.deepEqual(shown, ["ordinary.txt"]);
+
+  const result = await applyGoal(repo, config, extra);
+  const hygiene = record(result.hygienePostcondition, "applied hygiene");
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(result.complete, false);
+  assert.equal(hygiene.reviewableCandidateCount, 1);
+  assert.equal(hygiene.residualCount, 0);
+  assert.equal(await fs.readFile(path.join(worktree, "ordinary.txt"), "utf8"), "needs owner review\n");
+  assert.equal(await fs.readFile(path.join(worktree, "protected.txt"), "utf8"), "explicitly retained\n");
+  assert.equal(await fs.readFile(path.join(nested, "keep.txt"), "utf8"), "nested worktree content\n");
 });
 
 test("guardian_goal strict residue completion accepts intentionally protected reviewables", async (t) => {

@@ -120,7 +120,11 @@ export async function scanWorkspaceHygiene(input: Record<string, unknown> = {}):
     const protectedPaths = protectedPathsFromConfig(config);
     const worktrees = await listWorktrees(repoRoot);
     const configuredWorktreeRoot = path.resolve(repoRoot, expandWorktreeRoot(String(config.worktreeRoot), repoRoot));
-    const protectedRoots = [configuredWorktreeRoot, ...worktrees.map((entry) => path.resolve(String(entry.path))).filter((entry) => entry !== path.resolve(repoRoot) && isSameOrInside(entry, path.resolve(repoRoot)))].sort(compareCodeUnits);
+    const scanRoot = path.resolve(repoRoot);
+    const protectedRoots = worktrees.map((entry) => path.resolve(String(entry.path))).filter((entry) => entry !== scanRoot && isSameOrInside(entry, scanRoot));
+    // An external container is not a protected inventory root within this checkout.
+    if (isSameOrInside(configuredWorktreeRoot, scanRoot)) protectedRoots.push(configuredWorktreeRoot);
+    protectedRoots.sort(compareCodeUnits);
     const findings: Array<Record<string, unknown>> = [];
     const reviewableCandidateInputs: ReviewableCandidateInput[] = [];
     const seenFindings = new Set<string>();
