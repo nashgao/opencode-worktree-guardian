@@ -4,7 +4,7 @@
   "source": {
     "kind": "plan",
     "ref": "plan:guardian-orca-goal-compatibility",
-    "revision": "sha256:8e6061b7efd075d984a644b0ef99040b56d69c7e4a3bfc4d6587b93fc5de418d"
+    "revision": "sha256:3ed9ab77b1341680ed2971797732a5efd6dc2bb38a36a13aa04b3503580165f8"
   },
   "session": {
     "provider": "omp",
@@ -12,9 +12,9 @@
   },
   "policy": "serial",
   "enabled": true,
-  "revision": 7,
-  "current_task": "T-003",
-  "last_task": "T-003",
+  "revision": 12,
+  "current_task": null,
+  "last_task": "T-004",
   "tasks": [
     {
       "id": "T-001",
@@ -29,13 +29,13 @@
       "evidence": [
         {
           "criterion": "A real external linked-worktree regression fails first, then passes through the public hygiene/Goal path.",
-          "reference": "src/hygiene-scan.ts:121-127; test/goal-hygiene-residue-completion.test.ts:79-123. Public external-worktree Goal regression red: 0 passed/1 failed with Protected inventory root escapes the repository: .. (artifact 252); green: 1 passed. Relevant Goal/protected-inventory/symlink/confinement suite: 30/30 passed (bg_28). Actual candidate Codex CLI on an external disposable worktree: default Goal flags retained, review.txt remains an ordinary reviewable, no root-escape failure; outside guardian_delete_paths plan refused with 0 approved/0 removed and canary unchanged. Test diagnostics clean; scanner has the same two pre-existing unused-import hints as untouched primary baseline, no new diagnostics.",
-          "revision": "sha256:8e6061b7efd075d984a644b0ef99040b56d69c7e4a3bfc4d6587b93fc5de418d"
+          "reference": "src/hygiene-scan.ts:121-127; test/goal-hygiene-residue-completion.test.ts:79-123. Public external-worktree Goal regression red: 0 passed/1 failed with Protected inventory root escapes the repository: .. (artifact 252); green: 1 passed. Relevant Goal/protected-inventory/symlink/confinement suite: 30/30 passed (bg_28). Actual candidate Codex CLI on an external disposable worktree: default Goal flags retained, review.txt remains an ordinary reviewable, no root-escape failure; outside guardian_delete_paths plan refused with 0 approved/0 removed and canary unchanged. Test diagnostics clean; scanner has the same two pre-existing unused-import hints as untouched primary baseline, no new diagnostics. Unchanged acceptance carried into the owner-approved source-only rollout; original scope sha256:8e6061b7efd075d984a644b0ef99040b56d69c7e4a3bfc4d6587b93fc5de418d. Runtime identity is retained at merged 6ab55f65e21a66b821bb7fbf6d77f0b0e96370bb; final readiness artifact://412 remains valid.",
+          "revision": "sha256:3ed9ab77b1341680ed2971797732a5efd6dc2bb38a36a13aa04b3503580165f8"
         },
         {
           "criterion": "Ordinary in-scope residue remains visible; nested registered worktrees and explicit protected paths remain protected; outside-path/symlink guards stay fail-closed.",
-          "reference": "src/hygiene-scan.ts:121-127; test/goal-hygiene-residue-completion.test.ts:79-123. Public external-worktree Goal regression red: 0 passed/1 failed with Protected inventory root escapes the repository: .. (artifact 252); green: 1 passed. Relevant Goal/protected-inventory/symlink/confinement suite: 30/30 passed (bg_28). Actual candidate Codex CLI on an external disposable worktree: default Goal flags retained, review.txt remains an ordinary reviewable, no root-escape failure; outside guardian_delete_paths plan refused with 0 approved/0 removed and canary unchanged. Test diagnostics clean; scanner has the same two pre-existing unused-import hints as untouched primary baseline, no new diagnostics.",
-          "revision": "sha256:8e6061b7efd075d984a644b0ef99040b56d69c7e4a3bfc4d6587b93fc5de418d"
+          "reference": "src/hygiene-scan.ts:121-127; test/goal-hygiene-residue-completion.test.ts:79-123. Public external-worktree Goal regression red: 0 passed/1 failed with Protected inventory root escapes the repository: .. (artifact 252); green: 1 passed. Relevant Goal/protected-inventory/symlink/confinement suite: 30/30 passed (bg_28). Actual candidate Codex CLI on an external disposable worktree: default Goal flags retained, review.txt remains an ordinary reviewable, no root-escape failure; outside guardian_delete_paths plan refused with 0 approved/0 removed and canary unchanged. Test diagnostics clean; scanner has the same two pre-existing unused-import hints as untouched primary baseline, no new diagnostics. Unchanged acceptance carried into the owner-approved source-only rollout; original scope sha256:8e6061b7efd075d984a644b0ef99040b56d69c7e4a3bfc4d6587b93fc5de418d. Runtime identity is retained at merged 6ab55f65e21a66b821bb7fbf6d77f0b0e96370bb; final readiness artifact://412 remains valid.",
+          "revision": "sha256:3ed9ab77b1341680ed2971797732a5efd6dc2bb38a36a13aa04b3503580165f8"
         }
       ],
       "checkpoint": null,
@@ -56,13 +56,13 @@
       "evidence": [
         {
           "criterion": "Full project readiness, low-threshold production audit, package inventory and disposable OpenCode/Codex host checks pass.",
-          "reference": "Upstream PR #82 merged at 96df54699a21a49a0761eb6dee8e3713427aca1b: https://github.com/nashgao/opencode-worktree-guardian/pull/82 . npm run test:readiness plus explicit production low-threshold audit exit 0 (artifact 343/bg_32): 1401 coverage tests passed/0 failed/1 skipped of 1402, 96.07% lines; 138 contracts, 19 package smoke, 5 automated host smoke all passed; 269-file package, zero production vulnerabilities. Existing packed security/package tests 7/7 pass after owner-approved SDK-dev-only/direct-Zod4.6.7 packaging; fresh production consumers contain no SDK/Effect/TOML. Frozen npm candidate SHA256 f9007b2b99dd9c481733d0595e3896c94bdada6426d7bb4d28f9a59f07b7887e: actual OpenCode 1.19.4 all six manual groups pass (/tmp/guardian-opencode-packedqa.Gxi9cf/report.json), actual installed Codex adapter passes (/private/tmp/guardian-packed-codex-qa-cy8t5sn_/evidence/handoff.json), all 269 files byte-match; services stopped and secret-copy artifacts absent. Full tsc passes; scanner has only two baseline unused-import hints; native-tool LSP diagnostics aborted, explicitly not claimed clean.",
-          "revision": "sha256:8e6061b7efd075d984a644b0ef99040b56d69c7e4a3bfc4d6587b93fc5de418d"
+          "reference": "Upstream PR #82 merged at 96df54699a21a49a0761eb6dee8e3713427aca1b: https://github.com/nashgao/opencode-worktree-guardian/pull/82 . npm run test:readiness plus explicit production low-threshold audit exit 0 (artifact 343/bg_32): 1401 coverage tests passed/0 failed/1 skipped of 1402, 96.07% lines; 138 contracts, 19 package smoke, 5 automated host smoke all passed; 269-file package, zero production vulnerabilities. Existing packed security/package tests 7/7 pass after owner-approved SDK-dev-only/direct-Zod4.6.7 packaging; fresh production consumers contain no SDK/Effect/TOML. Frozen npm candidate SHA256 f9007b2b99dd9c481733d0595e3896c94bdada6426d7bb4d28f9a59f07b7887e: actual OpenCode 1.19.4 all six manual groups pass (/tmp/guardian-opencode-packedqa.Gxi9cf/report.json), actual installed Codex adapter passes (/private/tmp/guardian-packed-codex-qa-cy8t5sn_/evidence/handoff.json), all 269 files byte-match; services stopped and secret-copy artifacts absent. Full tsc passes; scanner has only two baseline unused-import hints; native-tool LSP diagnostics aborted, explicitly not claimed clean. Unchanged acceptance carried into the owner-approved source-only rollout; original scope sha256:8e6061b7efd075d984a644b0ef99040b56d69c7e4a3bfc4d6587b93fc5de418d. Runtime identity is retained at merged 6ab55f65e21a66b821bb7fbf6d77f0b0e96370bb; final readiness artifact://412 remains valid.",
+          "revision": "sha256:3ed9ab77b1341680ed2971797732a5efd6dc2bb38a36a13aa04b3503580165f8"
         },
         {
           "criterion": "Minimal docs/changelog and the fix are merged through a feature PR; the active installed checkout is not patched.",
-          "reference": "Upstream PR #82 merged at 96df54699a21a49a0761eb6dee8e3713427aca1b: https://github.com/nashgao/opencode-worktree-guardian/pull/82 . npm run test:readiness plus explicit production low-threshold audit exit 0 (artifact 343/bg_32): 1401 coverage tests passed/0 failed/1 skipped of 1402, 96.07% lines; 138 contracts, 19 package smoke, 5 automated host smoke all passed; 269-file package, zero production vulnerabilities. Existing packed security/package tests 7/7 pass after owner-approved SDK-dev-only/direct-Zod4.6.7 packaging; fresh production consumers contain no SDK/Effect/TOML. Frozen npm candidate SHA256 f9007b2b99dd9c481733d0595e3896c94bdada6426d7bb4d28f9a59f07b7887e: actual OpenCode 1.19.4 all six manual groups pass (/tmp/guardian-opencode-packedqa.Gxi9cf/report.json), actual installed Codex adapter passes (/private/tmp/guardian-packed-codex-qa-cy8t5sn_/evidence/handoff.json), all 269 files byte-match; services stopped and secret-copy artifacts absent. Full tsc passes; scanner has only two baseline unused-import hints; native-tool LSP diagnostics aborted, explicitly not claimed clean.",
-          "revision": "sha256:8e6061b7efd075d984a644b0ef99040b56d69c7e4a3bfc4d6587b93fc5de418d"
+          "reference": "Upstream PR #82 merged at 96df54699a21a49a0761eb6dee8e3713427aca1b: https://github.com/nashgao/opencode-worktree-guardian/pull/82 . npm run test:readiness plus explicit production low-threshold audit exit 0 (artifact 343/bg_32): 1401 coverage tests passed/0 failed/1 skipped of 1402, 96.07% lines; 138 contracts, 19 package smoke, 5 automated host smoke all passed; 269-file package, zero production vulnerabilities. Existing packed security/package tests 7/7 pass after owner-approved SDK-dev-only/direct-Zod4.6.7 packaging; fresh production consumers contain no SDK/Effect/TOML. Frozen npm candidate SHA256 f9007b2b99dd9c481733d0595e3896c94bdada6426d7bb4d28f9a59f07b7887e: actual OpenCode 1.19.4 all six manual groups pass (/tmp/guardian-opencode-packedqa.Gxi9cf/report.json), actual installed Codex adapter passes (/private/tmp/guardian-packed-codex-qa-cy8t5sn_/evidence/handoff.json), all 269 files byte-match; services stopped and secret-copy artifacts absent. Full tsc passes; scanner has only two baseline unused-import hints; native-tool LSP diagnostics aborted, explicitly not claimed clean. Unchanged acceptance carried into the owner-approved source-only rollout; original scope sha256:8e6061b7efd075d984a644b0ef99040b56d69c7e4a3bfc4d6587b93fc5de418d. Runtime identity is retained at merged 6ab55f65e21a66b821bb7fbf6d77f0b0e96370bb; final readiness artifact://412 remains valid.",
+          "revision": "sha256:3ed9ab77b1341680ed2971797732a5efd6dc2bb38a36a13aa04b3503580165f8"
         }
       ],
       "checkpoint": {
@@ -112,27 +112,95 @@
       "dependencies": [
         "T-002"
       ],
-      "status": "in_progress",
+      "status": "cancelled",
       "gate_open": true,
       "evidence": [],
-      "checkpoint": null,
-      "cancellation_reason": null
+      "checkpoint": {
+        "reason": "Public npm authentication is unavailable. The existing npm whoami request returned E401, neither standard publication-token environment variable is supplied, and the supported web login remained at account-input prompts. Its unanswered process was stopped; the owner must authenticate locally. Public 1.0.0 approval is already established; no further release-scope decision is requested.",
+        "completed": [
+          "Upstream compatibility and production dependency packaging fix merged as PR #82 / 96df54699a21a49a0761eb6dee8e3713427aca1b.",
+          "Approved 1.0.0 release metadata prepared and merged as PR #83 / 6ab55f65e21a66b821bb7fbf6d77f0b0e96370bb; package.json and both Codex plugin manifests identify 1.0.0. CHANGELOG has one dated 1.0.0 section and does not claim publication.",
+          "Final readiness and explicit low-threshold production audit exited 0: 1401 pass, 0 fail, 1 skip / 1402; line coverage 95.99%; contracts 138/138; package smoke 19/19; host smoke 5/5; zero production vulnerabilities.",
+          "Final dry-run and actual tarball contain the same 269 files. SHA-256 9dd783c753711fe7f28d5a74deacfbddcdb1518c15b5f5105aa52ea80d4cf6d7. Every packaged file matches the merged release checkout. Only CHANGELOG.md and codex/.codex-plugin/plugin.json differ from the real-host-tested artifact; all runtime bytes are unchanged.",
+          "Both release manifests parse with version 1.0.0. JSON LSP reports No language server found; full TypeScript/readiness checks passed.",
+          "No npm publication or annotated release tag has occurred; installed OpenCode/Codex Guardian bindings and the original parent Goal remain unchanged."
+        ],
+        "remaining": [
+          "Owner authenticates npm locally with npm login --registry=https://registry.npmjs.org --auth-type=web; do not paste credentials or tokens into chat.",
+          "Resume T-003 using observed actor/revision guards, verify authenticated identity and fresh version/tag availability, and publish the unchanged verified 1.0.0 release through the normal prepublishOnly readiness hook.",
+          "Verify registry metadata, tarball contents/integrity and the published commit; only after successful publication create/push annotated v1.0.0 at the actually published commit.",
+          "Complete T-003 with registry/tag evidence, then select approved T-004 for host upgrades and original Goal completion through its existing safety/confirmation gates."
+        ],
+        "changed_paths": [
+          ".codex-plugin/plugin.json",
+          "codex/.codex-plugin/plugin.json",
+          "CHANGELOG.md",
+          "runbooks/tasks/plan.guardian-orca-goal-compatibility.json",
+          "runbooks/tasks/plan.guardian-orca-goal-compatibility.archify.json",
+          "runbooks/tasks/plan.guardian-orca-goal-compatibility.html"
+        ],
+        "evidence": [
+          "https://github.com/nashgao/opencode-worktree-guardian/pull/83 merged 2026-10-28T05:53:36Z, commit 6ab55f65e21a66b821bb7fbf6d77f0b0e96370bb",
+          "artifact://412:1460-1467,1704,1713,1883-1890,1916-1942,3307-3308 — final release readiness/audit output, exit 0.",
+          "Final tarball /var/folders/tw/rrg4001s2bdg6m3ht0dz0j1h0000gn/T/guardian-release-1.0.0-n64kmbzz/opencode-worktree-guardian-1.0.0.tgz SHA-256 9dd783c753711fe7f28d5a74deacfbddcdb1518c15b5f5105aa52ea80d4cf6d7; npm integrity sha512-ORLZi9IcDXUyTwcW5GQUF2M/xw5hQYF1pgk4sFtdU2OP7gBBCH6GwgVu9hqRbz1Y1bQDz5iLgdRdn8OYHZ9f0A==.",
+          "Manual packed OpenCode QA /tmp/guardian-opencode-packedqa.Gxi9cf/report.json; packed Codex QA /private/tmp/guardian-packed-codex-qa-cy8t5sn_/evidence/handoff.json; final package comparison confirms unchanged runtime payload.",
+          "npm whoami --registry=https://registry.npmjs.org returned E401; presence-only NPM_TOKEN and NODE_AUTH_TOKEN probes exited 1; npm web-login service waited at Username prompts and was stopped without authentication.",
+          "Both changed JSON manifests: xd://lsp diagnostics returned No language server found; JSON parsing/version assertions and configured TypeScript readiness passed.",
+          "Npm publication is not required for this global rollout; use the verified merged source through the existing OpenCode/Codex source bindings. Accepted by the owner, 2026-10-28. Exact owner instruction: \"i reckon you can ignore this npmjs thing\". No npm publication or release tag is authorized by this change.",
+          "Original scope sha256:8e6061b7efd075d984a644b0ef99040b56d69c7e4a3bfc4d6587b93fc5de418d replaced by sha256:3ed9ab77b1341680ed2971797732a5efd6dc2bb38a36a13aa04b3503580165f8 only to cancel T-003 and route T-004 directly after T-002. T-004 acceptance 2/3 and every safety gate are unchanged."
+        ],
+        "resume_action": "After the owner completes local npm login, resume T-003, verify authentication and fresh registry/tag state, publish the verified release without bypassing prepublishOnly, verify registry bytes, then tag/push the published commit. Do not upgrade installed hosts or apply the original Goal before T-003 is complete.",
+        "quiescent": true
+      },
+      "cancellation_reason": "Npm publication is not required for this global rollout; use the verified merged source through the existing OpenCode/Codex source bindings. Accepted by the owner, 2026-10-28. Exact owner instruction: \"i reckon you can ignore this npmjs thing\". No npm publication or release tag is authorized by this change."
     },
     {
       "id": "T-004",
       "title": "Upgrade installed hosts and finish the original Guardian Goal",
       "acceptance": [
-        "The published fix runs through the installed OpenCode and Codex channels without duplicate loaders or unrelated plugin changes.",
+        "Verified merged Guardian commit 6ab55f65e21a66b821bb7fbf6d77f0b0e96370bb runs through the existing installed OpenCode and Codex source channels without duplicate loaders or unrelated plugin changes.",
         "The original external-root hygiene failure is gone without masking the checkout.",
         "Resume original plan:milestone-dsl-completion/T-005; complete it only after supported ignored-file disposition, exact Orca safety/removal consent where required, actual Goal complete:true and fresh proof readback."
       ],
       "dependencies": [
-        "T-003"
+        "T-002"
       ],
-      "status": "pending",
+      "status": "blocked",
       "gate_open": true,
       "evidence": [],
-      "checkpoint": null,
+      "checkpoint": {
+        "reason": "Source-only global installation and both actual-host verifications are finished, but original Goal closure needs process authority and exact Orca removal consent. Npm publication is cancelled, not a blocker. Default real Goal still refuses 1764 ignored node_modules paths; PLAN-ONLY ignored-file preview targets deletion of the exact parent worktree and local branch. No live Goal apply or worktree removal has occurred.",
+        "completed": [
+          "Npm publication is not required for this global rollout; use the verified merged source through the existing OpenCode/Codex source bindings. Accepted by the owner, 2026-10-28. Exact owner instruction: \"i reckon you can ignore this npmjs thing\". No npm publication or release tag is authorized by this change.",
+          "Existing source checkout cleanly fast-forwarded to 6ab55f65e21a66b821bb7fbf6d77f0b0e96370bb and npm ci succeeded; actual Codex plugin add installed personal/1.0.0. No dependency code/cache patches or new registry/path dependencies.",
+          "Actual OpenCode global bindings verified: duplicate load reproduced (36 entries/18 names, double hooks), then obsolete four-line global shim removed only. Fresh actual host has 18 unique tools/schemas and single hooks; safe routing, audit/strict, HUD/status and external-root protection passed.",
+          "Actual Codex personal/1.0.0 cache verified: 242 runtime/config files match merged code; Zod4.6.7/picomatch4.0.7/tsx4.22.4 resolve cache-locally. Actual registered root hook/tool cases pass; invalid configuration blocks, malformed hook event payloads remain ignored. Independent disposable outside-operator Goal plan/apply/readback passed without touching a live worktree.",
+          "Original external-root error is gone; no checkout-wide protection or reduced hygiene mode. Exact-path node_modules deletion remains correctly refused by intrinsic protection.",
+          "Independent Guardian child reparented after common-Git-dir survivability proof; only verified-unused default shell closed; feature history synchronized with identical-tree main and pushed normally. Current safety audit retains diagnostic-process blocker PID99352.",
+          "Original Parent T-005 genuinely resumed under resolved global-install evidence, then saved with its new honest safety checkpoint at revision14. All QA workers and owned host services finished; only the pre-existing diagnostic consumer remains."
+        ],
+        "remaining": [
+          "Deliver these source-only scope/Goal checkpoints through the two existing feature branches and PRs; no main commits or force pushes.",
+          "Obtain authority to stop/move remaining diagnostic process PID99352, verify identity and rerun the complete worktree-safety audit. Do not kill an unverified client.",
+          "After SAFE, show exact target 09891e5e-7734-44ff-92f5-e354dad87bf2::/Users/nashgao/orca/workspaces/instruction/milestone-dsl-completion and obtain separate owner removal consent; use only supported outside-target Orca archive-hook removal.",
+          "Finish Parent T-005 through supported actual Goal completion and fresh surviving-context readback, preserve all unrelated worktrees/primary changes/orphan records, then complete this T-004 with real evidence."
+        ],
+        "changed_paths": [
+          "runbooks/tasks/plan.guardian-orca-goal-compatibility.json",
+          "runbooks/tasks/plan.guardian-orca-goal-compatibility.archify.json",
+          "runbooks/tasks/plan.guardian-orca-goal-compatibility.html"
+        ],
+        "evidence": [
+          "/tmp/milestone-dsl-build.vBuuv6/guardian-source-rollout-proof.json",
+          "/tmp/guardian-opencode-globalqa.dg9tCI/report.json:67-218 — actual global runtime and post-cutover behavior; no unrelated owner changes or retained services.",
+          "/private/tmp/guardian-packed-codex-qa-cy8t5sn_/installed-t004/consolidated-report.json:11-153 — actual cache identity, runtime/dependency binding and all installed CLI cases plus scoped non-Orca addendum.",
+          "Parent canonical runbooks/tasks/plan.milestone-dsl-completion.json revision14/T-005 blocked only on remaining operational safety/confirmation; old dependency/root-escape blocker superseded.",
+          "Guardian native default Goal: hygiene no-unprotected-residue satisfied, complete=null, blocked ignored files. Separate allowIgnoredFiles=true PLAN ONLY: planned, zero blockers, land-and-clean; cleanup deleteBranch=true and targetPath=/Users/nashgao/orca/workspaces/instruction/milestone-dsl-completion.",
+          "Full Orca audit latest: NOT SAFE due pre-existing TypeScript process PID99352; 1757 rebuildable cache files and7 symlinks; no active default terminal/child finding. Source branch recovery ref pushed normally. No deletion authorization received."
+        ],
+        "resume_action": "Do not revisit npm. Resolve the diagnostic-process/Orca safety/consent gates, then resume T-004 with fresh evidence. Current installed Guardian behavior is verified; original actual Goal complete:true is still required.",
+        "quiescent": true
+      },
       "cancellation_reason": null
     }
   ],

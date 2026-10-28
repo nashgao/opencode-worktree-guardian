@@ -11,19 +11,23 @@
     "locale": "en",
     "views": [
       {
-        "id": "in-flight",
-        "label": "In flight",
+        "id": "attention",
+        "label": "Needs attention",
         "focus": [
-          "T-003"
+          "T-004"
         ],
-        "note": "Currently active tasks."
+        "note": "Halted or blocked tasks with checkpoints."
       }
     ]
   },
   "lanes": [
     {
       "id": "t0",
-      "label": "tasks"
+      "label": "track 1"
+    },
+    {
+      "id": "t1",
+      "label": "track 2"
     }
   ],
   "nodes": [
@@ -51,16 +55,16 @@
       "col": 2,
       "type": "backend",
       "label": "T-003 · Publish the prep",
-      "sublabel": "● in progress",
+      "sublabel": "✗ cancelled — checkpoint",
       "width": 216
     },
     {
       "id": "T-004",
-      "lane": "t0",
-      "col": 3,
+      "lane": "t1",
+      "col": 2,
       "type": "backend",
       "label": "T-004 · Upgrade installe",
-      "sublabel": "○ pending",
+      "sublabel": "⊘ blocked — checkpoint",
       "width": 216
     }
   ],
@@ -74,7 +78,7 @@
       "to": "T-003"
     },
     {
-      "from": "T-003",
+      "from": "T-002",
       "to": "T-004"
     }
   ],
@@ -83,9 +87,16 @@
       "dot": "emerald",
       "title": "Status",
       "items": [
-        "complete: 2",
-        "in_progress: 1",
-        "pending: 1"
+        "blocked: 1",
+        "cancelled: 1",
+        "complete: 2"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Needs attention",
+      "items": [
+        "T-004: Source-only global installation and both actual-host verifications are finished, — resume: Do not revisit npm. Resolve the diagnostic-process/Orca safety/consent gates, th"
       ]
     },
     {
@@ -95,10 +106,5 @@
         "2 task(s) complete with acceptance evidence bound to the scope revision"
       ]
     }
-  ],
-  "mainPath": [
-    "T-001",
-    "T-002",
-    "T-003"
   ]
 }
