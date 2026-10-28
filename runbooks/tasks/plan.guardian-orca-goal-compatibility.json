@@ -12,8 +12,8 @@
   },
   "policy": "serial",
   "enabled": true,
-  "revision": 14,
-  "current_task": "T-004",
+  "revision": 15,
+  "current_task": null,
   "last_task": "T-004",
   "tasks": [
     {
@@ -165,11 +165,11 @@
       "dependencies": [
         "T-002"
       ],
-      "status": "in_progress",
+      "status": "blocked",
       "gate_open": true,
       "evidence": [],
       "checkpoint": {
-        "reason": "Source-only global installation and both actual-host verifications are finished, but original Goal closure needs process authority and exact Orca removal consent. Npm publication is cancelled, not a blocker. Default real Goal still refuses 1764 ignored node_modules paths; PLAN-ONLY ignored-file preview targets deletion of the exact parent worktree and local branch. No live Goal apply or worktree removal has occurred.",
+        "reason": "Verified global rollout and exact owner-approved Orca/local-branch cleanup are complete. Native Goal closure remains blocked by a supported-interface/scope gap after external cleanup: original selector targets an absent worktree; repository fallback would publish unrelated primary changes, and GC would prune unrelated records. No completion was fabricated and no unrelated action was applied.",
         "completed": [
           "Npm publication is not required for this global rollout; use the verified merged source through the existing OpenCode/Codex source bindings. Accepted by the owner, 2026-10-28. Exact owner instruction: \"i reckon you can ignore this npmjs thing\". No npm publication or release tag is authorized by this change.",
           "Existing source checkout cleanly fast-forwarded to 6ab55f65e21a66b821bb7fbf6d77f0b0e96370bb and npm ci succeeded; actual Codex plugin add installed personal/1.0.0. No dependency code/cache patches or new registry/path dependencies.",
@@ -181,12 +181,15 @@
           "Both rollout checkpoint PRs are merged: enhancer #194 /7064e18659edefa030ba589344cb54be52b97a35 and Guardian #84 /678aaeeb382e6594d2b0ab43851c95b2127fa110.",
           "Owner explicitly authorized stopping only the diagnostic service and then removal of the exact audited worktree, 2026-10-28. Reverified diagnostic client/worker were stopped; the complete outer safety audit returned SAFE.",
           "Removal was not attempted after the configured archive hook correctly found a live checkpoint reference. Its safety policy and script were not changed. Full historical checkpoint before relocation is indexed at /tmp/milestone-dsl-build.vBuuv6/guardian-record-before-consumer-migration.json.",
-          "Live canonical continuation and the exact verified renderer are available in independent operator checkout /tmp/milestone-dsl-build.vBuuv6/milestone-goal-operator; renderer uses that checkout's unchanged vendored Archify CLI. The session transition/writer helpers now run from the surviving Guardian checkout and this renderer, not the retiring checkout."
+          "Live canonical continuation and the exact verified renderer are available in independent operator checkout /tmp/milestone-dsl-build.vBuuv6/milestone-goal-operator; renderer uses that checkout's unchanged vendored Archify CLI. The session transition/writer helpers now run from the surviving Guardian checkout and this renderer, not the retiring checkout.",
+          "Unchanged archive guard passed a real live-consumer negative control and a SAFE positive control after actual continuation migration; PR85/e7286669e1bb6a9d53f89a740b543d235ef899fa installed.",
+          "Exact authorized Orca target, its filesystem/Git registration and local branch are independently verified gone. Async removed/removing acknowledgement was verified to completion; no force or failed-hook waiver.",
+          "Parent T-005 is restored in the independent operator checkout and truthfully checkpointed at revision16. Current primary HEAD/index/status were preserved; no unrelated12-file publish,36-directory cleanup or179-record GC occurred."
         ],
         "remaining": [
-          "Deliver the live-reference migration and verify the unchanged configured archive guard with both the full audit scope and a real live-consumer negative control.",
-          "Retry only the already owner-confirmed exact Orca target through fresh audit and enabled archive hook; its exact identity is in /tmp/milestone-dsl-build.vBuuv6/guardian-source-rollout-proof.json.",
-          "After confirmed removal, restore the exact Parent T-005 continuation snapshot at /tmp/milestone-dsl-build.vBuuv6/milestone-goal-operator/runbooks/tasks/plan.milestone-dsl-completion.json, finish only the original real Guardian Goal through supported interfaces and proof-gated branch handling, then record actual complete:true/readback evidence."
+          "Obtain the owner Goal-scope decision. Current scoped work is complete; actual native Goal is not. Preserve unrelated primary work and178 unrelated GC candidates.",
+          "If retained, separately plan/approve a scoped already-removed-session completion/recovery path before any new Guardian API/code change. Otherwise record the owner's explicit pending/waived Goal requirement without claiming complete:true.",
+          "Complete this task only when its remaining approved Goal acceptance is actually met or explicitly revised by the owner."
         ],
         "changed_paths": [
           "runbooks/tasks/plan.guardian-orca-goal-compatibility.json",
@@ -201,9 +204,12 @@
           "Guardian native default Goal: hygiene no-unprotected-residue satisfied, complete=null, blocked ignored files. Separate allowIgnoredFiles=true PLAN ONLY: planned, zero blockers, land-and-clean; cleanup deleteBranch=true and targetPath=the original milestone-dsl-completion checkout (historical exact target and owner consent: /tmp/milestone-dsl-build.vBuuv6/guardian-source-rollout-proof.json).",
           "Full Orca audit latest: NOT SAFE due pre-existing TypeScript process PID99352; 1757 rebuildable cache files and7 symlinks; no active default terminal/child finding. Source branch recovery ref pushed normally. No deletion authorization received.",
           "Owner selected Stop diagnostic service in the explicit permission prompt. Authority covers only reverified TypeScript language-server client PID99332 and worker PID99352, then the full safety recheck. It does not authorize stopping OMP or deleting the worktree.",
-          "Canonical continuation: /tmp/milestone-dsl-build.vBuuv6/milestone-goal-operator/runbooks/tasks/plan.milestone-dsl-completion.json; historical snapshot: /tmp/milestone-dsl-build.vBuuv6/guardian-record-before-consumer-migration.json; exact operational target/permissions are evidence data in /tmp/milestone-dsl-build.vBuuv6/guardian-source-rollout-proof.json, not a runtime dependency on its removed folder."
+          "Canonical continuation: /tmp/milestone-dsl-build.vBuuv6/milestone-goal-operator/runbooks/tasks/plan.milestone-dsl-completion.json; historical snapshot: /tmp/milestone-dsl-build.vBuuv6/guardian-record-before-consumer-migration.json; exact operational target/permissions are evidence data in /tmp/milestone-dsl-build.vBuuv6/guardian-source-rollout-proof.json, not a runtime dependency on its removed folder.",
+          "/tmp/milestone-dsl-build.vBuuv6/guardian-source-rollout-proof.json",
+          "Outside canonical Parent record /tmp/milestone-dsl-build.vBuuv6/milestone-goal-operator/runbooks/tasks/plan.milestone-dsl-completion.json revision16; current Source/actor unchanged.",
+          "Native surviving Goal plans blocked; bulk GC plan179 candidates. No primary-source files, unrelated state records or Goal status were altered."
         ],
-        "resume_action": "Continue from the independent operator record and renderer, not the retired checkout. Keep the original default-strength Goal and every Orca safety/confirmation barrier; do not revisit npm.",
+        "resume_action": "Do not revisit npm or remove any more worktrees. Resolve the real remaining Goal-scope/product decision and use the independent operator continuation; never publish unrelated work or forge achieved state.",
         "quiescent": true
       },
       "cancellation_reason": null
