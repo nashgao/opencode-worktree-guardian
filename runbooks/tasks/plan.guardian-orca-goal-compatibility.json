@@ -12,8 +12,8 @@
   },
   "policy": "serial",
   "enabled": true,
-  "revision": 12,
-  "current_task": null,
+  "revision": 14,
+  "current_task": "T-004",
   "last_task": "T-004",
   "tasks": [
     {
@@ -165,7 +165,7 @@
       "dependencies": [
         "T-002"
       ],
-      "status": "blocked",
+      "status": "in_progress",
       "gate_open": true,
       "evidence": [],
       "checkpoint": {
@@ -177,13 +177,16 @@
           "Actual Codex personal/1.0.0 cache verified: 242 runtime/config files match merged code; Zod4.6.7/picomatch4.0.7/tsx4.22.4 resolve cache-locally. Actual registered root hook/tool cases pass; invalid configuration blocks, malformed hook event payloads remain ignored. Independent disposable outside-operator Goal plan/apply/readback passed without touching a live worktree.",
           "Original external-root error is gone; no checkout-wide protection or reduced hygiene mode. Exact-path node_modules deletion remains correctly refused by intrinsic protection.",
           "Independent Guardian child reparented after common-Git-dir survivability proof; only verified-unused default shell closed; feature history synchronized with identical-tree main and pushed normally. Current safety audit retains diagnostic-process blocker PID99352.",
-          "Original Parent T-005 genuinely resumed under resolved global-install evidence, then saved with its new honest safety checkpoint at revision14. All QA workers and owned host services finished; only the pre-existing diagnostic consumer remains."
+          "Original Parent T-005 genuinely resumed under resolved global-install evidence, then saved with its new honest safety checkpoint at revision14. All QA workers and owned host services finished; only the pre-existing diagnostic consumer remains.",
+          "Both rollout checkpoint PRs are merged: enhancer #194 /7064e18659edefa030ba589344cb54be52b97a35 and Guardian #84 /678aaeeb382e6594d2b0ab43851c95b2127fa110.",
+          "Owner explicitly authorized stopping only the diagnostic service and then removal of the exact audited worktree, 2026-10-28. Reverified diagnostic client/worker were stopped; the complete outer safety audit returned SAFE.",
+          "Removal was not attempted after the configured archive hook correctly found a live checkpoint reference. Its safety policy and script were not changed. Full historical checkpoint before relocation is indexed at /tmp/milestone-dsl-build.vBuuv6/guardian-record-before-consumer-migration.json.",
+          "Live canonical continuation and the exact verified renderer are available in independent operator checkout /tmp/milestone-dsl-build.vBuuv6/milestone-goal-operator; renderer uses that checkout's unchanged vendored Archify CLI. The session transition/writer helpers now run from the surviving Guardian checkout and this renderer, not the retiring checkout."
         ],
         "remaining": [
-          "Deliver these source-only scope/Goal checkpoints through the two existing feature branches and PRs; no main commits or force pushes.",
-          "Obtain authority to stop/move remaining diagnostic process PID99352, verify identity and rerun the complete worktree-safety audit. Do not kill an unverified client.",
-          "After SAFE, show exact target 09891e5e-7734-44ff-92f5-e354dad87bf2::/Users/nashgao/orca/workspaces/instruction/milestone-dsl-completion and obtain separate owner removal consent; use only supported outside-target Orca archive-hook removal.",
-          "Finish Parent T-005 through supported actual Goal completion and fresh surviving-context readback, preserve all unrelated worktrees/primary changes/orphan records, then complete this T-004 with real evidence."
+          "Deliver the live-reference migration and verify the unchanged configured archive guard with both the full audit scope and a real live-consumer negative control.",
+          "Retry only the already owner-confirmed exact Orca target through fresh audit and enabled archive hook; its exact identity is in /tmp/milestone-dsl-build.vBuuv6/guardian-source-rollout-proof.json.",
+          "After confirmed removal, restore the exact Parent T-005 continuation snapshot at /tmp/milestone-dsl-build.vBuuv6/milestone-goal-operator/runbooks/tasks/plan.milestone-dsl-completion.json, finish only the original real Guardian Goal through supported interfaces and proof-gated branch handling, then record actual complete:true/readback evidence."
         ],
         "changed_paths": [
           "runbooks/tasks/plan.guardian-orca-goal-compatibility.json",
@@ -195,10 +198,12 @@
           "/tmp/guardian-opencode-globalqa.dg9tCI/report.json:67-218 — actual global runtime and post-cutover behavior; no unrelated owner changes or retained services.",
           "/private/tmp/guardian-packed-codex-qa-cy8t5sn_/installed-t004/consolidated-report.json:11-153 — actual cache identity, runtime/dependency binding and all installed CLI cases plus scoped non-Orca addendum.",
           "Parent canonical runbooks/tasks/plan.milestone-dsl-completion.json revision14/T-005 blocked only on remaining operational safety/confirmation; old dependency/root-escape blocker superseded.",
-          "Guardian native default Goal: hygiene no-unprotected-residue satisfied, complete=null, blocked ignored files. Separate allowIgnoredFiles=true PLAN ONLY: planned, zero blockers, land-and-clean; cleanup deleteBranch=true and targetPath=/Users/nashgao/orca/workspaces/instruction/milestone-dsl-completion.",
-          "Full Orca audit latest: NOT SAFE due pre-existing TypeScript process PID99352; 1757 rebuildable cache files and7 symlinks; no active default terminal/child finding. Source branch recovery ref pushed normally. No deletion authorization received."
+          "Guardian native default Goal: hygiene no-unprotected-residue satisfied, complete=null, blocked ignored files. Separate allowIgnoredFiles=true PLAN ONLY: planned, zero blockers, land-and-clean; cleanup deleteBranch=true and targetPath=the original milestone-dsl-completion checkout (historical exact target and owner consent: /tmp/milestone-dsl-build.vBuuv6/guardian-source-rollout-proof.json).",
+          "Full Orca audit latest: NOT SAFE due pre-existing TypeScript process PID99352; 1757 rebuildable cache files and7 symlinks; no active default terminal/child finding. Source branch recovery ref pushed normally. No deletion authorization received.",
+          "Owner selected Stop diagnostic service in the explicit permission prompt. Authority covers only reverified TypeScript language-server client PID99332 and worker PID99352, then the full safety recheck. It does not authorize stopping OMP or deleting the worktree.",
+          "Canonical continuation: /tmp/milestone-dsl-build.vBuuv6/milestone-goal-operator/runbooks/tasks/plan.milestone-dsl-completion.json; historical snapshot: /tmp/milestone-dsl-build.vBuuv6/guardian-record-before-consumer-migration.json; exact operational target/permissions are evidence data in /tmp/milestone-dsl-build.vBuuv6/guardian-source-rollout-proof.json, not a runtime dependency on its removed folder."
         ],
-        "resume_action": "Do not revisit npm. Resolve the diagnostic-process/Orca safety/consent gates, then resume T-004 with fresh evidence. Current installed Guardian behavior is verified; original actual Goal complete:true is still required.",
+        "resume_action": "Continue from the independent operator record and renderer, not the retired checkout. Keep the original default-strength Goal and every Orca safety/confirmation barrier; do not revisit npm.",
         "quiescent": true
       },
       "cancellation_reason": null
