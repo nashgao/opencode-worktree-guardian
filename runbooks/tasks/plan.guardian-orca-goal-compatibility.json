@@ -12,9 +12,9 @@
   },
   "policy": "serial",
   "enabled": true,
-  "revision": 5,
-  "current_task": "T-002",
-  "last_task": "T-002",
+  "revision": 7,
+  "current_task": "T-003",
+  "last_task": "T-003",
   "tasks": [
     {
       "id": "T-001",
@@ -51,9 +51,20 @@
       "dependencies": [
         "T-001"
       ],
-      "status": "in_progress",
+      "status": "complete",
       "gate_open": true,
-      "evidence": [],
+      "evidence": [
+        {
+          "criterion": "Full project readiness, low-threshold production audit, package inventory and disposable OpenCode/Codex host checks pass.",
+          "reference": "Upstream PR #82 merged at 96df54699a21a49a0761eb6dee8e3713427aca1b: https://github.com/nashgao/opencode-worktree-guardian/pull/82 . npm run test:readiness plus explicit production low-threshold audit exit 0 (artifact 343/bg_32): 1401 coverage tests passed/0 failed/1 skipped of 1402, 96.07% lines; 138 contracts, 19 package smoke, 5 automated host smoke all passed; 269-file package, zero production vulnerabilities. Existing packed security/package tests 7/7 pass after owner-approved SDK-dev-only/direct-Zod4.6.7 packaging; fresh production consumers contain no SDK/Effect/TOML. Frozen npm candidate SHA256 f9007b2b99dd9c481733d0595e3896c94bdada6426d7bb4d28f9a59f07b7887e: actual OpenCode 1.19.4 all six manual groups pass (/tmp/guardian-opencode-packedqa.Gxi9cf/report.json), actual installed Codex adapter passes (/private/tmp/guardian-packed-codex-qa-cy8t5sn_/evidence/handoff.json), all 269 files byte-match; services stopped and secret-copy artifacts absent. Full tsc passes; scanner has only two baseline unused-import hints; native-tool LSP diagnostics aborted, explicitly not claimed clean.",
+          "revision": "sha256:8e6061b7efd075d984a644b0ef99040b56d69c7e4a3bfc4d6587b93fc5de418d"
+        },
+        {
+          "criterion": "Minimal docs/changelog and the fix are merged through a feature PR; the active installed checkout is not patched.",
+          "reference": "Upstream PR #82 merged at 96df54699a21a49a0761eb6dee8e3713427aca1b: https://github.com/nashgao/opencode-worktree-guardian/pull/82 . npm run test:readiness plus explicit production low-threshold audit exit 0 (artifact 343/bg_32): 1401 coverage tests passed/0 failed/1 skipped of 1402, 96.07% lines; 138 contracts, 19 package smoke, 5 automated host smoke all passed; 269-file package, zero production vulnerabilities. Existing packed security/package tests 7/7 pass after owner-approved SDK-dev-only/direct-Zod4.6.7 packaging; fresh production consumers contain no SDK/Effect/TOML. Frozen npm candidate SHA256 f9007b2b99dd9c481733d0595e3896c94bdada6426d7bb4d28f9a59f07b7887e: actual OpenCode 1.19.4 all six manual groups pass (/tmp/guardian-opencode-packedqa.Gxi9cf/report.json), actual installed Codex adapter passes (/private/tmp/guardian-packed-codex-qa-cy8t5sn_/evidence/handoff.json), all 269 files byte-match; services stopped and secret-copy artifacts absent. Full tsc passes; scanner has only two baseline unused-import hints; native-tool LSP diagnostics aborted, explicitly not claimed clean.",
+          "revision": "sha256:8e6061b7efd075d984a644b0ef99040b56d69c7e4a3bfc4d6587b93fc5de418d"
+        }
+      ],
       "checkpoint": {
         "reason": "T-002 full readiness is blocked by the existing packed-consumer production-audit gate, not by the external-worktree fix. Full coverage run: 1400 passed, 1 failed, 1 skipped; failure is package-hud-security.test.ts:105 (npm audit exit 1). Fresh packed consumer audit confirms 5 high-severity package entries from the SDK Effect/TOML and pinned Zod graph. A narrow dependency-packaging approach update requires owner approval before any additional source edits.",
         "completed": [
@@ -101,7 +112,7 @@
       "dependencies": [
         "T-002"
       ],
-      "status": "pending",
+      "status": "in_progress",
       "gate_open": true,
       "evidence": [],
       "checkpoint": null,
