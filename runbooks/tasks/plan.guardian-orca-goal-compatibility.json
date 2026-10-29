@@ -12,8 +12,8 @@
   },
   "policy": "serial",
   "enabled": true,
-  "revision": 17,
-  "current_task": "T-004",
+  "revision": 18,
+  "current_task": null,
   "last_task": "T-004",
   "tasks": [
     {
@@ -166,9 +166,30 @@
       "dependencies": [
         "T-002"
       ],
-      "status": "in_progress",
+      "status": "complete",
       "gate_open": true,
-      "evidence": [],
+      "evidence": [
+        {
+          "criterion": "Verified merged Guardian code including session-scoped closure runs through existing global OpenCode and Codex source channels at local version1.1.0, without duplicate loaders, dependency patches or unrelated plugin changes.",
+          "reference": "Actual installed Guardian1.1.0 action=complete-removed-session session=01a1787f-7dd8-734f-8f6b-e4da94487676 confirmed apply and independent fresh-process mode=plan both complete:true, exact session scope; prepared->complete receipt preserves baselinebbf28ad7158b95747fec1d5d566b873f084df4f3 and safety ref for7f4e45966f7fd3e5654be7f02a0bf6a5b95b2a45. Primary HEAD272ea9d, index, dirty/untracked bytes,183 other sessions and unrelated remote branches unchanged. /tmp/milestone-dsl-build.vBuuv6/guardian-scoped-closure-verification.json; /tmp/milestone-dsl-build.vBuuv6/guardian-original-scoped-goal-complete-proof.json; fresh readback /tmp/milestone-dsl-build.vBuuv6/guardian-original-scoped-goal-plan-proof.json. Guardian PR86/59852af merged, actual global OpenCode18tools/11single-hook calls and installed Codex130CLI cases/244matched files pass;894Parent tests and1438Guardian tests pass (1skip). No npm publication/tag, primary publishing/hygiene, bulk GC, baseline reset or other worktree removal. Automatic Codex lifecycle dispatch not claimed; installed root commands verified.",
+          "revision": "sha256:71dd47116c37793f98b6dad7018d3dd3d63f752da3ac3816d4bc8d3e019d4cae"
+        },
+        {
+          "criterion": "The original external-root hygiene failure is gone without masking the checkout.",
+          "reference": "Actual installed Guardian1.1.0 action=complete-removed-session session=01a1787f-7dd8-734f-8f6b-e4da94487676 confirmed apply and independent fresh-process mode=plan both complete:true, exact session scope; prepared->complete receipt preserves baselinebbf28ad7158b95747fec1d5d566b873f084df4f3 and safety ref for7f4e45966f7fd3e5654be7f02a0bf6a5b95b2a45. Primary HEAD272ea9d, index, dirty/untracked bytes,183 other sessions and unrelated remote branches unchanged. /tmp/milestone-dsl-build.vBuuv6/guardian-scoped-closure-verification.json; /tmp/milestone-dsl-build.vBuuv6/guardian-original-scoped-goal-complete-proof.json; fresh readback /tmp/milestone-dsl-build.vBuuv6/guardian-original-scoped-goal-plan-proof.json. Guardian PR86/59852af merged, actual global OpenCode18tools/11single-hook calls and installed Codex130CLI cases/244matched files pass;894Parent tests and1438Guardian tests pass (1skip). No npm publication/tag, primary publishing/hygiene, bulk GC, baseline reset or other worktree removal. Automatic Codex lifecycle dispatch not claimed; installed root commands verified.",
+          "revision": "sha256:71dd47116c37793f98b6dad7018d3dd3d63f752da3ac3816d4bc8d3e019d4cae"
+        },
+        {
+          "criterion": "Resume original plan:milestone-dsl-completion/T-005; complete it only after supported ignored-file disposition, exact Orca safety/removal consent where required, actual Goal complete:true and fresh proof readback.",
+          "reference": "Actual installed Guardian1.1.0 action=complete-removed-session session=01a1787f-7dd8-734f-8f6b-e4da94487676 confirmed apply and independent fresh-process mode=plan both complete:true, exact session scope; prepared->complete receipt preserves baselinebbf28ad7158b95747fec1d5d566b873f084df4f3 and safety ref for7f4e45966f7fd3e5654be7f02a0bf6a5b95b2a45. Primary HEAD272ea9d, index, dirty/untracked bytes,183 other sessions and unrelated remote branches unchanged. /tmp/milestone-dsl-build.vBuuv6/guardian-scoped-closure-verification.json; /tmp/milestone-dsl-build.vBuuv6/guardian-original-scoped-goal-complete-proof.json; fresh readback /tmp/milestone-dsl-build.vBuuv6/guardian-original-scoped-goal-plan-proof.json. Guardian PR86/59852af merged, actual global OpenCode18tools/11single-hook calls and installed Codex130CLI cases/244matched files pass;894Parent tests and1438Guardian tests pass (1skip). No npm publication/tag, primary publishing/hygiene, bulk GC, baseline reset or other worktree removal. Automatic Codex lifecycle dispatch not claimed; installed root commands verified.",
+          "revision": "sha256:71dd47116c37793f98b6dad7018d3dd3d63f752da3ac3816d4bc8d3e019d4cae"
+        },
+        {
+          "criterion": "A removed-session Goal action validates original-baseline ancestry, exact owned published head, landed-tree/base ancestry and absent owned targets; confirmed apply persists only an owned prepared/complete receipt, preserves current primary work/other records, and supports fresh session-scoped complete:true readback with drift/partial-failure gates.",
+          "reference": "Actual installed Guardian1.1.0 action=complete-removed-session session=01a1787f-7dd8-734f-8f6b-e4da94487676 confirmed apply and independent fresh-process mode=plan both complete:true, exact session scope; prepared->complete receipt preserves baselinebbf28ad7158b95747fec1d5d566b873f084df4f3 and safety ref for7f4e45966f7fd3e5654be7f02a0bf6a5b95b2a45. Primary HEAD272ea9d, index, dirty/untracked bytes,183 other sessions and unrelated remote branches unchanged. /tmp/milestone-dsl-build.vBuuv6/guardian-scoped-closure-verification.json; /tmp/milestone-dsl-build.vBuuv6/guardian-original-scoped-goal-complete-proof.json; fresh readback /tmp/milestone-dsl-build.vBuuv6/guardian-original-scoped-goal-plan-proof.json. Guardian PR86/59852af merged, actual global OpenCode18tools/11single-hook calls and installed Codex130CLI cases/244matched files pass;894Parent tests and1438Guardian tests pass (1skip). No npm publication/tag, primary publishing/hygiene, bulk GC, baseline reset or other worktree removal. Automatic Codex lifecycle dispatch not claimed; installed root commands verified.",
+          "revision": "sha256:71dd47116c37793f98b6dad7018d3dd3d63f752da3ac3816d4bc8d3e019d4cae"
+        }
+      ],
       "checkpoint": {
         "reason": "Verified global rollout and exact owner-approved Orca/local-branch cleanup are complete. Native Goal closure remains blocked by a supported-interface/scope gap after external cleanup: original selector targets an absent worktree; repository fallback would publish unrelated primary changes, and GC would prune unrelated records. No completion was fabricated and no unrelated action was applied.",
         "completed": [
