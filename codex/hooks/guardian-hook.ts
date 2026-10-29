@@ -55,6 +55,9 @@ async function planCacheKey(name: string, toolArgs: Record<string, unknown>, pla
     sessionId: typeof toolArgs["sessionId"] === "string" ? toolArgs["sessionId"] : "", repoRoot: typeof toolArgs["repoRoot"] === "string" ? toolArgs["repoRoot"] : "", cwd: typeof toolArgs["cwd"] === "string" ? toolArgs["cwd"] : "",
     commitMessage: typeof toolArgs["commitMessage"] === "string" ? toolArgs["commitMessage"] : "", finishMode: typeof toolArgs["finishMode"] === "string" ? toolArgs["finishMode"] : "", action: typeof toolArgs["action"] === "string" ? toolArgs["action"] : "",
     quarantineId: typeof toolArgs["quarantineId"] === "string" ? toolArgs["quarantineId"] : "", targetWorktreePath: typeof toolArgs["targetWorktreePath"] === "string" ? toolArgs["targetWorktreePath"] : "",
+    expectedRemoteHead: typeof toolArgs["expectedRemoteHead"] === "string" ? toolArgs["expectedRemoteHead"] : "",
+    landedBaseHead: typeof toolArgs["landedBaseHead"] === "string" ? toolArgs["landedBaseHead"] : "",
+    allowNonAncestorRemoteDeletion: toolArgs["allowNonAncestorRemoteDeletion"] === true,
     allowTracked: toolArgs["allowTracked"] === true, allowRecursive: toolArgs["allowRecursive"] === true, allowDirtyNestedGit: toolArgs["allowDirtyNestedGit"] === true,
     rescue: toolArgs["rescue"] === true, primary: toolArgs["primary"] === true,
     deleteBranch: toolArgs["deleteBranch"] === true, abandonUnmerged: toolArgs["abandonUnmerged"] === true, allowIgnoredFiles: toolArgs["allowIgnoredFiles"] === true,
@@ -152,6 +155,9 @@ function confirmationHint(name: string, result: Record<string, unknown>, goalReq
     return "After explicit user confirmation, rerun with mode=apply and confirmDelete=true; the Codex adapter reuses the matching cached plan token.";
   }
   if (name === "guardian_goal") {
+    if (typeof result["scope"] === "object" && result["scope"] !== null && Reflect.get(result["scope"], "kind") === "session") {
+      return "After explicit user confirmation, rerun mode=apply confirm=true with the identical complete-removed-session action, sessionId, expectedRemoteHead, landedBaseHead, and nonancestor opt-in; the adapter reuses only the matching cached plan token. Read back with the same proof in mode=plan; completion is session-scoped only.";
+    }
     return goalRequested
       ? "If the user requested Guardian Goal completion, review the plan and continue safe authorized steps with mode=apply and confirm=true using the matching cached plan token. trackGoal alone is not approval."
       : "After explicit user confirmation, rerun with mode=apply and confirm=true; the Codex adapter reuses the matching cached plan token.";

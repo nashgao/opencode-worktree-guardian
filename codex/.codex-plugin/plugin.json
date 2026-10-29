@@ -1,6 +1,6 @@
 {
   "name": "opencode-worktree-guardian",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Codex adapter for Guardian worktree safety hooks and commands.",
   "author": {
     "name": "Nash Gao"

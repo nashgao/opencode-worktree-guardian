@@ -4,6 +4,17 @@ All notable public-surface changes are tracked here.
 
 ## Unreleased
 
+### Added
+
+- `guardian_goal action=complete-removed-session` closes exactly one recorded externally removed session through plan, explicitly confirmed apply, and same-proof readback. Required `sessionId`, `expectedRemoteHead` and `landedBaseHead` bind the original baseline, exact landed tree and freshly authoritative base; squash-equivalent nonancestor deletion requires the existing explicit `allowNonAncestorRemoteDeletion` opt-in. The action creates the recorded safety ref before exact-head leased deletion of only the owned remote source and reports session scope rather than `Project clean`.
+- Version-1 `session.external_goal_completion` prepared/complete receipts support exact-proof recovery without resetting `started_head_commit`. Pending receipts are protected from stale GC, start repair and cross-session branch/path acquisition before directory creation; recreated paths/branches, changed proof and remote advances fail closed. Completion rechecks local absence after remote observation. This is not primary publishing, hygiene or bulk GC, and it does not attest historical filesystem disposition.
+- Removed-session closure conservatively requires the full strict default session Goal preset: all six delivery/cleanup flags enabled, `hygieneCompletion: "no-unprotected-residue"`, and `quarantineSessionResidue: false`. Other presets keep their ordinary workflow; unsupported scoped presets and conflicting primary/all/branch targets refuse without falling back to primary hygiene or publishing.
+
+### Changed
+
+- Native and Codex confirmation caches bind the removed-session action, session, both proof OIDs and nonancestor opt-in, and reuse a token only after explicit matching confirmation. Package, lockfile and both Codex plugin metadata versions are aligned to local `1.1.0` for normal cache refresh; this entry does not publish a package or create a release tag.
+- Codex continuation checkpoints distinguish repository-wide and exact Guardian-session goals. Scoped calls cannot replace or clear a broader/different-session checkpoint, explicit conflicting tracking warns without replacing it, and legacy version-1 checkpoints without scope remain repository-wide. Scoped readable Goal plans expose the exact remote/branch, full proof OIDs, safety ref, absence checks, receipt phase and filesystem-attestation limits before requesting confirmation, without exposing tokens.
+
 ## 1.0.0 - 2026-10-28
 
 ### Added

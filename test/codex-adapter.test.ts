@@ -8,6 +8,7 @@ import { createRepo, createRepoWithOrigin, createTempDir, git, installFakeGh } f
 import { CONFIG_PATH, DEFAULT_CONFIG } from "../src/config.ts";
 import { guardianStart } from "../src/tools.ts";
 import { getGuardianPaths } from "../src/state.ts";
+import { removedGoalFixture } from "./goal-removed-session-fixtures.ts";
 
 const projectRoot = path.resolve(new URL("..", import.meta.url).pathname);
 const codexCliPath = path.join(projectRoot, "codex", "hooks", "guardian-hook.ts");
@@ -375,6 +376,53 @@ test("Codex tracks one repository consistently across its primary and session wo
   assert.doesNotMatch(second.stdout, /already tracks an unfinished Guardian Goal/);
   const resumed = await runCodexCli(["hook", "session-start"], `${JSON.stringify({ hook_event_name: "SessionStart", session_id: sessionId, cwd: repo })}\n`, options);
   assert.match(JSON.parse(resumed.stdout).hookSpecificOutput.additionalContext, new RegExp(escapeRegExp(repo)));
+});
+
+test("Codex scoped completion preserves broader and different-session Goals and clears only its matching checkpoint", async (t) => {
+  const fixture = await removedGoalFixture(t);
+  const stateHome = path.join(fixture.base, "codex-state");
+  const ordinary = { repoRoot: fixture.repo, cwd: fixture.repo, config: fixture.config };
+  const trackedGoals = [
+    { hostSessionId: "ses_codex_removed_repo_goal", args: ordinary, completionMatches: false },
+    { hostSessionId: "ses_codex_removed_other_goal", args: { ...ordinary, sessionId: fixture.otherId }, completionMatches: false },
+    { hostSessionId: "ses_codex_removed_owned_goal", args: fixture.request, completionMatches: true },
+  ];
+  for (const tracked of trackedGoals) {
+    const options = { sessionId: tracked.hostSessionId, stateHome };
+    await runCodexCli(["tool", "guardian_goal", JSON.stringify({ ...tracked.args, mode: "plan", trackGoal: true })], "", options);
+    if (tracked.args === ordinary) {
+      const key = createHash("sha256").update(tracked.hostSessionId).digest("hex");
+      const checkpointPath = path.join(stateHome, "opencode-worktree-guardian", "codex-goals", `${key}.json`);
+      const legacy = JSON.parse(await fs.readFile(checkpointPath, "utf8"));
+      assert.equal(legacy.version, 1);
+      delete legacy.scope;
+      await fs.writeFile(checkpointPath, `${JSON.stringify(legacy)}\n`);
+    }
+    if (!tracked.completionMatches) {
+      await runCodexCli(["tool", "guardian_goal", JSON.stringify({ ...fixture.request, mode: "plan" })], "", options);
+      await runCodexCli(["tool", "guardian_goal", JSON.stringify({ ...fixture.request, mode: "plan", trackGoal: true })], "", options);
+    }
+  }
+
+  await runCodexCli(["tool", "guardian_goal", JSON.stringify({ ...fixture.request, mode: "apply", confirm: true })], "", {
+    sessionId: trackedGoals[0].hostSessionId,
+    stateHome,
+  });
+  assert.equal((await git(fixture.repo, ["ls-remote", "--heads", "origin", `refs/heads/${fixture.branch}`])).stdout, "");
+
+  for (const tracked of trackedGoals) {
+    const options = { sessionId: tracked.hostSessionId, stateHome };
+    await runCodexCli(["tool", "guardian_goal", JSON.stringify({ ...fixture.request, mode: "plan" })], "", options);
+    const resumed = await runCodexCli(["hook", "session-start"], `${JSON.stringify({ hook_event_name: "SessionStart", session_id: tracked.hostSessionId, cwd: fixture.repo })}\n`, options);
+    const stopped = await runCodexCli(["hook", "stop"], `${JSON.stringify({ hook_event_name: "Stop", session_id: tracked.hostSessionId, cwd: fixture.repo })}\n`, options);
+    if (tracked.completionMatches) {
+      assert.equal(resumed.stdout, "");
+      assert.equal(stopped.stdout, "");
+    } else {
+      assert.equal(JSON.parse(resumed.stdout).hookSpecificOutput.hookEventName, "SessionStart");
+      assert.equal(JSON.parse(stopped.stdout).decision, "block");
+    }
+  }
 });
 
 test("Codex gives a blocked tracked Guardian Goal one recovery pass", async (t) => {

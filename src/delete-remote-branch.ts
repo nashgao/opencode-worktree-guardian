@@ -1,9 +1,10 @@
 import crypto from "node:crypto";
 import { configForResolvedBase, resolveBaseRef } from "./done-base-ref.ts";
 import { loadConfig } from "./config.ts";
-import { buildSafetyRef, deleteAbsentRemoteBranchAtExpectedAbsence, deleteRemoteBranchAtExpectedHead, fetchRemotePrune, getRefCommit, getRefCommitOrNull, getRepoRoot, isAncestor, remoteTrackingRef } from "./git.ts";
+import { buildSafetyRef, deleteAbsentRemoteBranchAtExpectedAbsence, deleteRemoteBranchAtExpectedHead, fetchMissingRemoteCommits, fetchRemotePrune, getRepoRoot, isAncestor, observeRemoteBranchHeads } from "./git.ts";
 import { isReservedCleanupBranch } from "./workflow-candidates.ts";
 import { completeRemoteBranchCleanupSafetyRefReservation, hasValidRemoteBranchCleanupSafetyRef, remoteBranchCleanupReservations, reserveRemoteBranchCleanupSafetyRef } from "./state-remote-branch-reservation.ts";
+import type { GuardianConfig } from "./types.ts";
 
 function blocked(reason: string, preflight: Record<string, unknown>): Record<string, unknown> {
   return { ok: false, status: "blocked", reason, preflight };
@@ -30,6 +31,10 @@ function confirmToken(preflight: Record<string, unknown>): string {
 }
 
 export async function guardianDeleteRemoteBranch(input: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+  return deleteRemoteBranchWithConfig(input);
+}
+
+export async function deleteRemoteBranchWithConfig(input: Record<string, unknown>, configuration?: GuardianConfig): Promise<Record<string, unknown>> {
   const mode = input.mode ?? "plan";
   const remote = requiredString(input, "remote");
   const remoteBranch = requiredString(input, "remoteBranch");
@@ -55,7 +60,7 @@ export async function guardianDeleteRemoteBranch(input: Record<string, unknown> 
   if (!remote || !remoteBranch || !expectedRemoteHead) return blocked("remote, remoteBranch, and expectedRemoteHead must be exact non-empty strings", preflight);
   if (mode === "apply" && input.confirm !== true) return blocked("guardian_delete_remote_branch apply requires confirm=true", preflight);
 
-  const { config } = await loadConfig(repoRoot);
+  const config = configuration ?? (await loadConfig(repoRoot)).config;
   const resolvedBase = await resolveBaseRef(repoRoot, config);
   const effectiveConfig = configForResolvedBase(config, resolvedBase);
   preflight.baseRef = resolvedBase.authorityRef;
@@ -69,8 +74,11 @@ export async function guardianDeleteRemoteBranch(input: Record<string, unknown> 
   const reservationInput = { repoRoot, config: effectiveConfig, remote, remoteBranch, head: expectedRemoteHead, safetyRef };
   try {
     await fetchRemotePrune(repoRoot, remote);
-    preflight.baseRefOid = await getRefCommit(repoRoot, resolvedBase.authorityRef);
-    preflight.observedRemoteHead = await getRefCommitOrNull(repoRoot, remoteTrackingRef(remote, remoteBranch));
+    const heads = await observeRemoteBranchHeads(repoRoot, remote, [effectiveConfig.baseBranch, remoteBranch]);
+    preflight.baseRefOid = heads.get(effectiveConfig.baseBranch);
+    if (typeof preflight.baseRefOid !== "string") return blocked("authoritative base is absent from the exact remote observation", preflight);
+    preflight.observedRemoteHead = heads.get(remoteBranch) ?? null;
+    await fetchMissingRemoteCommits(repoRoot, remote, [preflight.baseRefOid, ...(typeof preflight.observedRemoteHead === "string" ? [preflight.observedRemoteHead] : [])]);
   } catch (error) {
     return blocked(error instanceof Error ? error.message : String(error), preflight);
   }
@@ -88,7 +96,7 @@ export async function guardianDeleteRemoteBranch(input: Record<string, unknown> 
   } else if (preflight.observedRemoteHead !== expectedRemoteHead) return blocked("remote branch head no longer matches expectedRemoteHead", preflight);
 
   try {
-    preflight.ancestryProven = await isAncestor(repoRoot, expectedRemoteHead, resolvedBase.authorityRef);
+    preflight.ancestryProven = await isAncestor(repoRoot, expectedRemoteHead, String(preflight.baseRefOid));
   } catch (error) {
     return blocked(error instanceof Error ? error.message : String(error), preflight);
   }
@@ -109,7 +117,7 @@ export async function guardianDeleteRemoteBranch(input: Record<string, unknown> 
       } catch (error) {
         try {
           await fetchRemotePrune(repoRoot, remote);
-          const observedRemoteHead = await getRefCommitOrNull(repoRoot, remoteTrackingRef(remote, remoteBranch));
+          const observedRemoteHead = (await observeRemoteBranchHeads(repoRoot, remote, [remoteBranch])).get(remoteBranch) ?? null;
           if (observedRemoteHead !== null && observedRemoteHead !== expectedRemoteHead) {
             return { ok: false, status: "blocked", reason: "remote branch head changed before the leased deletion could complete", remote, remoteBranch, expectedRemoteHead, observedRemoteHead, safetyRef, preflight };
           }
@@ -120,7 +128,7 @@ export async function guardianDeleteRemoteBranch(input: Record<string, unknown> 
       }
       try {
         await fetchRemotePrune(repoRoot, remote);
-        const observedRemoteHead = await getRefCommitOrNull(repoRoot, remoteTrackingRef(remote, remoteBranch));
+        const observedRemoteHead = (await observeRemoteBranchHeads(repoRoot, remote, [remoteBranch])).get(remoteBranch) ?? null;
         if (observedRemoteHead !== null) {
           return { ok: false, status: "indeterminate", reason: "remote branch remains observable after deletion push", remote, remoteBranch, expectedRemoteHead, observedRemoteHead, remoteBranchDeleted: null, safetyRef, preflight, recoveryRequired: true };
         }

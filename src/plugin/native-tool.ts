@@ -10,6 +10,7 @@ const SESSION_WORKTREE_DEFAULT_TOOLS = new Set(["guardian_finish", "guardian_goa
 
 async function getRecordedToolWorktree(name: GuardianToolName, toolArgs: PlanCacheToolArgs, context: HookContext) {
   if (!SESSION_WORKTREE_DEFAULT_TOOLS.has(name)) return null;
+  if (name === "guardian_goal" && toolArgs.action === "complete-removed-session") return null;
   if (typeof toolArgs.repoRoot !== "string" || typeof toolArgs.sessionId !== "string") return null;
   const contextCwd = typeof context?.worktree === "string" ? context.worktree : typeof context?.directory === "string" ? context.directory : toolArgs.repoRoot;
   const actualWorktree = await resolveActualWorktreeOrPath(contextCwd);
@@ -42,7 +43,7 @@ export function guardianTool(name: GuardianToolName, description: string, planCa
       rescue: z.boolean().optional(),
       all: z.boolean().optional(),
       primary: z.boolean().optional(),
-      action: z.enum(["commit-review-artifacts", "restore", "purge"]).optional(),
+      action: z.enum(["commit-review-artifacts", "restore", "purge", "complete-removed-session"]).optional(),
       quarantineId: z.string().optional(),
       commitMessage: z.string().optional(),
       deleteBranch: z.boolean().optional(),
@@ -55,6 +56,7 @@ export function guardianTool(name: GuardianToolName, description: string, planCa
       remote: z.string().optional(),
       remoteBranch: z.string().optional(),
       expectedRemoteHead: z.string().optional(),
+      landedBaseHead: z.string().optional(),
       allowNonAncestorRemoteDeletion: z.boolean().optional(),
       paths: z.array(z.string()).optional(),
       intentionalPaths: z.array(z.string()).optional(),

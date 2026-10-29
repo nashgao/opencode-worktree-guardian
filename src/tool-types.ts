@@ -210,6 +210,7 @@ export type PlanCacheToolArgs = MutableRecord & {
   remote?: unknown;
   remoteBranch?: unknown;
   expectedRemoteHead?: unknown;
+  landedBaseHead?: unknown;
   allowNonAncestorRemoteDeletion?: unknown;
   action?: unknown;
   confirm?: unknown;

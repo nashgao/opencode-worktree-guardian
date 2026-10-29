@@ -187,6 +187,10 @@ export function isRecordLike(value: unknown): value is RecordLike {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+export function hasPendingExternalGoalCompletion(session: GuardianSession): boolean {
+  return isRecordLike(session.external_goal_completion) && session.external_goal_completion.phase === "prepared";
+}
+
 export function isMutableRecord(value: unknown): value is MutableRecord {
   return isRecordLike(value);
 }

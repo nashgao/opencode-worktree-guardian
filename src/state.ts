@@ -9,7 +9,7 @@ import { DEFAULT_STATE_LOCK_TIMEOUT_MS, withStateLock } from "./state-lock.ts";
 import { ineligibleSessionProvenance, isProvenanceEnabled } from "./session-provenance.ts";
 import type { StateLockOptions } from "./state-lock.ts";
 import type { GuardianConfig, GuardianPaths, GuardianSession, GuardianState, GuardianStateRecord, RecordLike } from "./types.ts";
-import { errorCode, isRecordLike } from "./types.ts";
+import { errorCode, hasPendingExternalGoalCompletion, isRecordLike } from "./types.ts";
 
 export const STATE_SCHEMA_VERSION = "1.0.0";
 
@@ -111,7 +111,8 @@ type UpdateStateLockedInput = {
   readonly event?: RecordLike;
 };
 
-async function updateStateLocked(input: UpdateStateLockedInput): Promise<GuardianStateRecord> {
+// Internal writer: the caller must hold withStateTransaction for these paths.
+export async function updateStateLocked(input: UpdateStateLockedInput): Promise<GuardianStateRecord> {
   const { repoRoot, config, paths, updater } = input;
   const previous = await readState(paths, { repoRoot, config });
   const next = await updater(structuredClone(previous));
@@ -185,65 +186,77 @@ async function assertSameRepoBinding(repoRoot: string, previous: SessionBindingF
 }
 
 export async function recordSession(repoRoot: string, config: GuardianConfigInput, session: GuardianSession, options: { readonly paths?: GuardianPaths; readonly event?: RecordLike } = {}) {
-  return updateState(repoRoot, config, async (state) => {
-    if (!state.sessions) state.sessions = {};
-    const sessionId = session.session_id;
-    if (!sessionId) throw new Error("session.session_id is required");
-    const previous = isRecordLike(state.sessions[sessionId]) ? state.sessions[sessionId] : undefined;
-    const now = new Date().toISOString();
-    let supersededBinding = false;
-    if (session.status === "active" && typeof session.worktree_path === "string") {
-      for (const [candidateSessionId, candidate] of Object.entries(state.sessions)) {
-        if (candidateSessionId !== sessionId && isRecordLike(candidate) && candidate.status === "active" && typeof candidate.worktree_path === "string" && await samePathOnDisk(candidate.worktree_path, session.worktree_path)) {
-          supersededBinding = true;
-          const superseded = {
-            ...candidate,
-            status: "superseded",
-            superseded_by: sessionId,
-            superseded_at: now,
-            updated_at: now,
-            ...ineligibleSessionProvenance(config),
-          };
-          if (!isProvenanceEnabled(config)) {
-            delete superseded.provenance_status;
-            delete superseded.quarantine_eligible;
-          }
-          state.sessions[candidateSessionId] = superseded;
+  return updateState(repoRoot, config, (state) => applyRecordedSession(repoRoot, config, state, session), {
+    ...options, event: options.event ?? { type: "session_recorded", session_id: session.session_id },
+  });
+}
+
+export async function applyRecordedSession(repoRoot: string, config: GuardianConfigInput, state: GuardianStateRecord, session: GuardianSession): Promise<GuardianStateRecord> {
+  if (!state.sessions) state.sessions = {};
+  const sessionId = session.session_id;
+  if (!sessionId) throw new Error("session.session_id is required");
+  const previous = isRecordLike(state.sessions[sessionId]) ? state.sessions[sessionId] : undefined;
+  if (previous && isRecordLike(previous.external_goal_completion)) {
+    throw new Error("session has external Goal completion proof; reconcile it before recording a replacement binding");
+  }
+  const now = new Date().toISOString();
+  let supersededBinding = false;
+  if (session.status === "active" && typeof session.worktree_path === "string") {
+    for (const [candidateSessionId, candidate] of Object.entries(state.sessions)) {
+      if (candidateSessionId !== sessionId && hasPendingExternalGoalCompletion(candidate)
+        && (candidate.branch === session.branch || typeof candidate.worktree_path === "string" && await samePathOnDisk(candidate.worktree_path, session.worktree_path))) {
+        throw new Error("another session's prepared external Goal completion reserves this branch or path");
+      }
+      if (candidateSessionId !== sessionId && isRecordLike(candidate) && candidate.status === "active" && typeof candidate.worktree_path === "string" && await samePathOnDisk(candidate.worktree_path, session.worktree_path)) {
+        if (isRecordLike(candidate.external_goal_completion)) throw new Error("cannot supersede another session's external Goal completion proof");
+        supersededBinding = true;
+        const superseded = {
+          ...candidate,
+          status: "superseded",
+          superseded_by: sessionId,
+          superseded_at: now,
+          updated_at: now,
+          ...ineligibleSessionProvenance(config),
+        };
+        if (!isProvenanceEnabled(config)) {
+          delete superseded.provenance_status;
+          delete superseded.quarantine_eligible;
         }
+        state.sessions[candidateSessionId] = superseded;
       }
     }
-    const merged = clearTerminalLifecycleFields({
-      ...previous,
-      ...session,
-      state_version: (typeof previous?.state_version === "number" ? previous.state_version : 0) + 1,
-      safety_refs: session.safety_refs ?? previous?.safety_refs ?? [],
-      created_at: previous?.created_at ?? now,
-      updated_at: now,
-    });
-    const bindingChanged = previous?.status === "active"
-      && merged.status === "active"
-      && typeof previous.worktree_path === "string"
-      && typeof merged.worktree_path === "string"
-      && (!await samePathOnDisk(previous.worktree_path, merged.worktree_path) || previous.branch !== merged.branch);
-    if (supersededBinding || bindingChanged) {
-      delete merged.provenance;
-      delete merged.lineage_id;
-      if (isProvenanceEnabled(config)) {
-        merged.provenance_status = "ineligible";
-        merged.quarantine_eligible = false;
-      } else {
-        delete merged.provenance_status;
-        delete merged.quarantine_eligible;
-      }
-    } else if (!previous && merged.status !== "active" && isProvenanceEnabled(config)) {
+  }
+  const merged = clearTerminalLifecycleFields({
+    ...previous,
+    ...session,
+    state_version: (typeof previous?.state_version === "number" ? previous.state_version : 0) + 1,
+    safety_refs: session.safety_refs ?? previous?.safety_refs ?? [],
+    created_at: previous?.created_at ?? now,
+    updated_at: now,
+  });
+  const bindingChanged = previous?.status === "active"
+    && merged.status === "active"
+    && typeof previous.worktree_path === "string"
+    && typeof merged.worktree_path === "string"
+    && (!await samePathOnDisk(previous.worktree_path, merged.worktree_path) || previous.branch !== merged.branch);
+  if (supersededBinding || bindingChanged) {
+    delete merged.provenance;
+    delete merged.lineage_id;
+    if (isProvenanceEnabled(config)) {
       merged.provenance_status = "ineligible";
       merged.quarantine_eligible = false;
+    } else {
+      delete merged.provenance_status;
+      delete merged.quarantine_eligible;
     }
-    await assertActiveSessionBoundary(repoRoot, config, previous, merged);
-    await assertSameRepoBinding(repoRoot, previous, merged);
-    state.sessions[sessionId] = merged;
-    return state;
-  }, { ...options, event: options.event ?? { type: "session_recorded", session_id: session.session_id } });
+  } else if (!previous && merged.status !== "active" && isProvenanceEnabled(config)) {
+    merged.provenance_status = "ineligible";
+    merged.quarantine_eligible = false;
+  }
+  await assertActiveSessionBoundary(repoRoot, config, previous, merged);
+  await assertSameRepoBinding(repoRoot, previous, merged);
+  state.sessions[sessionId] = merged;
+  return state;
 }
 
 
