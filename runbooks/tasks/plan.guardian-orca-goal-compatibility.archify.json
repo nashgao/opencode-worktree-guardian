@@ -8,17 +8,7 @@
     "legend": {
       "mode": "hidden"
     },
-    "locale": "en",
-    "views": [
-      {
-        "id": "in-flight",
-        "label": "In flight",
-        "focus": [
-          "T-004"
-        ],
-        "note": "Currently active tasks."
-      }
-    ]
+    "locale": "en"
   },
   "lanes": [
     {
@@ -64,8 +54,8 @@
       "col": 2,
       "type": "backend",
       "label": "T-004 · Upgrade installe",
-      "sublabel": "● in progress — checkpoint",
-      "width": 232
+      "sublabel": "✓ complete — checkpoint",
+      "width": 216
     }
   ],
   "edges": [
@@ -88,21 +78,15 @@
       "title": "Status",
       "items": [
         "cancelled: 1",
-        "complete: 2",
-        "in_progress: 1"
+        "complete: 3"
       ]
     },
     {
       "dot": "cyan",
       "title": "Evidence",
       "items": [
-        "2 task(s) complete with acceptance evidence bound to the scope revision"
+        "3 task(s) complete with acceptance evidence bound to the scope revision"
       ]
     }
-  ],
-  "mainPath": [
-    "T-001",
-    "T-002",
-    "T-004"
   ]
 }
