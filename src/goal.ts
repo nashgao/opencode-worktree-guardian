@@ -14,6 +14,7 @@ import { guardianHygiene } from "./hygiene.ts";
 import type { GuardianToolInput, GuardianToolResult } from "./types.ts";
 import type { NormalizedGuardianGoalConfig } from "./normalized-config.ts";
 import { guardianFinishWorkflow } from "./workflow.ts";
+import { completeRemovedSessionGoal, REMOVED_SESSION_GOAL_ACTION } from "./goal-external-completion.ts";
 
 const DONE_GOAL_KEYS = ["commitDirty", "landToBase", "pushBase", "cleanupWorktrees", "cleanupBranches"] as const;
 const WRITE_GOAL_KEYS = ["commitDirty", "landToBase", "pushBase"] as const;
@@ -126,6 +127,10 @@ async function buildGoalPlan(input: GuardianToolInput, context: GoalContext): Pr
 }
 
 export async function guardianGoal(input: GuardianToolInput = {}): Promise<GuardianToolResult> {
+  if (input.action === REMOVED_SESSION_GOAL_ACTION) return completeRemovedSessionGoal(input);
+  if (input.action !== undefined || input.landedBaseHead !== undefined || input.expectedRemoteHead !== undefined || input.allowNonAncestorRemoteDeletion !== undefined) {
+    return { ok: false, complete: input.mode === "apply" ? false : null, status: "blocked", lane: "goal", reason: "removed-session proof arguments require action=complete-removed-session" };
+  }
   const requestedMode = input.mode ?? "plan";
   if (requestedMode !== "plan" && requestedMode !== "apply") return { ok: false, status: "blocked", lane: "goal", reason: "mode must be plan or apply", mode: requestedMode };
   const resolved = await resolveGoalContext(input);

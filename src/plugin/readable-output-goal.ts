@@ -103,17 +103,51 @@ function appendHygienePostcondition(lines: string[], value: unknown, complete: b
   }
 }
 
+function appendSessionCompletionProof(lines: string[], result: Record<string, unknown>, scope: Record<string, unknown>, steps: unknown[]): void {
+  const proofStep = recordValue(steps.find((entry) => recordValue(entry).tool === "guardian_goal"));
+  const proof = recordValue(proofStep.result);
+  const session = recordValue(proof.session);
+  const receipt = recordValue(result.completionProof);
+  const remoteStep = recordValue(steps.find((entry) => recordValue(entry).tool === "guardian_delete_remote_branch"));
+  const remoteResult = recordValue(remoteStep.result);
+  const remotePreflight = recordValue(remoteResult.preflight);
+  const targetAbsent = result.ok === true && recordValue(result.hygienePostcondition).targetAbsent === true;
+  const absence = (value: unknown) => value === true ? "true" : value === false ? "false" : "not-revalidated";
+  const phase = textValue(receipt.phase, "not-prepared");
+  const remoteObserved = proof.observedRemoteHead !== undefined ? proof.observedRemoteHead : remotePreflight.observedRemoteHead;
+  const sourceObservation = result.ok === true && result.complete === true
+    ? "absent (verified)"
+    : remoteObserved === null ? "absent (owned receipt reconciliation)" : textValue(remoteObserved, "not-revalidated");
+  lines.push(`[INFO] scoped deletion proof: session=${textValue(scope.sessionId)} | remote=${textValue(receipt.remote ?? remotePreflight.remote ?? remoteResult.remote)} | branch=${textValue(session.branch ?? receipt.branch ?? remotePreflight.remoteBranch ?? remoteResult.remoteBranch)}`);
+  lines.push(`[INFO] original worktree: ${textValue(session.worktree_path ?? receipt.worktree_path)}`);
+  lines.push(`[INFO] original baseline: ${textValue(session.started_head_commit ?? receipt.started_head_commit ?? recordValue(result.trackedBaseline).commit)}`);
+  lines.push(`[INFO] expected source OID: ${textValue(proof.expectedRemoteHead ?? receipt.expected_remote_head ?? remotePreflight.expectedRemoteHead)}`);
+  lines.push(`[INFO] landed base OID: ${textValue(proof.landedBaseHead ?? receipt.landed_base_head)}`);
+  lines.push(`[INFO] authoritative base: ${textValue(proof.baseRef ?? remotePreflight.baseRef ?? receipt.base_ref)} | observed OID=${textValue(proof.observedBaseHead ?? remotePreflight.baseRefOid ?? receipt.observed_base_head)}`);
+  lines.push(`[INFO] safety ref: ${textValue(proof.safetyRef ?? receipt.safety_ref ?? remotePreflight.safetyRef ?? remoteResult.safetyRef)} | create-only before exact-head leased source deletion`);
+  lines.push(`[INFO] absence checks: worktreeAbsent=${absence(proof.worktreeAbsent ?? (targetAbsent ? true : undefined))} | localBranchAbsent=${absence(proof.localBranchAbsent ?? (targetAbsent ? true : undefined))} | remote source=${sourceObservation}`);
+  lines.push(`[INFO] nonancestor deletion opt-in: ${absence(receipt.allow_nonancestor_remote_deletion ?? remotePreflight.allowNonAncestorRemoteDeletion)}`);
+  lines.push(`[INFO] completion receipt: version=${receipt.version === 1 ? "1" : "not-prepared"} | phase=${phase}`);
+  if (receipt.phase === "prepared") lines.push("[WARN] prepared recovery: retain this receipt and safety ref; re-plan/reconcile only the identical owned session and proof");
+  if (receipt.phase !== "prepared" && receipt.phase !== "complete") lines.push("[INFO] apply records prepared before remote mutation and complete only after revalidated owned postconditions");
+  lines.push("[WARN] limits: committed delivery and current owned-target absence only; historical dirty, ignored and untracked filesystem disposition is the external operator's attestation, not verified here. No primary publishing, hygiene, bulk GC or unrelated-session cleanup.");
+}
+
 export function formatGuardianGoalOutput(rawResult: unknown): string {
   const result = recordValue(rawResult);
   const goal = recordValue(result.goal);
+  const scope = recordValue(result.scope);
   const steps = arrayValue(result.steps);
   const blockers = arrayValue(result.blockers);
   const intentionalPaths = arrayValue(result.intentionalPaths);
   const lines = [
     `${statusPrefix(result)} guardian_goal ${textValue(result.status)}`,
-    `[INFO] desired: ${formatGoalFlags(goal)}`,
+    scope.kind === "session"
+      ? `[INFO] scope: session sessionId=${textValue(scope.sessionId)} | complete=${result.complete === null ? "pending" : String(result.complete === true)} | session completion only; not a project-cleanliness claim`
+      : `[INFO] desired: ${formatGoalFlags(goal)}`,
     `[INFO] steps: ${steps.length} | blockers: ${blockers.length}`,
   ];
+  if (scope.kind === "session") appendSessionCompletionProof(lines, result, scope, steps);
   const trackedBaseline = recordValue(result.trackedBaseline);
   if (typeof trackedBaseline.commit === "string") lines.push(`[INFO] tracked baseline: ${shortCommit(trackedBaseline.commit)} | source=${textValue(trackedBaseline.source)}`);
   appendBoundedList({ lines, heading: "[INFO] one-shot intentional paths", entries: intentionalPaths, limit: 12, format: (entry) => `  - ${sanitizeGoalResidualText(entry)}` });

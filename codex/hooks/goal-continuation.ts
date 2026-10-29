@@ -4,11 +4,14 @@ import os from "node:os";
 import path from "node:path";
 import { z } from "zod";
 
+const CheckpointScopeSchema = z.object({ kind: z.literal("session"), sessionId: z.string().min(1) });
+
 const CheckpointSchema = z.object({
   version: z.literal(1),
   sessionId: z.string(),
   repoId: z.string(),
   repoRoot: z.string(),
+  scope: CheckpointScopeSchema.optional(),
   status: z.string(),
   reason: z.string(),
   fingerprint: z.string(),
@@ -76,13 +79,33 @@ function needsHuman(result: Record<string, unknown>): boolean {
   return childResults(result).some((child) => child["code"] === "required-review" || child["status"] === "waiting");
 }
 
+function goalScope(args: Record<string, unknown>, result: Record<string, unknown>): Checkpoint["scope"] {
+  const requestedSessionId = typeof args["sessionId"] === "string" && args["sessionId"].trim() !== "" ? args["sessionId"] : undefined;
+  if (result["scope"] !== undefined) {
+    const parsed = CheckpointScopeSchema.safeParse(result["scope"]);
+    if (!parsed.success) throw new Error("Guardian Goal continuation result scope is invalid");
+    if (requestedSessionId !== undefined && requestedSessionId !== parsed.data.sessionId) throw new Error("Guardian Goal continuation session scope does not match the requested session");
+    return parsed.data;
+  }
+  if (requestedSessionId !== undefined) return { kind: "session", sessionId: requestedSessionId };
+  if (args["action"] === "complete-removed-session") throw new Error("Removed-session Guardian Goal continuation requires an exact session scope");
+  return undefined;
+}
+
 export async function checkpointGoalResult(repoRoot: string, repoId: string, sessionId: string | undefined, args: Record<string, unknown>, result: Record<string, unknown>): Promise<void> {
   if (!sessionId) return;
   const existing = await readCheckpoint(sessionId);
-  if (args["trackGoal"] === true && existing !== null && existing.repoId !== repoId) {
-    throw new Error(`Codex session already tracks an unfinished Guardian Goal for ${existing.repoRoot}; finish or explicitly resolve it before tracking ${repoRoot}`);
+  if (args["trackGoal"] !== true && existing === null) return;
+  const scope = goalScope(args, result);
+  const matching = existing !== null && existing.repoId === repoId && existing.scope?.sessionId === scope?.sessionId;
+  if (existing !== null && !matching) {
+    if (args["trackGoal"] === true) {
+      const existingScope = existing.scope ? `session ${existing.scope.sessionId}` : "repository scope";
+      const requestedScope = scope ? `session ${scope.sessionId}` : "repository scope";
+      throw new Error(`Codex session already tracks an unfinished Guardian Goal for ${existing.repoRoot} (${existingScope}); finish or explicitly resolve it before tracking ${repoRoot} (${requestedScope})`);
+    }
+    return;
   }
-  if (args["trackGoal"] !== true && (existing === null || existing.repoId !== repoId)) return;
   const target = checkpointPath(sessionId);
   if (result["complete"] === true) {
     await fs.unlink(target).catch((error: unknown) => { if (!isEnoent(error)) throw error; });
@@ -93,10 +116,11 @@ export async function checkpointGoalResult(repoRoot: string, repoId: string, ses
     sessionId,
     repoId,
     repoRoot,
+    scope,
     status: typeof result["status"] === "string" ? result["status"] : "unknown",
     reason: typeof result["reason"] === "string" ? result["reason"].slice(0, 300) : "",
     fingerprint: resultFingerprint(result),
-    seenFingerprints: existing?.repoId === repoId ? existing.seenFingerprints : [],
+    seenFingerprints: existing?.seenFingerprints ?? [],
     needsHuman: needsHuman(result),
   };
   await writeCheckpoint(sessionId, checkpoint);
@@ -106,12 +130,14 @@ export async function stopForPendingGoal(sessionId: string): Promise<string> {
   const checkpoint = await readCheckpoint(sessionId);
   if (!checkpoint || checkpoint.needsHuman || checkpoint.seenFingerprints.includes(checkpoint.fingerprint)) return "";
   await writeCheckpoint(sessionId, { ...checkpoint, seenFingerprints: [...checkpoint.seenFingerprints, checkpoint.fingerprint] });
-  return `${JSON.stringify({ decision: "block", reason: `Guardian Goal remains incomplete for ${checkpoint.repoRoot}. Re-plan from current evidence and continue authorized safe steps. Stop only for an exact human decision, external wait, or unchanged blocker; never bypass a Guardian gate.` })}\n`;
+  const scopeHint = checkpoint.scope ? ` Keep sessionId=${checkpoint.scope.sessionId} and the original action/proof; do not broaden this session Goal to primary or repo-wide completion.` : "";
+  return `${JSON.stringify({ decision: "block", reason: `Guardian Goal remains incomplete for ${checkpoint.repoRoot}.${scopeHint} Re-plan from current evidence and continue authorized safe steps. Stop only for an exact human decision, external wait, or unchanged blocker; never bypass a Guardian gate.` })}\n`;
 }
 
 export async function pendingGoalContext(sessionId: string): Promise<string> {
   const checkpoint = await readCheckpoint(sessionId);
   if (!checkpoint) return "";
   const detail = checkpoint.reason ? ` Last result: ${checkpoint.reason}` : "";
-  return `An explicitly tracked Guardian Goal for ${checkpoint.repoRoot} remains ${checkpoint.status}.${detail} Re-plan from current evidence before any apply; this checkpoint does not authorize deletion, admin bypass, or stale-token reuse.`;
+  const scopeHint = checkpoint.scope ? ` Keep sessionId=${checkpoint.scope.sessionId} and the original action/proof; do not broaden this session Goal to primary or repo-wide completion.` : "";
+  return `An explicitly tracked Guardian Goal for ${checkpoint.repoRoot} remains ${checkpoint.status}.${detail}${scopeHint} Re-plan from current evidence before any apply; this checkpoint does not authorize deletion, admin bypass, or stale-token reuse.`;
 }

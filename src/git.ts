@@ -11,6 +11,7 @@ export type GitRecoveryCandidates = { readonly reflog: readonly (GitCommitEntry 
 type CreateSafetyRefOptions = { readonly sessionId?: unknown; readonly branch?: unknown; readonly commit?: string; readonly timestamp?: unknown; readonly ref?: string };
 
 const refDisallowedCharacters = /[\u0000-\u0020\u007f~^:?*\[\\]/;
+const fullObjectId = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 
 class InvalidGitCommandInputError extends Error {
   constructor(kind: "remote" | "ref") {
@@ -249,6 +250,40 @@ export async function fetchRemote(repoRoot: string, remote: string) {
 export async function fetchRemotePrune(repoRoot: string, remote: string) {
   await validateConfiguredRemote(repoRoot, remote);
   await runGit(repoRoot, ["fetch", "--prune", remote]);
+}
+
+export async function observeRemoteBranchHeads(repoRoot: string, remote: string, branches: readonly string[]): Promise<ReadonlyMap<string, string>> {
+  await validateConfiguredRemote(repoRoot, remote);
+  const refs = new Map<string, string>();
+  for (const branch of branches) {
+    validateGitRef(branch);
+    refs.set(`refs/heads/${branch}`, branch);
+  }
+  const result = await runGit(repoRoot, ["ls-remote", "--refs", remote, ...refs.keys()]);
+  const heads = new Map<string, string>();
+  for (const line of result.stdout.split("\n")) {
+    if (line === "") continue;
+    const [oid, ref] = line.split(/\s+/);
+    const branch = ref === undefined ? undefined : refs.get(ref);
+    if (branch === undefined) continue;
+    if (oid === undefined || !fullObjectId.test(oid)) throw new Error("remote returned an invalid exact branch OID");
+    if (heads.has(branch) && heads.get(branch) !== oid) throw new Error("remote returned conflicting branch OIDs");
+    heads.set(branch, oid);
+  }
+  return heads;
+}
+
+export async function fetchMissingRemoteCommits(repoRoot: string, remote: string, commits: readonly string[]): Promise<void> {
+  const missing: string[] = [];
+  for (const commit of commits) {
+    if (!fullObjectId.test(commit)) throw new Error("remote commit must be an exact OID");
+    const object = await tryGit(repoRoot, ["cat-file", "-t", commit]);
+    if (object.ok && object.stdout !== "commit") throw new Error("remote proof object is not a commit");
+    if (!object.ok && !missing.includes(commit)) missing.push(commit);
+  }
+  if (missing.length === 0) return;
+  await validateConfiguredRemote(repoRoot, remote);
+  await runGit(repoRoot, ["fetch", "--no-tags", remote, ...missing]);
 }
 
 export async function removeWorktree(repoRoot: string, worktreePath: string) {

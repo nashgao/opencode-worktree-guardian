@@ -6,7 +6,7 @@ import { getCommonGitDir, getRepoRoot, listWorktrees } from "./git.ts";
 import { isTerminalSession } from "./lifecycle.ts";
 import { getGuardianPaths, readState, updateState } from "./state.ts";
 import type { GuardianConfig, GuardianSession, GuardianToolInput, GuardianToolResult, RecordLike, WorktreeEntry } from "./types.ts";
-import { isRecordLike } from "./types.ts";
+import { hasPendingExternalGoalCompletion, isRecordLike } from "./types.ts";
 
 export type GcReason = "terminal-stale" | "poisoned-primary" | "poisoned-protected" | "orphaned" | "foreign-repo";
 
@@ -68,6 +68,7 @@ async function collectGcCandidates(
   const candidates: GcCandidate[] = [];
   for (const [sessionId, raw] of Object.entries(sessions)) {
     if (!isRecordLike(raw)) continue;
+    if (hasPendingExternalGoalCompletion(raw)) continue;
     const status = typeof raw.status === "string" ? raw.status : "";
     const branch = typeof raw.branch === "string" ? raw.branch : null;
     const worktreePath = typeof raw.worktree_path === "string" ? raw.worktree_path : null;
@@ -157,13 +158,25 @@ export async function guardianGc(input: GuardianToolInput = {}): Promise<Guardia
   const ids = new Set(prunedSessionIds);
   // Record-only: prune the dead state records. Git refs, branches, and worktrees are untouched,
   // so nothing reachable becomes unreachable; recovery refs/reflog remain available.
-  const nextState = await updateState(repoRoot, config, (current) => {
-    if (!current.sessions) current.sessions = {};
-    for (const id of ids) {
-      if (id in current.sessions) delete current.sessions[id];
-    }
-    return current;
-  }, { event: { type: "guardian_gc", pruned: prunedSessionIds, count: ids.size } });
+  const changed = new Error("GC candidate set changed while acquiring its deletion lock");
+  let changedReport: RecordLike = report;
+  let nextState;
+  try {
+    nextState = await updateState(repoRoot, config, async (current) => {
+      const fresh = await collectGcCandidates(repoRoot, config, current.sessions, await listWorktrees(repoRoot));
+      if (gcConfirmToken(repoRoot, fresh) !== input.confirmToken) {
+        changedReport = { ...report, candidateCount: fresh.length, summary: summarizeReasons(fresh), candidates: fresh };
+        throw changed;
+      }
+      for (const id of ids) {
+        if (id in current.sessions) delete current.sessions[id];
+      }
+      return current;
+    }, { event: { type: "guardian_gc", pruned: prunedSessionIds, count: ids.size } });
+  } catch (error) {
+    if (error === changed) return { ok: false, status: "blocked", reason: changed.message, prunedCount: 0, ...changedReport };
+    throw error;
+  }
 
   return { ok: true, status: "pruned", prunedCount: ids.size, prunedSessionIds, stateVersion: nextState.state_version, confirmToken, ...report };
 }
