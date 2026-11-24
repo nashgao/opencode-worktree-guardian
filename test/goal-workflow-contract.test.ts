@@ -85,7 +85,7 @@ test("guardian_goal completes while retaining an explicitly allowed remote branc
   const { context } = createToolContext();
   context.directory = repo;
   context.worktree = repo;
-  const request = { repoRoot: repo, cwd: repo, allowedRemoteBranches: [retainedBranch] };
+  const request = { repoRoot: repo, cwd: repo, all: true, allowedRemoteBranches: [retainedBranch] };
   const plan = await runTool(hooks.tool.guardian_goal.execute, { ...request, mode: "plan" }, context);
   const applied = await runTool(hooks.tool.guardian_goal.execute, { ...request, mode: "apply", confirm: true, confirmToken: "" }, context);
   assert.equal(plan.metadata.status, "planned", JSON.stringify(plan.metadata));
@@ -105,7 +105,7 @@ test("guardian_goal retains an explicitly allowed merged remote branch", async (
   const { context } = createToolContext();
   context.directory = repo;
   context.worktree = repo;
-  const request = { repoRoot: repo, cwd: repo, allowedRemoteBranches: [retainedBranch] };
+  const request = { repoRoot: repo, cwd: repo, all: true, allowedRemoteBranches: [retainedBranch] };
   const plan = await runTool(hooks.tool.guardian_goal.execute, { ...request, mode: "plan" }, context);
   const applied = await runTool(hooks.tool.guardian_goal.execute, { ...request, mode: "apply", confirm: true, confirmToken: "" }, context);
   assert.equal(plan.metadata.status, "planned", JSON.stringify(plan.metadata));

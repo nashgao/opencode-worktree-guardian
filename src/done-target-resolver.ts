@@ -5,9 +5,7 @@ export type DoneTargetDecision =
   | { readonly kind: "session-finish"; readonly sessionId: string; readonly session: GuardianSession; readonly worktreePath: string; readonly branch: string | null; readonly selectedTarget?: DoneDirtyTarget }
   | { readonly kind: "primary-main-publish"; readonly explicit: boolean; readonly selectedTarget?: DoneDirtyTarget }
   | { readonly kind: "done-all" }
-  | { readonly kind: "cleanup-only" }
   | { readonly kind: "reattach" }
-  | { readonly kind: "primary-rescue-recommended" }
   | { readonly kind: "needs-selection"; readonly ok: false; readonly status: "needs-selection"; readonly lane: "select-target"; readonly reason: string; readonly candidates: readonly DoneDirtyTarget[]; readonly suggestedCommands: readonly string[] }
   | { readonly kind: "blocked"; readonly ok: false; readonly status: "blocked"; readonly lane: string; readonly reason: string; readonly branch?: string; readonly sessionId?: string; readonly availableSessions?: readonly DoneSessionInventory[]; readonly suggestedCommands?: readonly string[] };
 
@@ -76,7 +74,7 @@ export function resolveDoneTarget(options: ResolveDoneTargetOptions): DoneTarget
   if (sessionId) {
     const session = inventory.sessions.find((candidate) => candidate.sessionId === sessionId);
     if (session) return sessionDecision(session, sessionTarget(inventory, session.sessionId));
-    if (inventory.currentWorktree !== inventory.repoRoot) return { kind: "reattach" };
+    if (inventory.currentWorktree !== inventory.repoRoot && !inventory.currentSessionId) return { kind: "reattach" };
     return {
       kind: "blocked",
       ok: false,
@@ -94,27 +92,16 @@ export function resolveDoneTarget(options: ResolveDoneTargetOptions): DoneTarget
     if (currentSession) return sessionDecision(currentSession, sessionTarget(inventory, currentSession.sessionId));
   }
 
-  if (inventory.dirtyTargets.length === 1) {
-    const [target] = inventory.dirtyTargets;
-    if (target.targetKind === "primary") return { kind: "primary-main-publish", explicit: false, selectedTarget: target };
-    const session = inventory.sessions.find((candidate) => candidate.sessionId === target.sessionId);
-    if (session) return sessionDecision(session, target);
-  }
-
-  if (inventory.dirtyTargets.length > 1) {
-    return {
-      kind: "needs-selection",
-      ok: false,
-      status: "needs-selection",
-      lane: "select-target",
-      reason: "multiple dirty implementation targets require an explicit guardian_done target",
-      candidates: inventory.dirtyTargets,
-      suggestedCommands: inventory.dirtyTargets.map((target) => target.suggestedCommand),
-    };
-  }
-
-  if (inventory.sessions.length > 0) return { kind: "done-all" };
   if (inventory.currentWorktree !== inventory.repoRoot) return { kind: "reattach" };
-  if (inventory.currentBranch && inventory.protectedBranches.includes(inventory.currentBranch) && inventory.currentBranch !== inventory.baseBranch) return { kind: "primary-rescue-recommended" };
-  return { kind: "cleanup-only" };
+  return {
+    kind: "needs-selection",
+    ok: false,
+    status: "needs-selection",
+    lane: "select-target",
+    reason: "no verified current Guardian session; select an exact sessionId or branch, or explicitly request primary=true or all=true",
+    candidates: inventory.dirtyTargets,
+    suggestedCommands: inventory.dirtyTargets.length > 0
+      ? inventory.dirtyTargets.map((target) => target.suggestedCommand)
+      : featureSessionCommands(inventory.sessions),
+  };
 }

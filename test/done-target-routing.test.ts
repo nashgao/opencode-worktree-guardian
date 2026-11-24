@@ -91,7 +91,6 @@ test("guardian_done bare dirty primary plus dirty session needs explicit target 
   assert.equal(result.ok, false);
   assert.equal(result.status, "needs-selection");
   assert.equal(result.lane, "select-target");
-  assert.match(String(result.reason), /multiple dirty implementation targets/);
   assert.deepEqual(result.candidates?.map((candidate) => candidate.targetKind).sort(), ["primary", "session"]);
   assert.ok(result.suggestedCommands?.includes("guardian_done primary=true commitMessage=..."));
   assert.ok(result.suggestedCommands?.includes(`guardian_done branch=${started.session.branch} commitMessage=...`));
@@ -212,7 +211,7 @@ test("primary publish preflight ignores a local origin/main shadow", async (t) =
   await shadowOriginMain(repo, localHead);
   await fs.writeFile(path.join(repo, "primary-dirty.txt"), "dirty\n");
 
-  const result = await guardianDone({ repoRoot: repo, cwd: repo, mode: "plan", commitMessage: "feat: authority publish", config: DEFAULT_CONFIG });
+  const result = await guardianDone({ repoRoot: repo, cwd: repo, primary: true, mode: "plan", commitMessage: "feat: authority publish", config: DEFAULT_CONFIG });
 
   assert.equal(result.ok, false, JSON.stringify(result));
   assert.match(String(result.reason), /not synced/);
@@ -224,7 +223,7 @@ test("guardian_done blocks overlapping trusted remote namespaces before primary 
   await fs.writeFile(path.join(repo, "primary-overlap.txt"), "dirty\n");
   const marker = path.join(base, "primary-overlap-fetch-ran");
   const config = { ...DEFAULT_CONFIG, trustedUpstreamRemotes: ["origin/main"] };
-  const result = await withFetchMarker(marker, () => guardianDone({ repoRoot: repo, cwd: repo, mode: "plan", commitMessage: "feat: overlap", config }));
+  const result = await withFetchMarker(marker, () => guardianDone({ repoRoot: repo, cwd: repo, primary: true, mode: "plan", commitMessage: "feat: overlap", config }));
   assert.equal(result.ok, false);
   assert.match(String(result.error), /remote namespaces overlap/);
   await assert.rejects(fs.access(marker));

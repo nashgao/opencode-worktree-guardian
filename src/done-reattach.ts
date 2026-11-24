@@ -1,6 +1,6 @@
 import { guardianFinish } from "./finish.ts";
 import { getHeadCommit } from "./git.ts";
-import { recordSession } from "./state.ts";
+import { applyRecordedSession, updateState } from "./state.ts";
 import { ineligibleSessionProvenance } from "./session-provenance.ts";
 import type { GuardianConfig, MutableRecord } from "./types.ts";
 import { blocked } from "./done-shared.ts";
@@ -34,16 +34,23 @@ export async function reattachCurrentGuardianWorktree(repoRoot: string, currentW
       nextAction: "guardian_done mode=apply confirm=true",
     });
   }
-  await recordSession(repoRoot, config, {
-    session_id: sessionId,
-    status: "active",
-    branch: currentBranch,
-    worktree_path: currentWorktree,
-    base_ref: `${String(config.remote)}/${String(config.baseBranch)}`,
-    head_commit: headCommit,
-    safety_refs: [],
-    ...ineligibleSessionProvenance(config),
-  }, { event: { type: "guardian_done_reattach", session_id: sessionId } });
+  try {
+    await updateState(repoRoot, config, (state) => applyRecordedSession(repoRoot, config, state, {
+      session_id: sessionId,
+      status: "active",
+      branch: currentBranch,
+      worktree_path: currentWorktree,
+      base_ref: `${String(config.remote)}/${String(config.baseBranch)}`,
+      head_commit: headCommit,
+      safety_refs: [],
+      ...ineligibleSessionProvenance(config),
+    }, false), { event: { type: "guardian_done_reattach", session_id: sessionId } });
+  } catch (error) {
+    if (error instanceof Error && "stateErrorKind" in error && error.stateErrorKind === "illegal_active_binding") {
+      return blocked(error.message, { lane: "reattach-binding-refused", sessionId, currentWorktree });
+    }
+    throw error;
+  }
   const result = await guardianFinish({ ...input, mode, repoRoot, cwd: currentWorktree, sessionId, config });
   return { ...result, lane: "session-finish", reattached: true };
 }

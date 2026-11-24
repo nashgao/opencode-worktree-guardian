@@ -74,10 +74,10 @@ test("guardian_done apply cleans already-landed redundant dirty sessions without
   const fixture = await makeAlreadyLandedDirtySession({ sessionId: "ses_done_apply_redundant_dirty", finalWorktreeContent: "advanced base content\n" });
   t.after(() => fs.rm(fixture.base, { recursive: true, force: true }));
   await createAdvisoryStash(fixture.repo, "already-landed-redundant-stash");
-  const plan = await guardianDone({ repoRoot: fixture.repo, cwd: fixture.repo, mode: "plan", timestamp: "20260609T080808", config: DEFAULT_CONFIG });
+  const plan = await guardianDone({ repoRoot: fixture.repo, cwd: fixture.repo, branch: fixture.branch, mode: "plan", timestamp: "20260609T080808", config: DEFAULT_CONFIG });
   const planRecord = requireRecord(plan, "plan");
 
-  const apply = await guardianDone({ repoRoot: fixture.repo, cwd: fixture.repo, mode: "apply", confirm: true, confirmToken: requireString(planRecord.confirmToken, "plan.confirmToken"), timestamp: "20260609T080808", config: DEFAULT_CONFIG });
+  const apply = await guardianDone({ repoRoot: fixture.repo, cwd: fixture.repo, branch: fixture.branch, mode: "apply", confirm: true, confirmToken: requireString(planRecord.confirmToken, "plan.confirmToken"), timestamp: "20260609T080808", config: DEFAULT_CONFIG });
   const applyRecord = requireRecord(apply, "apply");
 
   assert.equal(planRecord.action, "already-landed-clean");
@@ -110,7 +110,7 @@ test("guardian_done plans redundant dirty cleanup when ignored-file consent is e
   const fixture = await makeAlreadyLandedDirtySession({ sessionId: "ses_done_redundant_ignored", finalWorktreeContent: "advanced base content\n" }); t.after(() => fs.rm(fixture.base, { recursive: true, force: true }));
   const excludesFile = path.join(fixture.base, "ignored-files"); await fs.writeFile(excludesFile, ".claude/\n", "utf8"); await git(fixture.worktree, ["config", "core.excludesfile", excludesFile]);
   await fs.mkdir(path.join(fixture.worktree, ".claude"), { recursive: true }); await fs.writeFile(path.join(fixture.worktree, ".claude", "session.log"), "ignored\n", "utf8");
-  const plan = requireRecord(await guardianDone({ repoRoot: fixture.repo, cwd: fixture.repo, mode: "plan", allowIgnoredFiles: true, timestamp: "20260609T081818", config: DEFAULT_CONFIG }), "plan");
+  const plan = requireRecord(await guardianDone({ repoRoot: fixture.repo, cwd: fixture.repo, branch: fixture.branch, mode: "plan", allowIgnoredFiles: true, timestamp: "20260609T081818", config: DEFAULT_CONFIG }), "plan");
   assert.equal(plan.ok, true, JSON.stringify(plan)); assert.equal(plan.status, "planned"); assert.equal(plan.action, "already-landed-clean"); assert.equal(typeof plan.confirmToken, "string");
   assert.equal(await pathExists(fixture.worktree), true); assert.equal(await branchExists(fixture.repo, fixture.branch), true);
 });
@@ -120,7 +120,7 @@ test("guardian_done preserves already-landed sessions with non-redundant dirty w
   t.after(() => fs.rm(fixture.base, { recursive: true, force: true }));
   await createAdvisoryStash(fixture.repo, "non-redundant-dirty-stash");
 
-  const result = await guardianDone({ repoRoot: fixture.repo, cwd: fixture.repo, mode: "plan", timestamp: "20260609T090909", config: DEFAULT_CONFIG });
+  const result = await guardianDone({ repoRoot: fixture.repo, cwd: fixture.repo, branch: fixture.branch, mode: "plan", timestamp: "20260609T090909", config: DEFAULT_CONFIG });
   const resultRecord = requireRecord(result, "result");
 
   assert.equal(resultRecord.ok, false);
@@ -141,7 +141,7 @@ test("guardian_done rejects already-landed cleanup without confirmation before p
   t.after(() => fs.rm(fixture.base, { recursive: true, force: true }));
   await createAdvisoryStash(fixture.repo, "already-landed-no-confirm-stash");
 
-  const result = requireRecord(await guardianDone({ repoRoot: fixture.repo, cwd: fixture.repo, mode: "apply", timestamp: "20260609T091010", config: DEFAULT_CONFIG }), "result");
+  const result = requireRecord(await guardianDone({ repoRoot: fixture.repo, cwd: fixture.repo, branch: fixture.branch, mode: "apply", timestamp: "20260609T091010", config: DEFAULT_CONFIG }), "result");
 
   assert.equal(result.ok, false);
   assert.equal(result.status, "blocked");
@@ -220,7 +220,7 @@ test("guardian_done proves redundant dirty work against current remote base, not
     base_ref: "stale-base-ref-proof-base",
   });
 
-  const result = await guardianDone({ repoRoot: repo, cwd: repo, mode: "plan", timestamp: "20260609T100101", config: DEFAULT_CONFIG });
+  const result = await guardianDone({ repoRoot: repo, cwd: repo, sessionId, mode: "plan", timestamp: "20260609T100101", config: DEFAULT_CONFIG });
   const resultRecord = requireRecord(result, "result");
 
   assert.equal(resultRecord.ok, false);

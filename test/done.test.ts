@@ -8,10 +8,10 @@ import { createSafetyRef } from "../src/git.ts";
 import { guardianStart } from "../src/tools.ts";
 import { isRecordLike } from "../src/types.ts";
 import { createRepoWithOrigin, git } from "./helpers.ts";
+import { guardianFinishWorkflow, workflowResult } from "./workflow-test-support.ts";
 
 type LooseRecord = Record<string, unknown>;
 type DoneResult = LooseRecord & {
-  readonly candidates: readonly { readonly branch?: string; readonly plan?: LooseRecord }[];
   readonly cleanup?: unknown;
   readonly cleanupPlan: { readonly status?: unknown; readonly candidates: readonly { readonly branch?: string }[] };
   readonly cleanupSweep: { readonly ok?: boolean; readonly status?: unknown; readonly candidateCount?: number; readonly cleanedCount?: number; readonly apply?: { readonly results?: readonly { readonly branch?: string; readonly worktreeRemoved?: boolean; readonly branchDeleted?: boolean }[] } };
@@ -19,11 +19,9 @@ type DoneResult = LooseRecord & {
   readonly confirmToken: string;
   readonly dirtyFiles?: readonly string[];
   readonly dirtySnapshot: { readonly paths: readonly string[] };
-  readonly finalPostflight?: LooseRecord;
   readonly nextAction: string;
   readonly preflight: Record<string, unknown>;
   readonly reason: string;
-  readonly results: readonly LooseRecord[];
   readonly safetyRef: string;
 };
 
@@ -67,15 +65,23 @@ async function makeMergedCleanupCandidate(repo: string) {
   return { branch, worktreePath };
 }
 
-test("guardian_done plans cleanup-only on clean primary main", async (t) => {
+test("unbound guardian_done leaves merged cleanup candidates for explicit guardian_finish_workflow", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
   const candidate = await makeMergedCleanupCandidate(repo);
 
-  const result = asDone(await guardianDone({ repoRoot: repo, cwd: repo, mode: "plan" }));
+  for (const options of [{ mode: "plan" }, { mode: "apply", confirm: true }]) {
+    const unbound = await guardianDone({ repoRoot: repo, cwd: repo, ...options });
+    assert.equal(unbound.status, "needs-selection");
+    assert.equal(unbound.confirmToken, undefined);
+    assert.equal(await pathExists(candidate.worktreePath), true);
+    assert.equal(await branchExists(repo, candidate.branch), true);
+    assert.deepEqual(await guardianRefNames(repo), []);
+  }
+
+  const result = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "plan" }));
 
   assert.equal(result.ok, true);
-  assert.equal(result.lane, "cleanup-only");
   assert.equal(result.status, "planned");
   assert.equal(result.candidates.length, 1);
   assert.equal(result.candidates[0].branch, candidate.branch);
@@ -83,7 +89,7 @@ test("guardian_done plans cleanup-only on clean primary main", async (t) => {
   assert.equal(await pathExists(candidate.worktreePath), true);
 });
 
-test("guardian_done cleanup-only blocks redundant dirty cleanup candidates", async (t) => {
+test("guardian_finish_workflow blocks redundant dirty cleanup candidates", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
   const candidate = await makeMergedCleanupCandidate(repo);
@@ -93,15 +99,15 @@ test("guardian_done cleanup-only blocks redundant dirty cleanup candidates", asy
   await git(repo, ["push", "origin", "main"]);
   await fs.writeFile(path.join(candidate.worktreePath, "done-cleanup.txt"), "advanced base cleanup\n");
 
-  const result = asDone(await guardianDone({ repoRoot: repo, cwd: repo, mode: "plan" }));
+  const result = workflowResult(await guardianFinishWorkflow({ repoRoot: repo, cwd: repo, mode: "plan" }));
 
   assert.equal(result.ok, false);
   assert.equal(result.status, "blocked");
-  assert.match(result.reason, /cleanup blockers/);
+  assert.match(String(result.reason), /cleanup blockers/);
   assert.equal(await pathExists(candidate.worktreePath), true);
 });
 
-test("guardian_done cleanup-only abandons stale unmerged Guardian branches with safety proof", async (t) => {
+test("guardian_finish_workflow abandons stale unmerged Guardian branches with explicit consent and safety proof", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
   const branch = "guardian/done-stale-abandon";
@@ -114,10 +120,10 @@ test("guardian_done cleanup-only abandons stale unmerged Guardian branches with 
   await createSafetyRef(repo, { sessionId: "manual-smoke", branch, commit: head, timestamp: "20260629T010101" });
   const aliasRepo = macVarAlias(repo);
 
-  const plan = asDone(await guardianDone({ repoRoot: aliasRepo, cwd: aliasRepo, mode: "plan", timestamp: "20260629T010101" }));
+  const request = { repoRoot: aliasRepo, cwd: aliasRepo, abandonUnmerged: true, timestamp: "20260629T010101" };
+  const plan = workflowResult(await guardianFinishWorkflow({ ...request, mode: "plan" }));
 
   assert.equal(plan.ok, true, JSON.stringify(plan));
-  assert.equal(plan.lane, "cleanup-only");
   assert.equal(plan.status, "planned");
   assert.equal(plan.candidates.length, 1);
   assert.equal(plan.candidates[0].branch, branch);
@@ -126,18 +132,16 @@ test("guardian_done cleanup-only abandons stale unmerged Guardian branches with 
   assert.equal(planPreflight.abandonUnmerged, true);
   assert.equal(await branchExists(repo, branch), true);
 
-  const apply = asDone(await guardianDone({ repoRoot: aliasRepo, cwd: aliasRepo, mode: "apply", confirm: true, confirmToken: plan.confirmToken, timestamp: "20260629T010101" }));
+  const apply = workflowResult(await guardianFinishWorkflow({ ...request, mode: "apply", confirm: true, confirmToken: plan.confirmToken }));
 
   assert.equal(apply.ok, true, JSON.stringify(apply));
   assert.equal(apply.status, "cleaned");
-  assert.equal(apply.lane, "cleanup-only");
   assert.equal(apply.results.length, 1);
   assert.equal(apply.results[0].status, "abandoned");
   assert.equal(apply.results[0].branchDeleted, true);
   assert.equal(apply.results[0].abandonUnmerged, true);
   assert.equal(await branchExists(repo, branch), false);
-  const finalPostflight = apply.finalPostflight as LooseRecord;
-  assert.equal(finalPostflight.ok, true);
+  assert.equal(apply.finalPostflight?.ok, true);
 });
 
 test("guardian_done plans dirty primary-main publish with token-bound dirty files", async (t) => {
@@ -145,7 +149,7 @@ test("guardian_done plans dirty primary-main publish with token-bound dirty file
   t.after(() => fs.rm(base, { recursive: true, force: true }));
   await fs.writeFile(path.join(repo, "done-feature.txt"), "feature\n");
 
-  const plan = asDone(await guardianDone({ repoRoot: repo, cwd: repo, mode: "plan", commitMessage: "feat: done feature" }));
+  const plan = asDone(await guardianDone({ repoRoot: repo, cwd: repo, primary: true, mode: "plan", commitMessage: "feat: done feature" }));
 
   assert.equal(plan.ok, true);
   assert.equal(plan.status, "planned");
@@ -162,7 +166,7 @@ test("guardian_done blocks dirty primary-main publish without commit message", a
   t.after(() => fs.rm(base, { recursive: true, force: true }));
   await fs.writeFile(path.join(repo, "done-feature.txt"), "feature\n");
 
-  const result = asDone(await guardianDone({ repoRoot: repo, cwd: repo, mode: "plan" }));
+  const result = asDone(await guardianDone({ repoRoot: repo, cwd: repo, primary: true, mode: "plan" }));
 
   assert.equal(result.ok, false);
   assert.equal(result.status, "blocked");
@@ -175,10 +179,10 @@ test("guardian_done blocks stale dirty-primary tokens after file content changes
   t.after(() => fs.rm(base, { recursive: true, force: true }));
   const featurePath = path.join(repo, "done-feature.txt");
   await fs.writeFile(featurePath, "feature\n");
-  const plan = asDone(await guardianDone({ repoRoot: repo, cwd: repo, mode: "plan", commitMessage: "feat: done feature" }));
+  const plan = asDone(await guardianDone({ repoRoot: repo, cwd: repo, primary: true, mode: "plan", commitMessage: "feat: done feature" }));
   await fs.writeFile(featurePath, "changed\n");
 
-  const apply = asDone(await guardianDone({ repoRoot: repo, cwd: repo, mode: "apply", commitMessage: "feat: done feature", confirmToken: plan.confirmToken }));
+  const apply = asDone(await guardianDone({ repoRoot: repo, cwd: repo, primary: true, mode: "apply", commitMessage: "feat: done feature", confirmToken: plan.confirmToken }));
 
   assert.equal(apply.ok, false);
   assert.equal(apply.status, "blocked");
@@ -192,9 +196,9 @@ test("guardian_done applies dirty primary-main publish, cleans a local candidate
   const candidate = await makeMergedCleanupCandidate(repo);
   await git(repo, ["push", "origin", candidate.branch]);
   await fs.writeFile(path.join(repo, "done-publish.txt"), "publish\n");
-  const plan = asDone(await guardianDone({ repoRoot: repo, cwd: repo, mode: "plan", commitMessage: "feat: done publish", allowedRemoteBranches: [candidate.branch] }));
+  const plan = asDone(await guardianDone({ repoRoot: repo, cwd: repo, primary: true, mode: "plan", commitMessage: "feat: done publish", allowedRemoteBranches: [candidate.branch] }));
 
-  const apply = asDone(await guardianDone({ repoRoot: repo, cwd: repo, mode: "apply", confirm: true, commitMessage: "feat: done publish", confirmToken: plan.confirmToken, timestamp: "20260609T010101", allowedRemoteBranches: [candidate.branch] }));
+  const apply = asDone(await guardianDone({ repoRoot: repo, cwd: repo, primary: true, mode: "apply", confirm: true, commitMessage: "feat: done publish", confirmToken: plan.confirmToken, timestamp: "20260609T010101", allowedRemoteBranches: [candidate.branch] }));
 
   assert.equal(apply.ok, true);
   assert.equal(apply.status, "published");
@@ -225,9 +229,9 @@ test("guardian_done publishes dirty primary-main deletions", async (t) => {
   await git(repo, ["push", "origin", "main"]);
   await fs.rm(deletedPath);
   await git(repo, ["add", "delete-me.txt"]);
-  const plan = asDone(await guardianDone({ repoRoot: repo, cwd: repo, mode: "plan", commitMessage: "chore: remove obsolete file" }));
+  const plan = asDone(await guardianDone({ repoRoot: repo, cwd: repo, primary: true, mode: "plan", commitMessage: "chore: remove obsolete file" }));
 
-  const apply = asDone(await guardianDone({ repoRoot: repo, cwd: repo, mode: "apply", confirm: true, commitMessage: "chore: remove obsolete file", confirmToken: plan.confirmToken, timestamp: "20260609T040404" }));
+  const apply = asDone(await guardianDone({ repoRoot: repo, cwd: repo, primary: true, mode: "apply", confirm: true, commitMessage: "chore: remove obsolete file", confirmToken: plan.confirmToken, timestamp: "20260609T040404" }));
 
   assert.equal(apply.ok, true);
   assert.equal(apply.status, "published");
@@ -256,7 +260,7 @@ test("guardian_done plans already-landed redundant dirty session cleanup without
   await git(repo, ["push", "origin", "main"]);
   await fs.writeFile(path.join(worktree, featureFile), "advanced base content\n");
 
-  const result = asDone(await guardianDone({ repoRoot: repo, cwd: repo, mode: "plan", timestamp: "20260609T070707", config: DEFAULT_CONFIG }));
+  const result = asDone(await guardianDone({ repoRoot: repo, cwd: repo, branch, mode: "plan", timestamp: "20260609T070707", config: DEFAULT_CONFIG }));
 
   assert.equal(result.ok, true, JSON.stringify(result));
   assert.equal(result.lane, "session-finish");

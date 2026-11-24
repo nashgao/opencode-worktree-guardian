@@ -1,13 +1,15 @@
 ---
 description: Drive the repo toward the configured Guardian desired end state
-argument-hint: [mode=plan|apply] [commitMessage=...] [intentionalPaths=[...]] [confirm=true] [allowedRemoteBranches=[...]] [action=complete-removed-session sessionId=... expectedRemoteHead=... landedBaseHead=...] [allowNonAncestorRemoteDeletion=true]
+argument-hint: [mode=plan|apply] [sessionId=...|branch=...|primary=true|all=true] [commitMessage=...] [intentionalPaths=[...]] [confirm=true] [allowedRemoteBranches=[...]] [action=complete-removed-session sessionId=... expectedRemoteHead=... landedBaseHead=...] [allowNonAncestorRemoteDeletion=true]
 ---
 
-Use the `guardian_goal` native tool for the configured repo goal workflow. Run `mode=plan` first and inspect the desired goal flags, child steps, blockers, dirty target, `complete`, and `hygienePostcondition`. Do not stop at the plan when the user invoked this goal workflow: an actionable strict plan can be `planned-partial`, with `complete: null`. Continue with `mode=apply`, `confirm: true`, and the same options. The plugin reuses a fresh matching internal plan token, so the user should not have to copy a token in normal command use.
+Use the `guardian_goal` native tool for the configured repo goal workflow. Run `mode=plan` first and inspect the desired goal flags, the selected target, child steps, blockers, `complete`, and `hygienePostcondition`. If the requested plan is actionable, continue with `mode=apply`, `confirm: true`, and the same options; an actionable strict plan can be `planned-partial`, with `complete: null`. The plugin reuses a fresh matching internal plan token, so the user should not have to copy a token in normal command use.
+
+A Goal that delegates delivery to `guardian_done` targets the verified current session or the exact recorded `sessionId=...` or `branch=...` selected by the user. If the completion child returns `needs-selection` from an unbound primary checkout, stop and re-plan for the intended target. Do not add `primary=true` unless primary publication was requested, or `all=true` unless repo-wide completion was requested. A configured cleanup-only Goal still uses `guardian_finish_workflow`.
 
 `allowedRemoteBranches` is an explicit per-call exact-name list on the resolved effective remote. Guardian normalizes and deduplicates the list, binds it into the plan token, excludes listed remote refs from cleanup candidate discovery and strict extra-remote postflight blocking, and still evaluates a same-named local branch for cleanup independently. Pass the same option set on plan and apply. This exception does not persist retention policy, broaden deletion authority, affect unscanned secondary remotes, or allow unlisted remote branches.
 
-For example, invoke `/guardian-goal` with the equivalent native-tool arguments in both phases:
+For example, from the verified current session, invoke `/guardian-goal` with the equivalent native-tool arguments in both phases:
 
 ```text
 guardian_goal mode=plan allowedRemoteBranches=["__dolt_remote_info__","chore/finalize-standalone-migration"]

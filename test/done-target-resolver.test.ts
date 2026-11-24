@@ -7,6 +7,9 @@ import { guardianDone } from "../src/done.ts";
 import { buildDoneWorkInventory } from "../src/done-work-inventory.ts";
 import { resolveDoneTarget } from "../src/done-target-resolver.ts";
 import { guardianStart } from "../src/start.ts";
+import { guardianFinish } from "../src/finish.ts";
+import { recordSession } from "../src/state.ts";
+import { reattachCurrentGuardianWorktree } from "../src/done-reattach.ts";
 import { isRecordLike } from "../src/types.ts";
 import { createRepoWithOrigin, git, rescueMutationSurface } from "./helpers.ts";
 import { installFakeGh } from "./delete-fixtures.ts";
@@ -93,7 +96,7 @@ test("guardian_done target resolver blocks missing explicit sessionId from prima
   assert.ok(missing.suggestedCommands?.includes(`guardian_done branch=${started.session.branch}`));
 });
 
-test("guardian_done target resolver auto-selects one dirty target and blocks ambiguous dirt", async (t) => {
+test("guardian_done target resolver requires selection for unbound dirty targets", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
   const session = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_resolve_dirty", taskName: "resolve dirty", createWorktree: true, config: DEFAULT_CONFIG });
@@ -101,8 +104,8 @@ test("guardian_done target resolver auto-selects one dirty target and blocks amb
   const onlySessionDirty = await buildDoneWorkInventory({ repoRoot: repo, cwd: repo, config: DEFAULT_CONFIG });
 
   const selectedSession = resolveDoneTarget({ input: {}, inventory: onlySessionDirty });
-  assert.equal(selectedSession.kind, "session-finish");
-  assert.equal(selectedSession.sessionId, "ses_resolve_dirty");
+  assert.equal(selectedSession.kind, "needs-selection");
+  assert.equal(selectedSession.ok, false);
 
   await fs.writeFile(path.join(repo, "primary-dirty.txt"), "primary\n", "utf8");
   const ambiguousInventory = await buildDoneWorkInventory({ repoRoot: repo, cwd: repo, config: DEFAULT_CONFIG });
@@ -110,26 +113,72 @@ test("guardian_done target resolver auto-selects one dirty target and blocks amb
 
   assert.equal(ambiguous.kind, "needs-selection");
   assert.equal(ambiguous.status, "needs-selection");
-  assert.match(ambiguous.reason, /multiple dirty implementation targets/);
+  assert.equal(ambiguous.ok, false);
   assert.deepEqual(ambiguous.candidates.map((candidate) => candidate.targetKind).sort(), ["primary", "session"]);
   assert.ok(ambiguous.suggestedCommands.includes("guardian_done primary=true commitMessage=..."));
   assert.ok(ambiguous.suggestedCommands.includes(`guardian_done branch=${session.session.branch} commitMessage=...`));
 });
 
-test("guardian_done target resolver keeps clean primary cleanup and done-all behavior", async (t) => {
+test("guardian_done target resolver requires explicit repository-wide scope", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
   await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_resolve_clean", taskName: "resolve clean", createWorktree: true, config: DEFAULT_CONFIG });
   const withCleanSession = await buildDoneWorkInventory({ repoRoot: repo, cwd: repo, config: DEFAULT_CONFIG });
-  const doneAll = resolveDoneTarget({ input: {}, inventory: withCleanSession });
-  assert.equal(doneAll.kind, "done-all");
+  assert.equal(resolveDoneTarget({ input: {}, inventory: withCleanSession }).kind, "needs-selection");
+  assert.equal(resolveDoneTarget({ input: { all: true }, inventory: withCleanSession }).kind, "done-all");
 
   const { base: cleanBase, repo: cleanRepo } = await createRepoWithOrigin();
   t.after(() => fs.rm(cleanBase, { recursive: true, force: true }));
   const cleanInventory = await buildDoneWorkInventory({ repoRoot: cleanRepo, cwd: cleanRepo, config: DEFAULT_CONFIG });
-  const cleanupOnly = resolveDoneTarget({ input: {}, inventory: cleanInventory });
-  assert.equal(cleanupOnly.kind, "cleanup-only");
+  assert.equal(resolveDoneTarget({ input: {}, inventory: cleanInventory }).kind, "needs-selection");
+  assert.equal(resolveDoneTarget({ input: { all: true }, inventory: cleanInventory }).kind, "done-all");
 });
+
+test("guardian_done keeps a verified current session despite unrelated primary dirt", async (t) => {
+  const { repo, worktree } = await createSessionFixture({ t, sessionId: "ses_current_only", taskName: "current only" });
+  await fs.writeFile(path.join(repo, "unrelated.txt"), "other session\n");
+  const inventory = await buildDoneWorkInventory({ repoRoot: repo, cwd: worktree, config: DEFAULT_CONFIG });
+  const decision = resolveDoneTarget({ input: {}, inventory });
+  assert.equal(decision.kind, "session-finish");
+  assert.equal(decision.sessionId, "ses_current_only");
+});
+
+test("guardian_done missing explicit session cannot reattach another active session's worktree", async (t) => {
+  const { repo, worktree } = await createSessionFixture({ t, sessionId: "ses_existing_owner", taskName: "existing owner" });
+  const before = await rescueMutationSurface(repo, worktree);
+  for (const mode of ["plan", "apply"] as const) {
+    const result = await guardianDone({ repoRoot: repo, cwd: worktree, sessionId: "ses_not_the_owner", mode, confirm: true });
+    assert.equal(result.ok, false);
+    assert.equal(result.status, "blocked");
+    assert.deepEqual(await rescueMutationSurface(repo, worktree), before);
+  }
+});
+
+for (const dirty of [false, true]) {
+  test(`guardian_done unbound plan and apply do not adopt a ${dirty ? "dirty" : "clean"} sibling session`, async (t) => {
+    const { repo, worktree } = await createSessionFixture({ t, sessionId: `ses_unbound_${dirty}`, taskName: `unbound ${dirty}` });
+    if (dirty) await fs.writeFile(path.join(worktree, "sibling.txt"), "not this caller's work\n");
+    const before = await rescueMutationSurface(repo);
+    for (const mode of ["plan", "apply"] as const) {
+      const result = await guardianDone({ repoRoot: repo, cwd: repo, mode, confirm: true, commitMessage: "must not adopt sibling work" });
+      assert.equal(result.status, "needs-selection");
+      assert.equal(result.ok, false);
+      assert.deepEqual(await rescueMutationSurface(repo), before);
+    }
+  });
+  test(`guardian_done unbound plan and apply do not ${dirty ? "publish dirty" : "clean"} primary work`, async (t) => {
+    const { base, repo } = await createRepoWithOrigin();
+    t.after(() => fs.rm(base, { recursive: true, force: true }));
+    if (dirty) await fs.writeFile(path.join(repo, "primary.txt"), "not selected for publication\n");
+    const before = await rescueMutationSurface(repo);
+    for (const mode of ["plan", "apply"] as const) {
+      const result = await guardianDone({ repoRoot: repo, cwd: repo, mode, confirm: true, commitMessage: "must not publish implicitly" });
+      assert.equal(result.status, "needs-selection");
+      assert.equal(result.ok, false);
+      assert.deepEqual(await rescueMutationSurface(repo), before);
+    }
+  });
+}
 
 test("guardian_done blocks allowIgnoredFiles added after a clean session land plan", async (t) => {
   const sessionId = "land-clean-changed-ignored-consent"; const { repo, worktree, branch } = await createSessionFixture({ t, sessionId, taskName: "changed ignored consent" });
@@ -293,3 +342,48 @@ test("guardian_done atomically blocks a ref changed after matching reservation v
   assert.equal((await git(repo, ["rev-parse", requireString(retryPlan.safetyRef, "retryPlan.safetyRef")])).stdout, otherHead);
   assert.equal((await git(worktree, ["rev-parse", "HEAD"])).stdout, expectedHead);
 });
+
+for (const claimant of ["other-session", "same-session-new-worktree"] as const) {
+  test(`reattach refuses ${claimant} ownership recorded after target selection`, async (t) => {
+    const { base, repo } = await createRepoWithOrigin();
+    t.after(() => fs.rm(base, { recursive: true, force: true }));
+    const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_closed_before_race", taskName: "reattach race", createWorktree: true, config: DEFAULT_CONFIG });
+    const worktree = started.session.worktree_path;
+    assert.equal((await guardianFinish({ repoRoot: repo, cwd: worktree, sessionId: started.session.session_id })).ok, true);
+    await fs.writeFile(path.join(worktree, "after-close.txt"), "new work\n");
+    await git(worktree, ["add", "after-close.txt"]);
+    await git(worktree, ["commit", "-m", "work after close"]);
+    const inventory = await buildDoneWorkInventory({ repoRoot: repo, cwd: worktree, config: DEFAULT_CONFIG });
+    assert.equal(resolveDoneTarget({ input: { sessionId: "ses_recovery_caller" }, inventory }).kind, "reattach");
+    // Interpose a real ownership change between selection and its mutation handler.
+    if (claimant === "other-session") {
+      await recordSession(repo, DEFAULT_CONFIG, { ...started.session, session_id: "ses_late_owner" });
+    } else {
+      await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_recovery_caller", taskName: "rebound elsewhere", createWorktree: true, config: DEFAULT_CONFIG });
+    }
+    const before = await rescueMutationSurface(repo, worktree);
+    const result = await reattachCurrentGuardianWorktree(repo, inventory.currentWorktree, inventory.currentBranch, DEFAULT_CONFIG, "ses_recovery_caller", { mode: "apply", confirm: true });
+    assert.equal(result.ok, false);
+    assert.equal(result.status, "blocked");
+    const after = await rescueMutationSurface(repo, worktree);
+    const { objects: beforeObjects, unreachable: beforeUnreachable, ...beforeMutable } = before;
+    const { objects: afterObjects, unreachable: afterUnreachable, ...afterMutable } = after;
+    assert.deepEqual(afterMutable, beforeMutable);
+    // The CAS lock publishes an immutable owner blob even when its updater refuses.
+    // Permit that specific lock record, not arbitrary new user objects or ref changes.
+    const existingPaths = new Set(beforeObjects.map((entry) => entry.path));
+    assert.deepEqual(afterObjects.filter((entry) => existingPaths.has(entry.path)), beforeObjects);
+    const addedFiles = afterObjects.filter((entry) => entry.kind === "file" && !existingPaths.has(entry.path));
+    assert.equal(addedFiles.length, 1);
+    assert.match(addedFiles[0]!.path, /^[a-f0-9]{2}\/[a-f0-9]{38,62}$/);
+    const oid = addedFiles[0]!.path.replace("/", "");
+    const lock = requireRecord(JSON.parse((await git(repo, ["cat-file", "blob", oid])).stdout), "lock record");
+    assert.deepEqual(Object.keys(lock).sort(), ["acquired_at", "generation", "nonce", "pid", "version"]);
+    assert.equal(lock.version, 1);
+    assert.equal(lock.pid, process.pid);
+    assert.match(requireString(lock.nonce, "lock.nonce"), /^[a-f0-9-]{36}$/);
+    assert.ok(typeof lock.generation === "number" && lock.generation > 0);
+    assert.ok(Number.isFinite(Date.parse(requireString(lock.acquired_at, "lock.acquired_at"))));
+    assert.deepEqual(afterUnreachable.split("\n").filter((line) => line !== `unreachable blob ${oid}`).sort(), beforeUnreachable.split("\n").sort());
+  });
+}

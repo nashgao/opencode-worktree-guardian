@@ -242,12 +242,8 @@ test("/guardian slash commands rewrite to native tool instructions", async () =>
   assert.match(donePrompt, /guardian_done/);
   assert.match(donePrompt, /mode=plan/);
   assert.match(donePrompt, /selectedTarget/);
-  assert.match(donePrompt, /from any cwd/);
-  assert.match(donePrompt, /exactly one dirty implementation target/);
   assert.match(donePrompt, /needs-selection/);
   assert.match(donePrompt, /primary=true/);
-  assert.match(donePrompt, /sessionId=\.\.\./);
-  assert.match(donePrompt, /branch=\.\.\./);
   assert.match(donePrompt, /commitMessage/);
   assert.match(donePrompt, /allowAdminBypass=true/);
 });

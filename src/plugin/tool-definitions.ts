@@ -3,7 +3,7 @@ import { guardianTool } from "./native-tool.ts";
 
 export function createTools(planCache: PlanTokenCache) {
   return {
-    guardian_done: guardianTool("guardian_done", "Plan or apply the safest implementation-done path for this repository state, including default repo-wide session finish, local base sync, and redundant cleanup sweep planning.", planCache),
+    guardian_done: guardianTool("guardian_done", "Plan or apply completion for the verified current Guardian session or an exact recorded sessionId or branch. An unbound primary returns needs-selection. Use primary=true only for requested primary publication and all=true only for explicitly requested repo-wide completion.", planCache),
     guardian_start: guardianTool("guardian_start", "Create or attach this OpenCode session to a guardian-owned worktree.", planCache),
     guardian_status: guardianTool("guardian_status", "Report guardian state, worktrees, safety refs, stash inventory, and blockers without mutating the repo.", planCache),
     guardian_delete_paths: guardianTool("guardian_delete_paths", "Plan or apply exact path deletion with confirm-token, fingerprint, tracked-file, recursive, protected-root, and optional external archive recovery gates.", planCache),

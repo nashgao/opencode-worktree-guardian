@@ -33,7 +33,7 @@ test("guardian_goal tool plans configured repo goal with readable output", async
   context.worktree = repo;
   const execute = hooks.tool.guardian_goal.execute;
 
-  const result = await runTool(execute, { repoRoot: repo, cwd: repo, mode: "plan", commitMessage: "feat: goal contract", intentionalPaths: ["goal-code.txt"] }, context);
+  const result = await runTool(execute, { repoRoot: repo, cwd: repo, primary: true, mode: "plan", commitMessage: "feat: goal contract", intentionalPaths: ["goal-code.txt"] }, context);
 
   assert.equal(typeof result.output, "string");
   assert.equal(result.metadata.status, "planned");
@@ -69,7 +69,7 @@ test("guardian_goal promotes strict stash inventory blockers from guardian_done"
   context.directory = repo;
   context.worktree = repo;
 
-  const result = await runTool(hooks.tool.guardian_goal.execute, { repoRoot: repo, cwd: repo, mode: "plan", commitMessage: "feat: strict goal contract" }, context);
+  const result = await runTool(hooks.tool.guardian_goal.execute, { repoRoot: repo, cwd: repo, primary: true, mode: "plan", commitMessage: "feat: strict goal contract" }, context);
 
   assert.equal(result.metadata.ok, false);
   assert.equal(result.metadata.status, "blocked");
@@ -90,8 +90,8 @@ test("guardian_goal applies safe hygiene before committing primary work", async 
   context.worktree = repo;
   const execute = hooks.tool.guardian_goal.execute;
 
-  const plan = await runTool(execute, { repoRoot: repo, cwd: repo, mode: "plan", commitMessage: "feat: goal apply", intentionalPaths: ["goal-code.txt"] }, context);
-  const apply = await runTool(execute, { repoRoot: repo, cwd: repo, mode: "apply", commitMessage: "feat: goal apply", intentionalPaths: ["goal-code.txt"], confirm: true, confirmToken: "" }, context);
+  const plan = await runTool(execute, { repoRoot: repo, cwd: repo, primary: true, mode: "plan", commitMessage: "feat: goal apply", intentionalPaths: ["goal-code.txt"] }, context);
+  const apply = await runTool(execute, { repoRoot: repo, cwd: repo, primary: true, mode: "apply", commitMessage: "feat: goal apply", intentionalPaths: ["goal-code.txt"], confirm: true, confirmToken: "" }, context);
 
   assert.equal(plan.metadata.status, "planned");
   assert.equal(apply.metadata.status, "complete");
@@ -103,7 +103,7 @@ test("guardian_goal applies safe hygiene before committing primary work", async 
   assert.doesNotMatch(committedFiles, /node-compile-cache/);
 });
 
-test("guardian_goal delegates already-landed redundant dirty session cleanup without commitMessage", async () => {
+test("guardian_goal requires a session target before delegating redundant dirty cleanup without commitMessage", async () => {
   const { base, repo } = await createRepoWithOrigin();
   test.after(() => fs.rm(base, { recursive: true, force: true }));
   const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_goal_redundant_dirty", taskName: "goal redundant dirty", createWorktree: true });
@@ -126,7 +126,18 @@ test("guardian_goal delegates already-landed redundant dirty session cleanup wit
   context.directory = repo;
   context.worktree = repo;
 
-  const result = await runTool(hooks.tool.guardian_goal.execute, { repoRoot: repo, cwd: repo, mode: "plan" }, context);
+  const before = (await git(repo, ["rev-parse", branch, "origin/main"])).stdout;
+  for (const options of [{ mode: "plan" }, { mode: "apply", confirm: true }] as const) {
+    const unbound = await runTool(hooks.tool.guardian_goal.execute, { repoRoot: repo, cwd: repo, ...options }, context);
+    assert.equal(unbound.metadata.status, "blocked");
+    assert.equal(unbound.metadata.confirmToken, undefined);
+    const doneStep = metadataRecords(unbound.metadata, "steps").find((step) => step.tool === "guardian_done");
+    assert.equal(doneStep?.status, "needs-selection");
+    assert.equal((await git(repo, ["rev-parse", branch, "origin/main"])).stdout, before);
+    assert.equal(await fs.readFile(path.join(worktree, featureFile), "utf8"), "advanced base content\n");
+  }
+
+  const result = await runTool(hooks.tool.guardian_goal.execute, { repoRoot: repo, cwd: worktree, branch, mode: "plan" }, context);
 
   assert.equal(result.metadata.ok, true, JSON.stringify(result.metadata));
   assert.equal(result.metadata.status, "planned");

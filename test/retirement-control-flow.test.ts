@@ -150,8 +150,8 @@ test("guardian_done primary publish stops after retiring an advanced active rese
   const reservation = await createAdvancedReservation(repo, "primary-publish-active-retirement", "active");
   await fs.writeFile(path.join(repo, "primary-publish-retirement.txt"), "publish\n");
 
-  const plan = await guardianDone({ repoRoot: repo, cwd: repo, mode: "plan", commitMessage: "feat: publish before reservation retirement" });
-  const apply = await guardianDone({ repoRoot: repo, cwd: repo, mode: "apply", confirm: true, confirmToken: plan.confirmToken, commitMessage: "feat: publish before reservation retirement" });
+  const plan = await guardianDone({ repoRoot: repo, cwd: repo, primary: true, mode: "plan", commitMessage: "feat: publish before reservation retirement" });
+  const apply = await guardianDone({ repoRoot: repo, cwd: repo, primary: true, mode: "apply", confirm: true, confirmToken: plan.confirmToken, commitMessage: "feat: publish before reservation retirement" });
 
   assert.equal(plan.lane, "primary-main-publish");
   assert.equal(apply.status, "partial", JSON.stringify(apply));

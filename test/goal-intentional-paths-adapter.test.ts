@@ -16,7 +16,7 @@ test("guardian_goal adapter cache normalizes intentionalPaths across plan and ap
   const { context } = createToolContext();
   context.directory = repo;
   context.worktree = repo;
-  const request = { repoRoot: repo, cwd: repo, commitMessage: "feat: acknowledged sources" };
+  const request = { repoRoot: repo, cwd: repo, primary: true, commitMessage: "feat: acknowledged sources" };
 
   const plan = await runTool(hooks.tool.guardian_goal.execute, {
     ...request,
@@ -50,7 +50,7 @@ test("guardian_goal adapter cache rejects intentionalPaths drift before mutation
   const { context } = createToolContext();
   context.directory = repo;
   context.worktree = repo;
-  const request = { repoRoot: repo, cwd: repo, commitMessage: "feat: reject intent drift" };
+  const request = { repoRoot: repo, cwd: repo, primary: true, commitMessage: "feat: reject intent drift" };
 
   await runTool(hooks.tool.guardian_goal.execute, { ...request, mode: "plan", intentionalPaths: ["src/a.ts"] }, context);
   const applied = await runTool(hooks.tool.guardian_goal.execute, {
@@ -78,7 +78,7 @@ test("guardian_goal rejects acknowledged file content drift before mutation", as
   const { context } = createToolContext();
   context.directory = repo;
   context.worktree = repo;
-  const request = { repoRoot: repo, cwd: repo, commitMessage: "feat: reject acknowledged content drift", intentionalPaths: ["src/a.ts"] };
+  const request = { repoRoot: repo, cwd: repo, primary: true, commitMessage: "feat: reject acknowledged content drift", intentionalPaths: ["src/a.ts"] };
 
   await runTool(hooks.tool.guardian_goal.execute, { ...request, mode: "plan" }, context);
   await fs.writeFile(source, "export const a = 'changed after plan';\n");
@@ -104,6 +104,7 @@ test("guardian_goal rejects broad intentional directory acknowledgments", async 
   const plan = await runTool((await plugin.server({ directory: repo, worktree: repo })).tool.guardian_goal.execute, {
     repoRoot: repo,
     cwd: repo,
+    primary: true,
     mode: "plan",
     commitMessage: "feat: reject directory intent",
     intentionalPaths: ["src"],

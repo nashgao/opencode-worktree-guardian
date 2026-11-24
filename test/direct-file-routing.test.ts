@@ -20,9 +20,7 @@ type DoneResult = Record<string, unknown> & {
   readonly dirtyFiles?: readonly string[];
   readonly lane?: string;
   readonly reason?: string;
-  readonly sessions?: readonly { readonly branch: string }[];
   readonly status?: string;
-  readonly summary?: unknown;
   readonly worktreePath?: string;
 };
 
@@ -199,24 +197,22 @@ test("guardian_done previews a session targeted by branch name from the primary"
   assert.equal(result.worktreePath, started.session.worktree_path);
 });
 
-test("guardian_done defaults to batch finish when run bare from the primary", async (t) => {
+test("bare guardian_done from primary does not finish either clean session", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
   const a = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_select_a", taskName: "select a", createWorktree: true, config: DEFAULT_CONFIG });
   const b = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_select_b", taskName: "select b", createWorktree: true, config: DEFAULT_CONFIG });
 
-  const result = asDone(await guardianDone({ repoRoot: repo, cwd: repo }));
-
-  assert.equal(result.ok, true);
-  assert.equal(result.status, "planned");
-  assert.equal(result.lane, "done-all");
-  const summary = result.summary as Record<string, unknown>;
-  assert.equal(summary.total, 2);
-  assert.equal(summary.finishable, 2);
-  const sessions = result.sessions as readonly { branch: string }[];
-  assert.deepEqual(sessions.map((session) => session.branch).sort(), [a.session.branch, b.session.branch].sort());
-  assert.equal(typeof result.confirmToken, "string");
-  assert.equal(result.nextAction, "guardian_done mode=apply confirm=true");
+  const worktrees = (await git(repo, ["worktree", "list", "--porcelain"])).stdout;
+  for (const options of [{}, { mode: "apply", confirm: true }]) {
+    const result = asDone(await guardianDone({ repoRoot: repo, cwd: repo, ...options }));
+    assert.equal(result.ok, false);
+    assert.equal(result.status, "needs-selection");
+    assert.equal(result.confirmToken, undefined);
+    assert.equal((await git(repo, ["worktree", "list", "--porcelain"])).stdout, worktrees);
+    await fs.access(a.session.worktree_path);
+    await fs.access(b.session.worktree_path);
+  }
 });
 
 test("guardian_done blocks with candidate sessions when the branch has no active session", async (t) => {
