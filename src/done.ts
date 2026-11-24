@@ -11,7 +11,6 @@ import { guardianDoneLandClean } from "./done-land-clean.ts";
 import { primaryMainDone } from "./done-primary-publish.ts";
 import { dirtySnapshot, statusEntries } from "./done-primary-snapshot.ts";
 import { blocked, samePath } from "./done-shared.ts";
-import { guardianFinishWorkflow } from "./workflow.ts";
 import { rescueDirtyWorktree } from "./done-rescue.ts";
 import { guardianDoneAll } from "./done-all.ts";
 import { buildDoneWorkInventory } from "./done-work-inventory.ts";
@@ -142,17 +141,6 @@ async function runSessionTarget(
   return withSelectedTarget({ ...result, lane: "session-finish" }, decision.selectedTarget);
 }
 
-function primaryRescueRecommended(inventory: DoneWorkInventory): Record<string, unknown> {
-  return {
-    ok: false,
-    status: "blocked",
-    lane: "primary-rescue-recommended",
-    reason: "dirty protected primary work is not on the configured base branch; rescue it to a Guardian worktree before finishing",
-    currentBranch: inventory.currentBranch,
-    baseBranch: inventory.baseBranch,
-    suggestedCommands: ["guardian_start createWorktree=true", "guardian_status"],
-  };
-}
 
 function requestedPoisonedSessionBlocker(inventory: DoneWorkInventory, requestedSessionId: string | null): Record<string, unknown> | null {
   if (!requestedSessionId) return null;
@@ -207,14 +195,8 @@ export async function guardianDone(input: Record<string, unknown> = {}, runtime:
       return withSelectedTarget(await primaryMainDone(repoRoot, repoRoot, config, request), decision.selectedTarget);
     case "done-all":
       return guardianDoneAll({ ...request, repoRoot, cwd: repoRoot, config });
-    case "cleanup-only": {
-      const cleanup = await guardianFinishWorkflow({ ...request, repoRoot, cwd: repoRoot, config, abandonUnmerged: true });
-      return { ...cleanup, lane: "cleanup-only" };
-    }
     case "reattach":
       return reattachCurrentGuardianWorktree(repoRoot, inventory.currentWorktree, inventory.currentBranch, config, requestedSessionId, { ...request, mode });
-    case "primary-rescue-recommended":
-      return primaryRescueRecommended(inventory);
     case "needs-selection":
       return decision;
     case "blocked":

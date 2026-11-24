@@ -199,7 +199,7 @@ test("Codex guardian_done caches rescue only for matching confirmed apply", asyn
   await assert.rejects(fs.access(path.join(repo, "codex-rescue-note.txt")));
 });
 
-test("Codex guardian_done lands one dirty session from the primary cwd", async (t) => {
+test("Codex requires the session target again to apply its cached plan from primary", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
   const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_codex_done_anywhere", taskName: "codex done anywhere", createWorktree: true, config: DEFAULT_CONFIG });
@@ -207,7 +207,8 @@ test("Codex guardian_done lands one dirty session from the primary cwd", async (
   const branch = started.session.branch;
   await fs.writeFile(path.join(worktree, "codex-session.txt"), "codex session\n");
 
-  const planArgs = { repoRoot: repo, cwd: repo, mode: "plan", commitMessage: "feat: codex session done", timestamp: "20260629T010101" };
+  const args = { repoRoot: repo, cwd: repo, commitMessage: "feat: codex session done", timestamp: "20260629T010101" };
+  const planArgs = { ...args, branch, mode: "plan" };
   const plan = await runGuardianDone(planArgs);
 
   assert.match(plan.stdout, /\[WARN\] guardian_done planned/);
@@ -215,6 +216,12 @@ test("Codex guardian_done lands one dirty session from the primary cwd", async (
   assert.match(plan.stdout, /selectedTarget: session session=ses_codex_done_anywhere/);
   assert.match(plan.stdout, /dirty files: 1\n  - codex-session\.txt/);
   assert.match(plan.stdout, /commitMessage: feat: codex session done/);
+
+  const head = (await git(repo, ["rev-parse", branch])).stdout;
+  const unbound = await runGuardianDone({ ...args, mode: "apply", confirm: true });
+  assert.match(unbound.stdout, /guardian_done needs target selection/);
+  assert.equal((await git(repo, ["rev-parse", branch])).stdout, head);
+  assert.equal(await fs.readFile(path.join(worktree, "codex-session.txt"), "utf8"), "codex session\n");
 
   await installFakeGh(t, { repo, branch, dynamicHead: true });
   const apply = await runGuardianDone({ ...planArgs, mode: "apply", confirm: true });

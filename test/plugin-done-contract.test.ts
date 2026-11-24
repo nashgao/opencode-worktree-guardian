@@ -4,7 +4,7 @@ import test from "node:test";
 import plugin from "../src/index.ts";
 import { maybeInjectPlanConfirmToken, rememberPlanConfirmToken } from "../src/plugin/plan-token-cache.ts";
 import { formatGuardianOutput } from "../src/plugin/readable-output.ts";
-import { createToolContext, metadataRecord, runTool } from "./plugin-contract-helpers.ts";
+import { createToolContext, metadataRecord, metadataRecords, runTool } from "./plugin-contract-helpers.ts";
 import type { PlanCacheToolArgs, PlanTokenCache } from "../src/types.ts";
 
 test("guardian_done tool execute returns readable primary-main plan output with raw metadata", async () => {
@@ -19,7 +19,7 @@ test("guardian_done tool execute returns readable primary-main plan output with 
   context.worktree = repo;
   const execute = hooks.tool.guardian_done.execute;
 
-  const result = await runTool(execute, { repoRoot: repo, cwd: repo, mode: "plan", commitMessage: "feat: contract done" }, context);
+  const result = await runTool(execute, { repoRoot: repo, cwd: repo, primary: true, mode: "plan", commitMessage: "feat: contract done" }, context);
 
   assert.equal(typeof result.output, "string");
   assert.equal(typeof result.metadata, "object");
@@ -81,8 +81,8 @@ test("guardian_done plugin confirm reuses matching plan token for primary publis
   context.worktree = repo;
   const execute = hooks.tool.guardian_done.execute;
 
-  const plan = await runTool(execute, { repoRoot: repo, cwd: repo, mode: "plan", commitMessage: "feat: contract confirm done" }, context);
-  const apply = await runTool(execute, { repoRoot: repo, cwd: repo, mode: "apply", commitMessage: "feat: contract confirm done", confirm: true, confirmToken: "" }, context);
+  const plan = await runTool(execute, { repoRoot: repo, cwd: repo, primary: true, mode: "plan", commitMessage: "feat: contract confirm done" }, context);
+  const apply = await runTool(execute, { repoRoot: repo, cwd: repo, primary: true, mode: "apply", commitMessage: "feat: contract confirm done", confirm: true, confirmToken: "" }, context);
 
   assert.equal(plan.metadata.status, "planned");
   assert.equal(apply.metadata.status, "published");
@@ -236,7 +236,6 @@ test("guardian_done readable output shows selected target and dirty target choic
     ok: false,
     status: "needs-selection",
     lane: "select-target",
-    reason: "multiple dirty implementation targets require an explicit guardian_done target",
     candidates: [
       { targetKind: "primary", branch: "main", worktreePath: "/repo", dirtyFiles: ["primary.txt"] },
       { targetKind: "session", sessionId: "ses_dirty", branch: "guardian/session-ses-dirty", worktreePath: "/repo/.worktrees/repo/dirty", dirtyFiles: ["session.txt"] },
@@ -316,9 +315,12 @@ test("guardian_done tool execute treats empty optional strings as absent", async
     commitMessage: "feat: empty optional args",
   }, context);
 
-  assert.equal(result.metadata.status, "planned");
-  assert.equal(result.metadata.lane, "primary-main-publish");
-  assert.equal(result.metadata.preflight.repoRoot, repo);
-  assert.equal(result.metadata.preflight.currentWorktree, repo);
-  assert.doesNotMatch(result.output, /confirmToken|sessionId/);
+  assert.equal(result.metadata.status, "needs-selection");
+  assert.equal(result.metadata.confirmToken, undefined);
+  const candidates = metadataRecords(result.metadata, "candidates");
+  assert.equal(candidates.length, 1);
+  assert.equal(candidates[0]?.targetKind, "primary");
+  assert.equal(candidates[0]?.worktreePath, repo);
+  assert.deepEqual(candidates[0]?.dirtyFiles, ["contract-empty-args.txt"]);
+  assert.equal(await fs.readFile(path.join(repo, "contract-empty-args.txt"), "utf8"), "done\n");
 });

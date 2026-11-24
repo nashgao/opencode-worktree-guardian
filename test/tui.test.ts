@@ -110,12 +110,8 @@ test("tui done prompt preserves phased completion and terminal recovery gates", 
   assert.match(prompt.parts[0].text, /guardian_done/);
   assert.match(prompt.parts[0].text, /mode=plan/);
   assert.match(prompt.parts[0].text, /selectedTarget/);
-  assert.match(prompt.parts[0].text, /from any cwd/);
-  assert.match(prompt.parts[0].text, /exactly one dirty implementation target/);
   assert.match(prompt.parts[0].text, /needs-selection/);
   assert.match(prompt.parts[0].text, /primary=true/);
-  assert.match(prompt.parts[0].text, /sessionId=\.\.\./);
-  assert.match(prompt.parts[0].text, /branch=\.\.\./);
   assert.match(prompt.parts[0].text, /continue to mode=apply confirm=true/);
   assert.match(prompt.parts[0].text, /commitMessage/);
   assert.doesNotMatch(prompt.parts[0].text, /confirmToken/);

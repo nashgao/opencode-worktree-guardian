@@ -191,13 +191,20 @@ export async function recordSession(repoRoot: string, config: GuardianConfigInpu
   });
 }
 
-export async function applyRecordedSession(repoRoot: string, config: GuardianConfigInput, state: GuardianStateRecord, session: GuardianSession): Promise<GuardianStateRecord> {
+export async function applyRecordedSession(repoRoot: string, config: GuardianConfigInput, state: GuardianStateRecord, session: GuardianSession, supersedeActiveOwner = true): Promise<GuardianStateRecord> {
   if (!state.sessions) state.sessions = {};
   const sessionId = session.session_id;
   if (!sessionId) throw new Error("session.session_id is required");
   const previous = isRecordLike(state.sessions[sessionId]) ? state.sessions[sessionId] : undefined;
   if (previous && isRecordLike(previous.external_goal_completion)) {
     throw new Error("session has external Goal completion proof; reconcile it before recording a replacement binding");
+  }
+  if (!supersedeActiveOwner && previous?.status === "active"
+    && (previous.branch !== session.branch
+      || typeof previous.worktree_path !== "string"
+      || typeof session.worktree_path !== "string"
+      || !await samePathOnDisk(previous.worktree_path, session.worktree_path))) {
+    throw stateError("illegal_active_binding", `Cannot reattach session ${sessionId} after its active binding changed`);
   }
   const now = new Date().toISOString();
   let supersededBinding = false;
@@ -207,7 +214,12 @@ export async function applyRecordedSession(repoRoot: string, config: GuardianCon
         && (candidate.branch === session.branch || typeof candidate.worktree_path === "string" && await samePathOnDisk(candidate.worktree_path, session.worktree_path))) {
         throw new Error("another session's prepared external Goal completion reserves this branch or path");
       }
-      if (candidateSessionId !== sessionId && isRecordLike(candidate) && candidate.status === "active" && typeof candidate.worktree_path === "string" && await samePathOnDisk(candidate.worktree_path, session.worktree_path)) {
+      if (candidateSessionId !== sessionId && isRecordLike(candidate) && candidate.status === "active") {
+        const sameWorktree = typeof candidate.worktree_path === "string" && await samePathOnDisk(candidate.worktree_path, session.worktree_path);
+        if (!supersedeActiveOwner && (sameWorktree || candidate.branch === session.branch)) {
+          throw stateError("illegal_active_binding", `Cannot reattach work owned by active session ${candidateSessionId}`);
+        }
+        if (!sameWorktree) continue;
         if (isRecordLike(candidate.external_goal_completion)) throw new Error("cannot supersede another session's external Goal completion proof");
         supersededBinding = true;
         const superseded = {

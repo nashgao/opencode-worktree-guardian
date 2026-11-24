@@ -91,11 +91,11 @@ async function primaryPublishState(repo: string, dirtyFile: string, cleanupCandi
 
 test("guardian_done blocks matching dirty primary-main tokens without confirmation before any publish mutation", async (t) => {
   const { base, remote, repo } = await createRepoWithOrigin(); t.after(() => fs.rm(base, { recursive: true, force: true })); const cleanupCandidate = await makeMergedCleanupCandidate(repo); const dirtyFile = "done-no-confirm.txt";
-  await fs.writeFile(path.join(repo, dirtyFile), "must remain dirty\n"); const plan = asDone(await guardianDone({ repoRoot: repo, cwd: repo, mode: "plan", commitMessage: "feat: require confirmation" }));
+  await fs.writeFile(path.join(repo, dirtyFile), "must remain dirty\n"); const plan = asDone(await guardianDone({ repoRoot: repo, cwd: repo, primary: true, mode: "plan", commitMessage: "feat: require confirmation" }));
   await git(remote, ["config", "user.name", "Remote Test"]); await git(remote, ["config", "user.email", "remote@example.test"]); const { stdout: remoteAdvance } = await git(remote, ["commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", "advance remote main"]); await git(remote, ["update-ref", "refs/heads/main", remoteAdvance]); const before = await primaryPublishState(repo, dirtyFile, cleanupCandidate);
-  const apply = asDone(await guardianDone({ repoRoot: repo, cwd: repo, mode: "apply", commitMessage: "feat: require confirmation", confirmToken: plan.confirmToken, timestamp: "20260730T080808" }));
+  const apply = asDone(await guardianDone({ repoRoot: repo, cwd: repo, primary: true, mode: "apply", commitMessage: "feat: require confirmation", confirmToken: plan.confirmToken, timestamp: "20260730T080808" }));
   assert.equal(apply.ok, false); assert.equal(apply.status, "blocked"); assert.equal(apply.tokenMatched, true); assert.equal(apply.confirmationRequired, true); assert.equal(apply.remoteRefresh, "forbidden"); assert.equal(apply.remoteFreshness, "unverified"); assert.match(apply.reason, /confirm=true/); assert.match(apply.nextAction, /confirm=true/); assert.deepEqual(await primaryPublishState(repo, dirtyFile, cleanupCandidate), before);
-  const confirmed = asDone(await guardianDone({ repoRoot: repo, cwd: repo, mode: "apply", confirm: true, commitMessage: "feat: require confirmation", confirmToken: plan.confirmToken, timestamp: "20260730T080808" }));
+  const confirmed = asDone(await guardianDone({ repoRoot: repo, cwd: repo, primary: true, mode: "apply", confirm: true, commitMessage: "feat: require confirmation", confirmToken: plan.confirmToken, timestamp: "20260730T080808" }));
   assert.equal(confirmed.ok, false); assert.equal(confirmed.status, "blocked"); assert.equal(confirmed.tokenMatched, false); assert.equal(confirmed.driftDetected, true); assert.equal(confirmed.remoteRefresh, "required"); assert.equal(confirmed.plannedConfirmToken, plan.confirmToken); assert.equal(typeof confirmed.refreshedConfirmToken, "string"); assert.notEqual(confirmed.refreshedConfirmToken, plan.confirmToken);
   const afterConfirmed = await primaryPublishState(repo, dirtyFile, cleanupCandidate); assert.deepEqual({ ...afterConfirmed, refs: before.refs, remoteTrackingRefs: before.remoteTrackingRefs, reflog: before.reflog, originMain: before.originMain, objects: before.objects, fetchHead: before.fetchHead }, before);
 });
@@ -124,7 +124,7 @@ test("guardian_done primary publish reports stash inventory without blocking by 
   await git(repo, ["stash", "push", "-u", "-m", "done publish stash"]);
   await fs.writeFile(path.join(repo, "done-feature.txt"), "feature\n");
 
-  const plan = asDone(await guardianDone({ repoRoot: repo, cwd: repo, mode: "plan", commitMessage: "feat: done feature" }));
+  const plan = asDone(await guardianDone({ repoRoot: repo, cwd: repo, primary: true, mode: "plan", commitMessage: "feat: done feature" }));
 
   assert.equal(plan.ok, true);
   assert.equal(plan.status, "planned");
@@ -141,7 +141,7 @@ test("guardian_done primary publish blocks stash inventory under strict policy",
   await fs.writeFile(path.join(repo, "done-feature.txt"), "feature\n");
   const config = { ...DEFAULT_CONFIG, requireEmptyStashInventory: true };
 
-  const plan = asDone(await guardianDone({ repoRoot: repo, cwd: repo, mode: "plan", commitMessage: "feat: done feature", config }));
+  const plan = asDone(await guardianDone({ repoRoot: repo, cwd: repo, primary: true, mode: "plan", commitMessage: "feat: done feature", config }));
 
   assert.equal(plan.ok, false);
   assert.equal(plan.status, "blocked");

@@ -4,6 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { DEFAULT_CONFIG } from "../src/config.ts";
 import { guardianDone } from "../src/done.ts";
+import { guardianFinish } from "../src/finish.ts";
 import { readProvenanceManifest } from "../src/provenance.ts";
 import { guardianStatus } from "../src/recover.ts";
 import { getGuardianPaths, readState } from "../src/state.ts";
@@ -367,7 +368,7 @@ test("guardian_done direct preserve-only defaults to read-only planning", async 
   assert.deepEqual(await guardianRefNames(repo), []);
 });
 
-test("guardian_done plans reattaching a new session inside an existing Guardian worktree", async (t) => {
+test("guardian_done refuses to reattach a different sessionId in a live owner's worktree", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
   const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_done_lost_original", taskName: "done lost original", createWorktree: true, config: DEFAULT_CONFIG });
@@ -375,28 +376,28 @@ test("guardian_done plans reattaching a new session inside an existing Guardian 
   await git(started.session.worktree_path, ["add", "reattached.txt"]);
   await git(started.session.worktree_path, ["commit", "-m", "add reattached work"]);
 
-  const result = asDone(await guardianDone({ repoRoot: repo, cwd: started.session.worktree_path, sessionId: "ses_done_new_session", timestamp: "20260609T030303" }));
-
-  assert.equal(result.ok, true);
-  assert.equal(result.lane, "session-finish");
-  assert.equal(result.status, "planned");
-  assert.equal(result.action, "reattach-and-finish");
-  assert.equal(result.reattached, true);
-  assert.equal(result.sessionId, "ses_done_new_session");
-  assert.equal(result.worktree, started.session.worktree_path);
-  assert.equal(result.nextAction, "guardian_done mode=apply confirm=true");
-  const status = await guardianStatus({ repoRoot: repo, config: DEFAULT_CONFIG });
-  assert.equal(status.activeSessions.some((session: Record<string, unknown>) => session.session_id === "ses_done_lost_original"), true);
-  assert.equal(status.sessions.some((session: Record<string, unknown>) => session.session_id === "ses_done_new_session"), false);
-  assert.equal(status.terminalSessions.some((session: Record<string, unknown>) => session.session_id === "ses_done_lost_original" && session.status === "superseded"), false);
-  assert.equal(status.safetyRefs.length, 0);
-  assert.deepEqual(await guardianRefNames(repo), []);
+  const paths = await getGuardianPaths(repo);
+  const before = await readState(paths, { repoRoot: repo, config: DEFAULT_CONFIG });
+  const head = (await git(started.session.worktree_path, ["rev-parse", "HEAD"])).stdout;
+  assert.equal(before.sessions.ses_done_lost_original?.status, "active");
+  for (const options of [{ mode: "plan" }, { mode: "apply", confirm: true }]) {
+    const result = await guardianDone({ repoRoot: repo, cwd: started.session.worktree_path, sessionId: "ses_done_new_session", timestamp: "20260609T030303", ...options });
+    assert.equal(result.ok, false);
+    assert.equal(result.status, "blocked");
+    assert.equal(result.confirmToken, undefined);
+    assert.notEqual(result.reattached, true);
+    assert.deepEqual(await readState(paths, { repoRoot: repo, config: DEFAULT_CONFIG }), before);
+    assert.equal((await git(started.session.worktree_path, ["rev-parse", "HEAD"])).stdout, head);
+    assert.deepEqual(await guardianRefNames(repo), []);
+  }
 });
 
 test("guardian_done reattach apply requires confirmation", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
   const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_done_reattach_no_confirm_original", taskName: "reattach no confirm", createWorktree: true, config: DEFAULT_CONFIG });
+  const closed = await guardianFinish({ repoRoot: repo, cwd: started.session.worktree_path, sessionId: started.session.session_id, finishMode: "preserve-only", timestamp: "20260609T031200" });
+  assert.equal(closed.status, "preserved");
   await fs.writeFile(path.join(started.session.worktree_path, "reattach-no-confirm.txt"), "reattach no confirm\n");
   await git(started.session.worktree_path, ["add", "reattach-no-confirm.txt"]);
   await git(started.session.worktree_path, ["commit", "-m", "add reattach no confirm work"]);
@@ -408,20 +409,35 @@ test("guardian_done reattach apply requires confirmation", async (t) => {
   assert.equal(result.lane, "session-finish");
   assert.match(String(result.reason), /confirm=true/);
   const status = await guardianStatus({ repoRoot: repo, config: DEFAULT_CONFIG });
-  assert.equal(status.activeSessions.some((session: Record<string, unknown>) => session.session_id === "ses_done_reattach_no_confirm_original"), true);
+  assert.equal(status.terminalSessions.some((session: Record<string, unknown>) => session.session_id === started.session.session_id && session.status === "preserved"), true);
   assert.equal(status.sessions.some((session: Record<string, unknown>) => session.session_id === "ses_done_reattach_no_confirm_new"), false);
-  assert.equal(status.safetyRefs.length, 0);
+  assert.deepEqual(await guardianRefNames(repo), [closed.safetyRef]);
 });
 
-test("guardian_done reattach apply records and finishes after confirmation", async (t) => {
+test("guardian_done plans and confirms reattachment after the previous owner has closed", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
   const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_done_reattach_apply_original", taskName: "reattach apply", createWorktree: true, config: quarantineConfig });
+  const closed = await guardianFinish({ repoRoot: repo, cwd: started.session.worktree_path, sessionId: started.session.session_id, finishMode: "preserve-only", timestamp: "20260609T032200", config: quarantineConfig });
+  assert.equal(closed.status, "preserved");
   await fs.writeFile(path.join(started.session.worktree_path, "reattach-apply.txt"), "reattach apply\n");
   await git(started.session.worktree_path, ["add", "reattach-apply.txt"]);
   await git(started.session.worktree_path, ["commit", "-m", "add reattach apply work"]);
 
-  const result = asDone(await guardianDone({ repoRoot: repo, cwd: started.session.worktree_path, sessionId: "ses_done_reattach_apply_new", mode: "apply", confirm: true, timestamp: "20260609T032323", config: quarantineConfig }));
+  const request = { repoRoot: repo, cwd: started.session.worktree_path, sessionId: "ses_done_reattach_apply_new", timestamp: "20260609T032323", config: quarantineConfig };
+  const plan = asDone(await guardianDone({ ...request, mode: "plan" }));
+  assert.equal(plan.ok, true);
+  assert.equal(plan.status, "planned");
+  assert.equal(plan.lane, "session-finish");
+  assert.equal(plan.action, "reattach-and-finish");
+  assert.equal(plan.reattached, true);
+  assert.equal(plan.sessionId, request.sessionId);
+  assert.equal(plan.worktree, started.session.worktree_path);
+  const plannedState = await readState(await getGuardianPaths(repo), { repoRoot: repo, config: quarantineConfig });
+  assert.equal(plannedState.sessions[request.sessionId], undefined);
+  assert.deepEqual(await guardianRefNames(repo), [closed.safetyRef]);
+
+  const result = asDone(await guardianDone({ ...request, mode: "apply", confirm: true }));
 
   assert.equal(result.ok, true);
   assert.equal(result.lane, "session-finish");
@@ -431,26 +447,29 @@ test("guardian_done reattach apply records and finishes after confirmation", asy
   assert.equal(result.preflight?.currentWorktree, started.session.worktree_path);
   const status = await guardianStatus({ repoRoot: repo, config: quarantineConfig });
   assert.equal(status.terminalSessions.some((session: Record<string, unknown>) => session.session_id === "ses_done_reattach_apply_new" && session.status === "preserved"), true);
-  assert.equal(status.terminalSessions.some((session: Record<string, unknown>) => session.session_id === "ses_done_reattach_apply_original" && session.status === "superseded"), true);
+  assert.equal(status.terminalSessions.some((session: Record<string, unknown>) => session.session_id === started.session.session_id && session.status === "preserved"), true);
   const reattached = status.terminalSessions.find((session: Record<string, unknown>) => session.session_id === "ses_done_reattach_apply_new");
   assert.equal(reattached?.provenance_status, "ineligible");
   assert.equal(reattached?.quarantine_eligible, false);
   assert.equal(reattached?.provenance, undefined);
-  assert.equal(status.safetyRefs.length, 1);
+  assert.deepEqual(await guardianRefNames(repo), [closed.safetyRef, result.safetyRef].sort());
 });
 
-test("guardian_done blocks protected primary rescue scenarios outside base branch", async (t) => {
+test("unbound guardian_done on a protected non-base primary branch requires selection without rescue", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
   await git(repo, ["checkout", "-b", "production"]);
   const config = { ...DEFAULT_CONFIG, protectedBranches: [...DEFAULT_CONFIG.protectedBranches, "production"] };
 
-  const result = asDone(await guardianDone({ repoRoot: repo, cwd: repo, mode: "plan", config }));
-
-  assert.equal(result.ok, false);
-  assert.equal(result.lane, "primary-rescue-recommended");
-  assert.match(String(result.reason), /rescue it to a Guardian worktree/);
-  assert.deepEqual(result.suggestedCommands, ["guardian_start createWorktree=true", "guardian_status"]);
+  const worktrees = (await git(repo, ["worktree", "list", "--porcelain"])).stdout;
+  for (const options of [{ mode: "plan" }, { mode: "apply", confirm: true }]) {
+    const result = await guardianDone({ repoRoot: repo, cwd: repo, config, ...options });
+    assert.equal(result.ok, false);
+    assert.equal(result.status, "needs-selection");
+    assert.equal(result.confirmToken, undefined);
+    assert.equal((await git(repo, ["worktree", "list", "--porcelain"])).stdout, worktrees);
+    assert.deepEqual(await guardianRefNames(repo), []);
+  }
 });
 
 test("guardian_done blocks poisoned active session bound to protected primary worktree", async (t) => {

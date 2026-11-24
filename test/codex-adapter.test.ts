@@ -209,7 +209,7 @@ test("Codex continues an explicitly tracked Guardian Goal across CLI processes",
   t.after(() => fs.rm(base, { recursive: true, force: true }));
   const sessionId = "ses_codex_goal_continuation";
   const options = { sessionId, stateHome: path.join(base, "codex-state") };
-  const plan = await runCodexCli(["tool", "guardian_goal", JSON.stringify({ repoRoot: repo, cwd: repo, mode: "plan", trackGoal: true })], "", options);
+  const plan = await runCodexCli(["tool", "guardian_goal", JSON.stringify({ repoRoot: repo, cwd: repo, all: true, mode: "plan", trackGoal: true })], "", options);
   assert.match(plan.stdout, /guardian_goal planned/);
   assert.match(plan.stdout, /If the user requested Guardian Goal completion/);
   assert.match(plan.stdout, /trackGoal alone is not approval/);
@@ -242,6 +242,7 @@ test("Codex does not claim durable Guardian Goal tracking without a session iden
 
   const plan = await runCodexCli(["tool", "guardian_goal", JSON.stringify({ repoRoot: repo, cwd: repo, mode: "plan", trackGoal: true })]);
 
+  assert.match(plan.stdout, /guardian_goal blocked/);
   assert.match(plan.stdout, /continuation checkpoint unavailable because CODEX_SESSION_ID is absent/);
 });
 
@@ -249,7 +250,7 @@ test("Codex tracked Guardian Goal still applies with its planned token and clear
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
   const sessionId = "ses_codex_goal_complete";
-  const args = { repoRoot: repo, cwd: repo, trackGoal: true };
+  const args = { repoRoot: repo, cwd: repo, all: true, trackGoal: true };
   const options = { sessionId, stateHome: path.join(base, "codex-state") };
   await runCodexCli(["tool", "guardian_goal", JSON.stringify({ ...args, mode: "plan" })], "", options);
 
@@ -269,7 +270,7 @@ test("Codex continuation bookkeeping does not stale a proven clean Guardian Goal
   await git(repo, ["commit", "-m", "enable clean completion proof"]);
   await git(repo, ["push", "origin", "main"]);
   const sessionId = "ses_codex_goal_proven";
-  const args = { repoRoot: repo, cwd: repo, trackGoal: true };
+  const args = { repoRoot: repo, cwd: repo, all: true, trackGoal: true };
   const options = { sessionId, stateHome: path.join(base, "codex-state") };
   await runCodexCli(["tool", "guardian_goal", JSON.stringify({ ...args, mode: "plan" })], "", options);
   const applied = await runCodexCli(["tool", "guardian_goal", JSON.stringify({ ...args, mode: "apply", confirm: true })], "", options);
@@ -333,13 +334,13 @@ test("Codex surfaces a corrupt continuation checkpoint without hiding Guardian o
   const sessionId = "ses_codex_goal_corrupt_checkpoint";
   const stateHome = path.join(base, "codex-state");
   const options = { sessionId, stateHome };
-  await runCodexCli(["tool", "guardian_goal", JSON.stringify({ repoRoot: repo, cwd: repo, mode: "plan", trackGoal: true })], "", options);
+  await runCodexCli(["tool", "guardian_goal", JSON.stringify({ repoRoot: repo, cwd: repo, all: true, mode: "plan", trackGoal: true })], "", options);
   const sessionKey = createHash("sha256").update(sessionId).digest("hex");
   await fs.writeFile(path.join(stateHome, "opencode-worktree-guardian", "codex-goals", `${sessionKey}.json`), "invalid-json\n");
 
   const stopped = await runCodexCli(["hook", "stop"], `${JSON.stringify({ hook_event_name: "Stop", session_id: sessionId, cwd: repo })}\n`, options);
   assert.match(JSON.parse(stopped.stdout).systemMessage, /continuation check failed/i);
-  const plan = await runCodexCli(["tool", "guardian_goal", JSON.stringify({ repoRoot: repo, cwd: repo, mode: "plan", trackGoal: true })], "", options);
+  const plan = await runCodexCli(["tool", "guardian_goal", JSON.stringify({ repoRoot: repo, cwd: repo, all: true, mode: "plan", trackGoal: true })], "", options);
   assert.match(plan.stdout, /guardian_goal planned/);
   assert.match(plan.stdout, /continuation checkpoint failed/);
 });
@@ -351,9 +352,9 @@ test("Codex does not replace an unfinished tracked goal with another repository"
   t.after(() => fs.rm(second.base, { recursive: true, force: true }));
   const sessionId = "ses_codex_goal_two_repos";
   const options = { sessionId, stateHome: path.join(first.base, "codex-state") };
-  await runCodexCli(["tool", "guardian_goal", JSON.stringify({ repoRoot: first.repo, cwd: first.repo, mode: "plan", trackGoal: true })], "", options);
+  await runCodexCli(["tool", "guardian_goal", JSON.stringify({ repoRoot: first.repo, cwd: first.repo, all: true, mode: "plan", trackGoal: true })], "", options);
 
-  const competing = await runCodexCli(["tool", "guardian_goal", JSON.stringify({ repoRoot: second.repo, cwd: second.repo, mode: "plan", trackGoal: true })], "", options);
+  const competing = await runCodexCli(["tool", "guardian_goal", JSON.stringify({ repoRoot: second.repo, cwd: second.repo, all: true, mode: "plan", trackGoal: true })], "", options);
   assert.match(competing.stdout, /guardian_goal planned/);
   assert.match(competing.stdout, /already tracks an unfinished Guardian Goal/);
   const resumed = await runCodexCli(["hook", "session-start"], `${JSON.stringify({ hook_event_name: "SessionStart", session_id: sessionId, cwd: second.repo })}\n`, options);
@@ -382,15 +383,16 @@ test("Codex scoped completion preserves broader and different-session Goals and 
   const fixture = await removedGoalFixture(t);
   const stateHome = path.join(fixture.base, "codex-state");
   const ordinary = { repoRoot: fixture.repo, cwd: fixture.repo, config: fixture.config };
+  const repositoryGoal = { ...ordinary, all: true };
   const trackedGoals = [
-    { hostSessionId: "ses_codex_removed_repo_goal", args: ordinary, completionMatches: false },
+    { hostSessionId: "ses_codex_removed_repo_goal", args: repositoryGoal, completionMatches: false },
     { hostSessionId: "ses_codex_removed_other_goal", args: { ...ordinary, sessionId: fixture.otherId }, completionMatches: false },
     { hostSessionId: "ses_codex_removed_owned_goal", args: fixture.request, completionMatches: true },
   ];
   for (const tracked of trackedGoals) {
     const options = { sessionId: tracked.hostSessionId, stateHome };
     await runCodexCli(["tool", "guardian_goal", JSON.stringify({ ...tracked.args, mode: "plan", trackGoal: true })], "", options);
-    if (tracked.args === ordinary) {
+    if (tracked.args === repositoryGoal) {
       const key = createHash("sha256").update(tracked.hostSessionId).digest("hex");
       const checkpointPath = path.join(stateHome, "opencode-worktree-guardian", "codex-goals", `${key}.json`);
       const legacy = JSON.parse(await fs.readFile(checkpointPath, "utf8"));
@@ -432,7 +434,7 @@ test("Codex gives a blocked tracked Guardian Goal one recovery pass", async (t) 
   const stateHome = await createTempDir("guardian-codex-state-");
   t.after(() => fs.rm(stateHome, { recursive: true, force: true }));
   const options = { sessionId, stateHome };
-  const plan = await runCodexCli(["tool", "guardian_goal", JSON.stringify({ repoRoot: repo, cwd: repo, mode: "plan", trackGoal: true })], "", options);
+  const plan = await runCodexCli(["tool", "guardian_goal", JSON.stringify({ repoRoot: repo, cwd: repo, all: true, mode: "plan", trackGoal: true })], "", options);
   assert.match(plan.stdout, /guardian_goal blocked/);
 
   const payload = `${JSON.stringify({ hook_event_name: "Stop", session_id: sessionId, turn_id: "turn_blocked", cwd: repo, stop_hook_active: false })}\n`;
@@ -465,6 +467,7 @@ test("Codex guardian_goal cache keys normalize allowed remote branches", async (
   await runCodexCli(["tool", "guardian_goal", JSON.stringify({
     repoRoot: repo,
     cwd: repo,
+    all: true,
     mode: "plan",
     allowedRemoteBranches: ["ä", "z", "ä"],
   })]);
@@ -477,7 +480,7 @@ test("Codex guardian_goal cache keys normalize allowed remote branches", async (
   assert.deepEqual(JSON.parse(keys[0]).allowedRemoteBranches, ["z", "ä"]);
 });
 
-test("Codex guardian_done lands one dirty session from the primary cwd", async (t) => {
+test("Codex leaves a sole dirty session untouched when guardian_done is unbound in primary", async (t) => {
   const { base, repo } = await createRepoWithOrigin();
   t.after(() => fs.rm(base, { recursive: true, force: true }));
   const started = await guardianStart({ repoRoot: repo, cwd: repo, sessionId: "ses_codex_done_anywhere", taskName: "codex done anywhere", createWorktree: true, config: DEFAULT_CONFIG });
@@ -485,25 +488,20 @@ test("Codex guardian_done lands one dirty session from the primary cwd", async (
   const branch = started.session.branch;
   await fs.writeFile(path.join(worktree, "codex-session.txt"), "codex session\n");
 
-  const planArgs = { repoRoot: repo, cwd: repo, mode: "plan", commitMessage: "feat: codex session done", timestamp: "20260629T010101" };
-  const plan = await runCodexCli(["tool", "guardian_done", JSON.stringify(planArgs)]);
-
-  assert.match(plan.stdout, /\[WARN\] guardian_done planned/);
-  assert.match(plan.stdout, /lane: session-finish/);
-  assert.match(plan.stdout, /selectedTarget: session session=ses_codex_done_anywhere/);
-  assert.match(plan.stdout, /dirty files: 1\n  - codex-session\.txt/);
-  assert.match(plan.stdout, /commitMessage: feat: codex session done/);
-
-  await installFakeGh(t, { repo, branch, dynamicHead: true });
-  const apply = await runCodexCli(["tool", "guardian_done", JSON.stringify({ ...planArgs, mode: "apply", confirm: true })]);
-
-  assert.match(apply.stdout, /\[GOOD\] guardian_done landed-and-cleaned/);
-  assert.match(apply.stdout, /selectedTarget: session session=ses_codex_done_anywhere/);
-  assert.match(apply.stdout, /commitMessage: feat: codex session done/);
-  assert.match(apply.stdout, /cleanup: deleted worktreeRemoved=true branchDeleted=true/);
-  assert.equal(await pathExists(worktree), false);
-  await assert.rejects(() => git(repo, ["rev-parse", "--verify", branch]));
-  await git(repo, ["cat-file", "-e", "origin/main:codex-session.txt"]);
+  const sessionHead = (await git(repo, ["rev-parse", branch])).stdout;
+  const remoteHeads = (await git(repo, ["ls-remote", "--heads", "origin"])).stdout;
+  const fakeGh = await installFakeGh(t, { repo, branch, dynamicHead: true });
+  for (const options of [{ mode: "plan" }, { mode: "apply", confirm: true }]) {
+    const result = await runCodexCli(["tool", "guardian_done", JSON.stringify({
+      repoRoot: repo, cwd: repo, commitMessage: "feat: codex session done", ...options,
+    })]);
+    assert.match(result.stdout, /guardian_done needs target selection/);
+    assert.match(result.stdout, /target=session session=ses_codex_done_anywhere/);
+    assert.equal(await fs.readFile(path.join(worktree, "codex-session.txt"), "utf8"), "codex session\n");
+    assert.equal((await git(repo, ["rev-parse", branch])).stdout, sessionHead);
+    assert.equal((await git(repo, ["ls-remote", "--heads", "origin"])).stdout, remoteHeads);
+    assert.equal(await pathExists(fakeGh.logPath), false);
+  }
 });
 
 test("Codex guardian_done reports needs-selection for ambiguous dirty targets", async (t) => {
@@ -516,7 +514,6 @@ test("Codex guardian_done reports needs-selection for ambiguous dirty targets", 
   const plan = await runCodexCli(["tool", "guardian_done", JSON.stringify({ repoRoot: repo, cwd: repo, mode: "plan", commitMessage: "feat: ambiguous codex done" })]);
 
   assert.match(plan.stdout, /\[WARN\] guardian_done needs target selection/);
-  assert.match(plan.stdout, /multiple dirty implementation targets/);
   assert.match(plan.stdout, /dirty target candidates: 2/);
   assert.match(plan.stdout, /target=primary/);
   assert.match(plan.stdout, /target=session session=ses_codex_done_ambiguous/);
